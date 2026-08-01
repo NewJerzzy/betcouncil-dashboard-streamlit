@@ -1,315 +1,194 @@
 """
-pick6_refresh.py — DraftKings Pick6 props scraper
+pick6_refresh.py — DraftKings Pick6 via pickCardsByCategory (public, no auth)
 ================================================================================
 
-DraftKings Pick6 embeds its full prop board directly in the page's
-server-rendered HTML (confirmed live 2026-07-16 via direct fetch —
-real current games and props present with no login, e.g. today's
-actual MLB slate). This matches fetch_pick6_props_from_gist()'s
-existing docstring in fetchers.py, which already describes this same
-approach — that reader function and its expected filename
-(pick6_props_live.json) predate this script.
+Confirmed live 2026-08-01 via GH Actions workflow_dispatch (not guessed):
 
-Context: an external investigation (Replit) ran an equivalent scraper
-once, by hand, producing 101 real props pushed directly to
-pick6_props_live.json — confirmed genuinely fresh when checked
-independently. But no script or workflow for it was ever committed to
-this repo, so that data would have gone stale with nothing to refresh
-it. This is the actual committed, scheduled replacement.
+  GET https://pick6.draftkings.com/resources/pickCardsByCategory/{pickGroupId}/{categoryId}
 
-Exact JSON structure wasn't independently confirmed byte-for-byte
-before this first deploy (confirmed real DATA is present via a fetch
-that renders to text, but the underlying raw HTML/JSON shape wasn't
-directly inspected) — ships with self-diagnostic logging so a
-structure mismatch is caught immediately rather than silently
-producing nothing, same precaution used for every first-deploy
-harvester this session.
+Returns real JSON with everything needed in ONE call -- this fully replaces
+the old approach (parsing the React Router stream payload for pick lines,
+which had no way to resolve player names -- dkId and name were confirmed
+in separate, uncorrelated dict shapes in that older payload):
 
-Pushes to pick6_props_live.json (existing filename/schema — no changes
-needed to fetch_pick6_props_from_gist on the read side).
+  pickCardByPickableId  -- pick lines, target values, multipliers per player
+  entityInfoByDkId       -- dkId -> {name, fullName, jerseyNum, imageUrls}
+                            CONFIRMED to contain real full names (e.g.
+                            "James McCann", "Jose Ramirez"), not placeholders.
+
+pickGroupId is date/sport-dependent, embedded in the homepage's escaped
+RSC-stream payload as the literal substring \"pickGroupId\",\"151460\" --
+extracted fresh each run rather than hardcoded (it changes daily).
+
+Category IDs: confirmed 1-20 all return real MLB data when tested live.
+This script sweeps that range per sport and stops early once no new
+pickable IDs are found across CATEGORY_STOP_STREAK consecutive categories
+(some sports/days have fewer than 20 real categories).
+
+Pushes to betcouncil_pick6_props.json (matches what fetch_pick6_props_
+from_gist already reads -- confirmed still wired into the app).
 """
 
 import json
 import os
 import re
 import sys
+import time
+import random
 from datetime import datetime, timezone
 
 import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
-BASE_URL = "https://pick6.draftkings.com/"
-SPORTS = ["MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC", "PGA+TOUR", "NASCAR"]
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    "Accept": "text/html,application/xhtml+xml",
-}
+SPORTS = ["MLB", "NBA", "NFL", "NHL", "WNBA", "UFC", "SOCCER"]
+MAX_CATEGORY = 20
+CATEGORY_STOP_STREAK = 4
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                         "AppleWebKit/537.36 (KHTML, like Gecko) "
+                         "Chrome/124.0.0.0 Safari/537.36",
+           "Accept": "application/json"}
 
 DEBUG_LOG: list = []
+
+
 def log(msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] {msg}", flush=True)
 
 
-def _extract_stream_payload(html: str) -> list:
-    """
-    Pick6 (React Router v7) streams its full loader data directly into
-    the initial HTML via:
-        window.__reactRouterContext.streamController.enqueue("[ ...escaped JSON... ]")
-    Confirmed 2026-07-16 (via cross-check against Replit's report, plus
-    independent evidence: raw HTML body size — 851KB captured here vs.
-    "858 KB" reported — is a close match). This is NOT a normal
-    __NEXT_DATA__/embedded-JSON-object pattern (that first attempt at
-    this script assumed the wrong SSR mechanism and found nothing) — the
-    payload here is a JS string literal argument to .enqueue(), so it
-    needs to be extracted and un-escaped as a string before json.loads,
-    not parsed as an inline object.
-
-    Returns the flat array (~3000+ elements) as-is, unresolved — see
-    _resolve_refs() for turning "_N"-style references into their real
-    values.
-    """
-    m = re.search(
-        r'streamController\.enqueue\(\s*"((?:[^"\\]|\\.)*)"\s*\)',
-        html, re.DOTALL,
-    )
-    if not m:
-        return []
-    raw_str = m.group(1)
+def get_pick_group_id(sport: str) -> str | None:
+    """Extract today's pickGroupId from the homepage's escaped RSC payload."""
     try:
-        # The captured text is itself a JS string literal (escaped) —
-        # decoding it as a JSON string turns \" \\ \n etc. back into
-        # real characters, giving us the actual JSON array text.
-        unescaped = json.loads('"' + raw_str + '"')
-        return json.loads(unescaped)
-    except (json.JSONDecodeError, ValueError) as e:
-        DEBUG_LOG.append({"note": f"stream payload found but failed to parse: {e}",
-                           "raw_len": len(raw_str), "raw_snippet": raw_str[:500]})
-        return []
+        r = requests.get(f"https://pick6.draftkings.com/?sport={sport}",
+                          headers=HEADERS, timeout=20)
+        DEBUG_LOG.append({"sport": sport, "homepage_status": r.status_code})
+        if r.status_code != 200:
+            return None
+        m = re.search(r'\\?"pickGroupId\\?",\\?"(\d+)\\?"', r.text)
+        return m.group(1) if m else None
+    except Exception as e:
+        DEBUG_LOG.append({"sport": sport, "homepage_error": str(e)[:200]})
+        return None
 
 
-def _build_idx_to_name(array: list) -> dict:
-    """_N key -> real field name, built once from the flat array. Safe
-    by construction: a '_N' key literally means 'the field name is
-    arr[N]', so this direct mapping is always correct regardless of
-    what else arr[N] might also represent as data elsewhere."""
-    return {i: v for i, v in enumerate(array) if isinstance(v, str)}
-
-
-def _resolve_value(v, array: list, idx_to_name: dict, depth=0, max_depth=15):
-    """
-    Fully dereference a single value. Confirmed via a second live
-    re-test (2026-07-25) that the previous version of this resolver had
-    a second, deeper indirection bug: after one dereference, a LIST
-    result (e.g. entities: [1831]) is NOT already-resolved data -- its
-    own elements are themselves indices needing one more hop to become
-    real dicts (entities: [1831] -> array[1831] -> the real player dict).
-    Only trusts that second hop if it yields a genuine dict (a real
-    object reference) -- if array[element] is anything else (None, a
-    scalar), the original int was literal data (e.g. a real comp-ID
-    number, confirmed via compIds: [400] staying [400], not becoming
-    array[400]) and is kept as-is rather than replaced with a wrong value.
-    """
-    if depth > max_depth:
-        return v
-    if isinstance(v, int) and 0 <= v < len(array):
-        v = array[v]
-    if isinstance(v, list):
-        out = []
-        for item in v:
-            if isinstance(item, int) and 0 <= item < len(array):
-                deref = array[item]
-                if isinstance(deref, dict):
-                    out.append(_resolve_dict(deref, array, idx_to_name, depth + 1, max_depth))
-                else:
-                    out.append(item)
-            elif isinstance(item, dict):
-                out.append(_resolve_dict(item, array, idx_to_name, depth + 1, max_depth))
-            else:
-                out.append(item)
-        return out
-    if isinstance(v, dict):
-        return _resolve_dict(v, array, idx_to_name, depth + 1, max_depth)
-    return v
-
-
-def _resolve_dict(d: dict, array: list, idx_to_name: dict, depth=0, max_depth=15):
-    if depth > max_depth:
-        return d
-    out = {}
-    for k, v in d.items():
-        if isinstance(k, str) and k.startswith("_") and k[1:].isdigit():
-            real_key = idx_to_name.get(int(k[1:]), k)
-        else:
-            real_key = k
-        out[real_key] = _resolve_value(v, array, idx_to_name, depth + 1, max_depth)
-    return out
-
-
-def _resolve_refs(obj, array: list, idx_to_name: dict, depth=0, max_depth=15):
-    """Entry point -- dispatches to _resolve_dict/_resolve_value so both
-    a top-level dict and a top-level list are handled correctly."""
-    if isinstance(obj, dict):
-        return _resolve_dict(obj, array, idx_to_name, depth, max_depth)
-    return _resolve_value(obj, array, idx_to_name, depth, max_depth)
-
-
-def _load_player_names_from_gist(github_token: str) -> dict:
-    """
-    Read the player name map pushed by the Tampermonkey harvester
-    (betcouncil_player_names.json in the gist).
-    Returns {dkId(int): name(str)} or {} if the file doesn't exist yet.
-    """
+def fetch_category(pick_group_id: str, category_id: int) -> dict | None:
     try:
-        resp = requests.get(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}",
-                     "Accept": "application/vnd.github+json"},
-            timeout=(5, 10),
-        )
-        if not resp.ok:
-            return {}
-        files = resp.json().get("files", {})
-        names_file = files.get("betcouncil_player_names.json", {})
-        raw_url = names_file.get("raw_url", "")
-        if not raw_url:
-            return {}
-        content_resp = requests.get(raw_url, timeout=(5, 10))
-        if not content_resp.ok:
-            return {}
-        data = content_resp.json()
-        raw_names = data.get("names", data if isinstance(data, dict) else {})
-        # Keys may be strings from JSON; convert to int for lookup
-        result = {}
-        for k, v in raw_names.items():
-            try:
-                result[int(k)] = v
-            except (ValueError, TypeError):
-                pass
-        DEBUG_LOG.append({"note": "gist_player_names_loaded", "count": len(result)})
-        return result
-    except Exception as ex:
-        DEBUG_LOG.append({"note": "gist_player_names_error", "error": str(ex)[:120]})
-        return {}
+        r = requests.get(
+            f"https://pick6.draftkings.com/resources/pickCardsByCategory/{pick_group_id}/{category_id}",
+            headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
 
 
-def _build_lookup_tables(array: list, idx_to_name: dict) -> tuple:
-    """
-    Scan the flat array for:
-    - dkId-carrying dicts → dkId->name lookup (NOTE: confirmed 2026-07-29 that
-      the Pick6 SSR stream does NOT include player display names; they are loaded
-      client-side via XHR after hydration. player_names will always be empty from
-      this source alone. dkId_ placeholder names are used as a fallback.)
-    - market dicts → pickSixMarketId->stat_name lookup (this DOES work from SSR)
-    """
-    dkid_key = idx_to_name and next((k for k, v in idx_to_name.items() if v == "dkId"), None)
-    market_id_key = next((k for k, v in idx_to_name.items() if v == "pickSixMarketId"), None)
+def parse_category(data: dict, sport: str) -> list:
+    """Combine pickCardByPickableId (lines) + entityInfoByDkId (names)."""
+    props = []
+    cards = data.get("pickCardByPickableId", {}) or {}
+    entities = data.get("entityInfoByDkId", {}) or {}
+    markets = data.get("pickSixMarketById", {}) or {}
 
-    player_names, stat_names = {}, {}
-    for item in array:
-        if not isinstance(item, dict):
+    for pickable_id, card in cards.items():
+        card_entities = card.get("entities", []) or []
+        if not card_entities:
             continue
-        if dkid_key is not None and f"_{dkid_key}" in item:
-            resolved = _resolve_refs(item, array, idx_to_name)
-            dk_id = resolved.get("dkId")
-            name = resolved.get("displayName") or resolved.get("fullName") or resolved.get("name")
-            if dk_id and name:
-                player_names[dk_id] = name
-        if market_id_key is not None and f"_{market_id_key}" in item:
-            resolved = _resolve_refs(item, array, idx_to_name)
-            mkt_id, label = resolved.get("pickSixMarketId"), resolved.get("name")
-            if mkt_id and label:
-                stat_names[mkt_id] = label
-    return player_names, stat_names
-
-
-def fetch_sport_props(sport: str, harvested_names: dict | None = None) -> list:
-    url = f"{BASE_URL}?sport={sport}"
-    r = requests.get(url, headers=HEADERS, timeout=(8, 20))
-    DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
-                       "body_len": len(r.text)})
-    if r.status_code != 200:
-        return []
-
-    array = _extract_stream_payload(r.text)
-    if not array:
-        DEBUG_LOG.append({"sport": sport, "note": "no streamController.enqueue payload found or failed to parse"})
-        return []
-
-    idx_to_name = _build_idx_to_name(array)
-    player_names, stat_names = _build_lookup_tables(array, idx_to_name)
-    # Merge in harvested names from Tampermonkey gist file (higher priority than SSR)
-    if harvested_names:
-        player_names = {**harvested_names, **player_names}  # SSR wins on conflict (unlikely)
-    pickable_id_key = next((k for k, v in idx_to_name.items() if v == "pickableId"), None)
-
-    DEBUG_LOG.append({"sport": sport, "array_len": len(array),
-                       "player_names_found": len(player_names), "stat_names_found": len(stat_names),
-                       "pickable_id_key_found": pickable_id_key is not None})
-
-    if pickable_id_key is None:
-        return []
-
-    normalized = []
-    pickable_key_str = f"_{pickable_id_key}"
-    for item in array:
-        if not isinstance(item, dict) or pickable_key_str not in item:
+        dk_id = str(card_entities[0].get("dkId", ""))
+        entity = entities.get(dk_id, {})
+        player_name = entity.get("fullName") or entity.get("name")
+        if not player_name:
             continue
-        resolved = _resolve_refs(item, array, idx_to_name)
-        entities = resolved.get("entities", [])
-        dk_id = entities[0].get("dkId") if entities and isinstance(entities[0], dict) else None
-        player = player_names.get(dk_id, f"dkId_{dk_id}" if dk_id else None)
 
-        for market in resolved.get("activePickableMarkets", []):
-            if not isinstance(market, dict):
-                continue
-            line = market.get("targetValue")
+        for market in card.get("activePickableMarkets", []) or []:
             market_id = market.get("pickSixMarketId")
-            stat_name = stat_names.get(market_id, f"market_{market_id}" if market_id else None)
-            for sel in market.get("activeSelections", []):
-                if not isinstance(sel, dict):
-                    continue
-                if not player or line is None:
-                    continue
-                normalized.append({
-                    "player": player, "stat_name": stat_name, "line": line,
-                    "multiplier": sel.get("standingsMultiplier"), "sport": sport,
-                })
-    return normalized
+            market_info = markets.get(str(market_id), {}) if market_id else {}
+            stat_name = market_info.get("name") or market_info.get("displayName") or f"Market {market_id}"
+            target_value = market.get("targetValue")
+            selections = market.get("activeSelections", []) or []
+            multiplier = selections[0].get("formattedStandingsMultiplier") if selections else None
+            if target_value is None:
+                continue
+            props.append({
+                "Player": player_name,
+                "Prop": stat_name,
+                "Line": target_value,
+                "Multiplier": multiplier,
+                "Book": "Pick6",
+                "Sport": sport,
+                "source": "pick6_pickcards_api",
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+            })
+    return props
 
 
-def push_to_gist(props: list, github_token: str) -> bool:
-    payload = {
-        "captured_at": datetime.now(timezone.utc).isoformat(),
-        "source": "pick6_ssr_scraper",
-        "props": props,
-    }
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_pick6_props.json": {"content": json.dumps(payload)}}},
-        timeout=30,
-    )
-    if resp.status_code in (200, 201):
-        return True
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
-    return False
+def fetch_sport(sport: str) -> list:
+    pick_group_id = get_pick_group_id(sport)
+    if not pick_group_id:
+        log(f"{sport}: no pickGroupId found, skipping")
+        return []
+    log(f"{sport}: pickGroupId={pick_group_id}")
+
+    all_props = []
+    seen_pickable_counts = []
+    for cat in range(1, MAX_CATEGORY + 1):
+        data = fetch_category(pick_group_id, cat)
+        if not data:
+            seen_pickable_counts.append(0)
+        else:
+            cards = data.get("pickCardByPickableId", {}) or {}
+            seen_pickable_counts.append(len(cards))
+            if cards:
+                props = parse_category(data, sport)
+                all_props.extend(props)
+        if len(seen_pickable_counts) >= CATEGORY_STOP_STREAK and \
+           all(c == 0 for c in seen_pickable_counts[-CATEGORY_STOP_STREAK:]):
+            log(f"{sport}: stopping at category {cat} (last {CATEGORY_STOP_STREAK} empty)")
+            break
+
+    log(f"{sport}: {len(all_props)} props from {sum(1 for c in seen_pickable_counts if c)} non-empty categories")
+    return all_props
 
 
-def push_debug(github_token: str) -> None:
+def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
     try:
-        requests.patch(
+        r = requests.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            timeout=15,
+        )
+        remaining = r.json().get("resources", {}).get("core", {}).get("remaining")
+        if remaining is not None and remaining < min_remaining:
+            log(f"Shared GitHub token budget low ({remaining} left) -- skipping this run cleanly")
+            return False
+    except Exception as e:
+        log(f"rate_limit check failed (continuing anyway): {e}")
+    return True
+
+
+def push_files(files_payload: dict) -> int:
+    github_token = os.environ["GITHUB_TOKEN"]
+    if not _rate_limit_ok(github_token):
+        return 0
+    for attempt in range(6):
+        resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": {"betcouncil_pick6_debug.json": {
-                "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
-                                        "requests": DEBUG_LOG[:20]}, indent=2)
-            }}},
+            json={"files": files_payload},
             timeout=30,
         )
-    except Exception:
-        pass
+        if resp.status_code in (200, 201):
+            return len(files_payload)
+        if resp.status_code in (409, 403, 429) and attempt < 5:
+            base_wait = min((attempt + 1) * 8, 60)
+            wait = base_wait + random.uniform(0, base_wait * 0.4)
+            log(f"Gist {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/6)")
+            time.sleep(wait)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
+    return 0
 
 
 def main() -> int:
@@ -318,33 +197,36 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
-    # Load harvested player names from Tampermonkey gist file (populated by browser script)
-    log("Loading harvested player names from gist…")
-    harvested_names = _load_player_names_from_gist(github_token)
-    log(f"  {len(harvested_names)} player names loaded from gist")
-
     all_props = []
     for sport in SPORTS:
         try:
-            props = fetch_sport_props(sport, harvested_names=harvested_names)
-        except Exception as e:
-            log(f"  {sport}: error — {e}")
-            continue
-        if props:
-            log(f"  {sport}: {len(props)} props")
+            props = fetch_sport(sport)
             all_props.extend(props)
-        else:
-            log(f"  {sport}: 0 props")
+        except Exception as e:
+            log(f"{sport}: error — {e}")
 
-    push_debug(github_token)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    files_payload = {
+        "betcouncil_pick6_props.json": {
+            "content": json.dumps({"captured_at": now_iso, "source": "pick6_pickcards_api",
+                                    "props": all_props})
+        },
+        "betcouncil_pick6_debug.json": {
+            "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:20]}, indent=2)
+        },
+    }
 
     if not all_props:
-        log("No props captured across any sport — pushing debug log only, not overwriting existing data with empty")
+        log("No props captured across any sport -- pushing debug only, not overwriting existing data with empty")
+        push_files({"betcouncil_pick6_debug.json": files_payload["betcouncil_pick6_debug.json"]})
         return 1
 
-    ok = push_to_gist(all_props, github_token)
-    log(f"Pushed {len(all_props)} total props" if ok else "Push FAILED")
-    return 0 if ok else 1
+    real_named = sum(1 for p in all_props if not p["Player"].startswith("dkId_"))
+    log(f"Total: {len(all_props)} props, {real_named} with real resolved names")
+
+    pushed = push_files(files_payload)
+    log(f"Pushed {pushed} files" if pushed else "Push FAILED")
+    return 0 if pushed else 1
 
 
 if __name__ == "__main__":
