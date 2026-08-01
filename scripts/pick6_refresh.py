@@ -179,6 +179,20 @@ def push_files(files_payload: dict) -> int:
             timeout=30,
         )
         if resp.status_code in (200, 201):
+            # A 200 doesn't guarantee the content actually landed -- confirmed
+            # this session on VSIN's push (200 every time, file silently
+            # absent). Verify each file is actually present in the response's
+            # own returned file list before trusting it.
+            returned_files = resp.json().get("files", {}) or {}
+            missing = [fn for fn in files_payload if fn not in returned_files]
+            if missing and attempt < 5:
+                base_wait = min((attempt + 1) * 5, 30)
+                log(f"Push returned 200 but {missing} missing from response -- retrying in {base_wait}s (attempt {attempt+1}/6)")
+                time.sleep(base_wait)
+                continue
+            if missing:
+                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
+                return len(files_payload) - len(missing)
             return len(files_payload)
         if resp.status_code in (409, 403, 429) and attempt < 5:
             base_wait = min((attempt + 1) * 8, 60)
