@@ -14119,6 +14119,7 @@ def load_sport_data(sport):
             injuries[pname] = {"status": item["status"], "note": item.get("note", ""), "source": "ESPN"}
     _merge_injury_source(injuries, rw_injuries,   "RotoWire")
     _merge_injury_source(injuries, cbs_injuries,  "CBS Sports")
+    st.session_state["injuries"] = injuries
     st.session_state["espn_injuries"] = espn_injuries
     # Market intelligence data
     if kalshi_raw:
@@ -15456,6 +15457,9 @@ def load_sport_data(sport):
             _log_results = _fetch_parallel(_log_fns, show_progress=False)
             for _pl, _res in zip(_log_players, _log_results):
                 _bdl_logs_prefetch[_pl] = _res if _res is not None else []
+            st.session_state["player_game_logs"] = {
+                normalize_name(_k): _v for _k, _v in _bdl_logs_prefetch.items()
+            }
     if sport == "NBA":
         _unique_teams = set()
         for _g in games:
@@ -18131,6 +18135,11 @@ with st.sidebar:
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
                       {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
+            st.session_state["board"] = board
+            try:
+                st.session_state["bankroll_multiplier"] = compute_bankroll_multiplier()
+            except Exception:
+                pass
             # Auto-populate closing line DB from board
             try:
                 from bc_utils import auto_populate_closing_lines as _apcl
