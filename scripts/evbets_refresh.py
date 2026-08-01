@@ -68,18 +68,17 @@ def _try_json_get(url: str, referer: str = None):
 
 
 def fetch_value_bets_html_snippet(sport: str, slug: str):
-    """Diagnostic: look for API/fetch call patterns revealing the real backend."""
+    """Diagnostic: search the compiled JS bundle for the real API endpoint."""
     import re
     try:
-        r = requests.get(f"https://evbets.app/value-bets/{slug}",
-                          headers={**HEADERS, "Accept": "text/html"}, timeout=15)
+        r = requests.get(f"https://evbets.app/_assets/page.BuNOqHnL.js",
+                          headers=HEADERS, timeout=15)
         text = r.text
-        api_refs = set(re.findall(r'["\']((?:https?:)?//[a-zA-Z0-9.-]*(?:api|supabase|firebase|functions)[a-zA-Z0-9./_-]*)["\']', text, re.IGNORECASE))
-        fetch_calls = set(re.findall(r'fetch\(["\']([^"\']+)["\']', text))
-        script_srcs = set(re.findall(r'<script[^>]+src="([^"]+)"', text))
-        return {"status": r.status_code, "len": len(text),
-                "api_refs": list(api_refs)[:15], "fetch_calls": list(fetch_calls)[:15],
-                "script_srcs": list(script_srcs)[:10]}
+        urls = set(re.findall(r'["\']((?:https?:)?//[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[a-zA-Z0-9./_%-]*)?)["\']', text))
+        # also grab anything that looks like a relative /api/ path
+        rel_api = set(re.findall(r'["\'](/api/[a-zA-Z0-9./_-]*)["\']', text))
+        return {"status": r.status_code, "len": len(text), "urls_found": list(urls)[:30],
+                "rel_api_paths": list(rel_api)[:15]}
     except Exception as e:
         return {"error": str(e)[:200]}
 
