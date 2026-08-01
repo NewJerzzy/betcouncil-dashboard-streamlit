@@ -1555,7 +1555,17 @@ with tabs[0]:
                             _mid = (_bid + _ask) / 2 if (_bid or _ask) else float(m.get("last_price") or 0)
                         except (TypeError, ValueError):
                             _mid = 0
-                        _krows.append(f'{m.get("title","")}: {_mid*100:.0f}%')
+                        # Kalshi's own "title" field is identical across every
+                        # team-specific market in an event (e.g. both markets
+                        # under "Cleveland vs Tampa Bay Winner?" share that
+                        # exact title) -- confirmed against real captured
+                        # data. The actual team this specific market resolves
+                        # on is only stated in rules_primary ("If Cleveland
+                        # wins..."), so pull it from there instead of
+                        # re-displaying the shared, team-less title.
+                        _k_team_m = re.search(r"If (.+?) wins", m.get("rules_primary", "") or "")
+                        _k_label = _k_team_m.group(1) if _k_team_m else m.get("title", "")
+                        _krows.append(f'{_k_label}: {_mid*100:.0f}%')
                     _krows_str = " · ".join(_krows)
                     _kalshi_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #6366f1;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{_kev.get("title","")}</div><div style="font-size:0.9rem;color:var(--bc-muted);">{_krows_str}</div></div>')
             st.markdown("".join(_kalshi_html), unsafe_allow_html=True)
