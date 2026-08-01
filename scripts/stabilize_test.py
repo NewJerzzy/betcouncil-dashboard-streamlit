@@ -21,21 +21,19 @@ def main():
 
     results = {}
     tests = [
-        ("fetch_ev_bvp", lambda: mod.fetch_ev_bvp()),
-        ("fetch_ev_preview", lambda: mod.fetch_ev_preview()),
-        ("fetch_ev_strikeouts", lambda: mod.fetch_ev_strikeouts()),
-        ("fetch_ev_outliers", lambda: mod.fetch_ev_outliers("MLB")),
-        ("fetch_ev_wnba", lambda: mod.fetch_ev_wnba()),
-        ("fetch_ev_stats_hr", lambda: mod.fetch_ev_stats("hr")),
-        ("fetch_ev_barrels", lambda: mod.fetch_ev_barrels()),
-        ("fetch_ev_recap", lambda: mod.fetch_ev_recap()),
-        ("fetch_ev_trends", lambda: mod.fetch_ev_trends()),
+        ("fetch_ev_api_outliers", lambda: mod.fetch_ev_api_outliers("mlb")),
+        ("fetch_ev_api_wnba", lambda: mod.fetch_ev_api_wnba()),
+        ("fetch_ev_bvp_full", lambda: mod.fetch_ev_bvp()),
+        ("fetch_ev_preview_full", lambda: mod.fetch_ev_preview()),
+        ("fetch_ev_recap_full", lambda: mod.fetch_ev_recap()),
+        ("fetch_ev_stats_hr_full", lambda: mod.fetch_ev_stats("hr")),
+        ("fetch_ev_strikeouts_full", lambda: mod.fetch_ev_strikeouts()),
     ]
     for name, fn in tests:
         try:
             r = fn()
             results[name] = {"type": str(type(r)), "len": len(r) if hasattr(r, "__len__") else None,
-                              "sample": str(r)[:300]}
+                              "full": json.dumps(r, default=str)[:600]}
         except Exception as e:
             import traceback
             results[name] = {"error": str(e)[:300], "trace": traceback.format_exc()[:500]}
@@ -43,7 +41,7 @@ def main():
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP remaining evsharps fns test", "results": results}, default=str)}}},
+        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evsharps round2", "results": results}, default=str)}}},
     )
     print("push:", resp.status_code)
     return 0
