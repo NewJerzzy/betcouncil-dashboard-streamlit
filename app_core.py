@@ -13520,7 +13520,7 @@ def load_sport_data(sport):
     def _pf_wynnbet_lines():   return fetch_wynnbet_game_lines(sport)
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
-    def _pf_sharpapi_lines():  return fetch_sharpapi_lines(sport)
+    def _pf_sharpapi_lines():  return []  # SharpAPI removed (Aug 1 2026) -- redundant with EVSharps (free EV) + ODDS_API_IO_KEY (Pinnacle), user declined to pay for anything SharpAPI would add
     def _pf_bookmaker_lines(): return fetch_bookmaker_game_lines(sport)
     def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
@@ -13534,9 +13534,9 @@ def load_sport_data(sport):
     def _pf_caesars_lines():
         return fetch_caesars_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
-    def _pf_fd_props_sa():   return fetch_fanduel_props_sharpapi(sport)
-    def _pf_sharpapi_drops(): return fetch_sharpapi_line_drops(sport)
-    def _pf_sharpapi_ev():   return fetch_sharpapi_ev_opportunities(sport)
+    def _pf_fd_props_sa():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
+    def _pf_sharpapi_drops(): return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
+    def _pf_sharpapi_ev():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
@@ -13771,7 +13771,7 @@ def load_sport_data(sport):
             return _out
         except Exception:
             return []
-    def _pf_sharpapi_props():  return fetch_sharpapi_props(sport)
+    def _pf_sharpapi_props():  return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_savant_xstats():   return fetch_savant_statcast() if sport == "MLB" else {}
     def _pf_savant_sprint():   return fetch_savant_sprint_speed() if sport == "MLB" else {}
     def _pf_savant_expected(): return fetch_savant_expected_stats() if sport == "MLB" else {}
