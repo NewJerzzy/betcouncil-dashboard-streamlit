@@ -68,25 +68,19 @@ def _try_json_get(url: str, referer: str = None):
 
 
 def fetch_value_bets_html_snippet(sport: str, slug: str):
-    """Diagnostic: fetch the real HTML page and look for embedded JSON."""
+    """Diagnostic: fetch the real HTML page and look for the data table structure."""
     import re
     try:
         r = requests.get(f"https://evbets.app/value-bets/{slug}",
                           headers={**HEADERS, "Accept": "text/html"}, timeout=15)
         text = r.text
-        patterns = {
-            "__NEXT_DATA__": r'__NEXT_DATA__"[^>]*>([^<]+)<',
-            "__NUXT__": r'window\.__NUXT__\s*=\s*(\{.+?\});?\s*</script>',
-            "__INITIAL_STATE__": r'__INITIAL_STATE__\s*=\s*(\{.+?\});?\s*</script>',
-            "application/json script": r'<script[^>]*type="application/json"[^>]*>([^<]+)</script>',
-        }
-        found = {}
-        for name, pat in patterns.items():
-            m = re.search(pat, text, re.DOTALL)
-            if m:
-                found[name] = len(m.group(1))
-        return {"status": r.status_code, "len": len(text), "found_patterns": found,
-                "snippet": text[:500], "mid_snippet": text[len(text)//2:len(text)//2+500]}
+        # find class names that look like they hold row/odds/ev data
+        class_names = set(re.findall(r'class="([a-zA-Z0-9_-]*(?:row|odds|ev-|bet-card|value-bet|table)[a-zA-Z0-9_-]*)"', text, re.IGNORECASE))
+        # find a snippet around the first "%" (likely an EV percentage) beyond the nav area
+        pct_idx = text.find("%", 20000)
+        pct_context = text[max(0,pct_idx-400):pct_idx+200] if pct_idx > 0 else "no %% found after byte 20000"
+        return {"status": r.status_code, "len": len(text), "candidate_classes": list(class_names)[:20],
+                "pct_context": pct_context}
     except Exception as e:
         return {"error": str(e)[:200]}
 
