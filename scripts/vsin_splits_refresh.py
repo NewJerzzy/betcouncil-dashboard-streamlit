@@ -77,7 +77,7 @@ import random
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 TARGET_FILE = "betcouncil_vsin_splits.json"
-LEGACY_FILE = "betcouncil_oddsshark_NBA.json"  # dead 143b placeholder — repurposed on first run
+LEGACY_FILE = "betcouncil_scoresandodds_debug.json"  # confirmed diagnostic-only, safe to repurpose (real oddsshark_NBA.json is active data, NOT dead -- do not target that)
 BASE_URL = "https://data.vsin.com/betting-splits"
 HEADERS = {
     "User-Agent": (
