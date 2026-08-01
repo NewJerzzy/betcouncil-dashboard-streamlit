@@ -9026,7 +9026,6 @@ with tabs[9]:
         # ── New book sources added today ────────────────────────────────────
         _ls_add(st.session_state.get("bovada_props", []), "Bovada")
         _ls_add(st.session_state.get("caesars_props", []), "Caesars")
-        _ls_add(st.session_state.get("sharpapi_props", []), "SharpAPI")
         # BetOnline/BetMGM/Bovada game lines → convert to prop format for line shop
         for _bol in (st.session_state.get("betonline_offering", []) or []):
             if _bol.get("market","") == "Total":
@@ -9773,15 +9772,8 @@ with tabs[11]:
         _src_statuses.append({"Source": "EV Line Movement (S8/S9)", "Status": "⚪ Load board to activate", "Action": "Snapshot engine ready"})
 
 
-    try:
-        from fetchers import _sharpapi_key as _sk_fn; _sharpapi_key_present = bool(_sk_fn())
-    except Exception: _sharpapi_key_present = False
-    # FanDuel props (via SharpAPI)
-    _fd_sa_st = st.session_state.get("fanduel_props_sa", [])
-    _src_statuses.append({"Source": "FanDuel props (SharpAPI)",
-        "Status": (f"🟢 {len(_fd_sa_st)} props" if _fd_sa_st
-                   else ("🟡 Add SHARPAPI_KEY to secrets" if not _sharpapi_key_present else "⚪ Loading...")),
-        "Action": "None"})
+    # FanDuel props (SharpAPI) status row removed Aug 1 2026 along with the
+    # feature itself -- see fetch_sharpapi_lines comment in fetchers.py
 
     # Scanbet Pinnacle drops (GraphQL via bookmarklet)
     try:
@@ -9803,13 +9795,8 @@ with tabs[11]:
         st.session_state["unified_sharp_board"] = []
         print(f"[WARN] unified_sharp_score: {_usb_err}")
 
-    # SharpAPI line movement + EV
-    _sa_dr = st.session_state.get("sharpapi_line_drops", [])
-    _sa_ev = st.session_state.get("sharpapi_ev_opps", [])
-    _src_statuses.append({"Source": "SharpAPI (Pinnacle steam + +EV)",
-        "Status": (f"🟢 {len(_sa_dr)} steam | {len(_sa_ev)} +EV"
-                   if _sa_dr or _sa_ev else "🟡 Add SHARPAPI_KEY to secrets"),
-        "Action": "None"})
+    # SharpAPI line movement + EV status row removed Aug 1 2026 along with
+    # the feature itself -- redundant with EVSharps (free) + ODDS_API_IO_KEY
 
     # Signal Odds
     _so_ev   = st.session_state.get("signalodds_events", [])
@@ -9898,7 +9885,7 @@ with tabs[11]:
     # for anything not explicitly classified rather than dropping it.
     _SRC_ROLE_MAP = {
         "pinnacle": "Core Lines & Sharp Signals", "circa": "Core Lines & Sharp Signals",
-        "scanbet": "Core Lines & Sharp Signals", "sharpapi": "Core Lines & Sharp Signals",
+        "scanbet": "Core Lines & Sharp Signals",
         "ev sharps": "Core Lines & Sharp Signals", "oddsapi": "Core Lines & Sharp Signals",
         "oddspapi": "Core Lines & Sharp Signals", "bookmaker.eu": "Core Lines & Sharp Signals",
         "heritage sports": "Core Lines & Sharp Signals", "ev line movement": "Core Lines & Sharp Signals",
