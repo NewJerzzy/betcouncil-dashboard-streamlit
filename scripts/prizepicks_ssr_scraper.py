@@ -101,6 +101,61 @@ def split_by_league(payload: dict) -> dict:
     return result
 
 
+_SPORT_STAT_HINTS = {
+    "MLB": {"strikeouts", "hits+runs+rbis", "total bases", "home runs", "earned runs allowed",
+            "hits allowed", "walks allowed", "stolen bases", "hitter fantasy score",
+            "pitcher fantasy score", "runs+rbis"},
+    "TENNIS": {"aces", "double faults", "total games", "total games won", "total sets",
+               "total tie breaks", "break points won", "fantasy score"},
+    "NBA": {"points", "rebounds", "assists", "pts+rebs+asts", "3-pt made", "blocks", "steals"},
+    "NHL": {"shots on goal", "saves", "goals", "points", "blocked shots"},
+    "NFL": {"passing yards", "rushing yards", "receiving yards", "receptions", "pass attempts"},
+    "SOCCER": {"shots on target", "shots", "fantasy score", "tackles"},
+    "UFC": {"significant strikes", "takedowns", "fight time"},
+    "GOLF": {"strokes", "birdies", "fairways hit"},
+}
+
+
+def _revalidate_league_by_stat_type(by_league: dict) -> dict:
+    """
+    Safety net: if a league's own projections are dominated by stat types
+    that clearly belong to a DIFFERENT sport than its label (per
+    _SPORT_STAT_HINTS), split those mismatched projections out and
+    reroute them to the sport their stat types actually indicate,
+    rather than trusting a league field that's occasionally wrong.
+    Only acts when the mismatch is a strong majority (>=80% of a
+    league's projections point to one specific other sport) --
+    a handful of ambiguous/shared stat names (like "Fantasy Score",
+    used by multiple sports) shouldn't trigger a reroute on their own.
+    """
+    result = {}
+    for league_key, body in by_league.items():
+        data = body.get("data", [])
+        included = body.get("included", [])
+        if not data:
+            result[league_key] = body
+            continue
+        votes = {}
+        for proj in data:
+            st = str(proj.get("attributes", {}).get("stat_type", "")).lower()
+            for sport, hints in _SPORT_STAT_HINTS.items():
+                if st in hints and sport != league_key:
+                    votes[sport] = votes.get(sport, 0) + 1
+        if not votes:
+            result[league_key] = body
+            continue
+        top_sport, top_count = max(votes.items(), key=lambda x: x[1])
+        if top_count / len(data) >= 0.80:
+            log(f"{league_key}: {top_count}/{len(data)} projections are actually "
+                f"{top_sport}-type stats (PrizePicks mislabeled league) -- rerouting")
+            result.setdefault(top_sport, {"data": [], "included": []})
+            result[top_sport]["data"].extend(data)
+            result[top_sport]["included"].extend(included)
+        else:
+            result[league_key] = body
+    return result
+
+
 def push_league_files(by_league: dict) -> int:
     import time
     import random
@@ -159,6 +214,7 @@ def main() -> int:
         return 1
 
     by_league = split_by_league(payload)
+    by_league = _revalidate_league_by_stat_type(by_league)
     for k, v in by_league.items():
         log(f"  {k}: {len(v['data'])} props")
 

@@ -312,7 +312,7 @@ with tabs[0]:
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
         <div class="command-card" style="display:flex;flex-direction:column;align-items:center;padding:14px 16px;" title="Rolling 20-bet hit rate">
             <div style="width:64px;height:64px;border-radius:50%;background:conic-gradient({_hr_color} {_hr_deg}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;">
-                <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:{_hr_color};">{_hr_pct:.0f}%</div>
+                <div style="width:48px;height:48px;border-radius:50%;background:var(--bc-bg-card);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.9rem;color:#ffffff;">{_hr_pct:.0f}%</div>
             </div>
             <div class="command-label" style="margin-top:8px;">Hit Rate (L20)</div>
         </div>
@@ -411,17 +411,17 @@ with tabs[0]:
             <div class="command-label" style="margin-bottom:10px;">Market Climate</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Sharp Movement</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="Whether betting lines are actively moving right now. Lines move when real money comes in on one side of a bet.">Sharp Movement</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_sharp_pct}%;height:100%;background:#4db8ff;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_climate["verdict"]}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Reverse Line Move</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="A line moving the OPPOSITE way from where most public bets are placed — often a sign that large/sharp bettors are betting the other side, even though most people are betting the other way.">Reverse Line Move</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_rlm_pct}%;height:100%;background:#e8a020;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{_mc_rlm_count} flagged</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;">Book Discrepancy</span>
+                    <span style="font-size:0.75rem;color:var(--bc-muted);width:130px;border-bottom:1px dotted var(--bc-dim);cursor:help;" title="Cases where different sportsbooks are offering noticeably different odds or lines on the same bet right now — sometimes a sign one book hasn't updated yet, which can mean a better price is available elsewhere.">Book Discrepancy</span>
                     <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;"><div style="width:{_mc_disc_pct}%;height:100%;background:#f5c518;border-radius:3px;"></div></div>
                     <span style="font-size:0.75rem;color:var(--bc-dim);width:60px;text-align:right;">{len(_mc_disc)} found</span>
                 </div>
@@ -1555,7 +1555,17 @@ with tabs[0]:
                             _mid = (_bid + _ask) / 2 if (_bid or _ask) else float(m.get("last_price") or 0)
                         except (TypeError, ValueError):
                             _mid = 0
-                        _krows.append(f'{m.get("title","")}: {_mid*100:.0f}%')
+                        # Kalshi's own "title" field is identical across every
+                        # team-specific market in an event (e.g. both markets
+                        # under "Cleveland vs Tampa Bay Winner?" share that
+                        # exact title) -- confirmed against real captured
+                        # data. The actual team this specific market resolves
+                        # on is only stated in rules_primary ("If Cleveland
+                        # wins..."), so pull it from there instead of
+                        # re-displaying the shared, team-less title.
+                        _k_team_m = re.search(r"If (.+?) wins", m.get("rules_primary", "") or "")
+                        _k_label = _k_team_m.group(1) if _k_team_m else m.get("title", "")
+                        _krows.append(f'{_k_label}: {_mid*100:.0f}%')
                     _krows_str = " · ".join(_krows)
                     _kalshi_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #6366f1;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><div style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{_kev.get("title","")}</div><div style="font-size:0.9rem;color:var(--bc-muted);">{_krows_str}</div></div>')
             st.markdown("".join(_kalshi_html), unsafe_allow_html=True)
@@ -3146,7 +3156,7 @@ with tabs[3]:
                 f'</div>'
                 f'<div style="width:72px;height:72px;border-radius:50%;background:conic-gradient({_gl_hero_tc} {_gl_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
                 f'<div style="width:58px;height:58px;border-radius:50%;background:var(--bc-bg-card);display:flex;flex-direction:column;align-items:center;justify-content:center;">'
-                f'<div style="font-weight:800;font-size:1.1rem;color:{_gl_hero_tc};">{_gl_edge_pct:.1f}%</div>'
+                f'<div style="font-weight:800;font-size:1.1rem;color:#ffffff;">{_gl_edge_pct:.1f}%</div>'
                 f'<div style="font-size:0.5rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
                 f'</div></div>'
                 f'</div>',
@@ -3307,12 +3317,26 @@ with tabs[3]:
                     f'padding:2px 8px;border-radius:10px;background:{_vsin_color}22;color:{_vsin_color};'
                     f'border:0.5px solid {_vsin_color}44;margin-left:6px;">{_vsin_icon} Nevada</span>'
                 )
+            _gl_row_best = max(_picks, key=lambda p: abs(p["edge"]))
+            _gl_row_tc = _tc2.get(_gl_row_best["tier"], "#6a7a8a")
+            _gl_row_edge_pct = _gl_row_best["edge"] * 100
+            _gl_row_ring_deg = min(1.0, abs(_gl_row_edge_pct) / 15.0) * 360
+            _gl_row_ring_html = (
+                f'<div style="width:40px;height:40px;border-radius:50%;'
+                f'background:conic-gradient({_gl_row_tc} {_gl_row_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);'
+                f'display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:auto;">'
+                f'<div style="width:32px;height:32px;border-radius:50%;background:var(--bc-bg-card);'
+                f'display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+                f'<div style="font-weight:800;font-size:0.68rem;color:#ffffff;">{_gl_row_edge_pct:.1f}%</div>'
+                f'<div style="font-size:0.4rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
+                f'</div></div>'
+            )
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:19px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -3661,6 +3685,290 @@ with tabs[3]:
         _cov_data = st.session_state.get("covers_consensus", [])
         _home_nm, _away_nm = _g.get("home", ""), _g.get("away", "")
 
+        # Match WiseGuyTeam sharp-report data to this game -- a second,
+        # independent public-tickets-vs-money source alongside Action
+        # Network, fed into the exact same _ml_public/_ml_sharp etc lists
+        # below so it flows through the existing consensus verdict rather
+        # than creating a separate, redundant display.
+        _wgt_game = None
+        try:
+            _wgt_data = load_from_gist(f"wiseguyteam_{_gsport.upper()}", None) or {}
+            for _wg in _wgt_data.get("games", []):
+                _wg_home, _wg_away = _wg.get("home_team", ""), _wg.get("away_team", "")
+                if _wg_home and _wg_away and _home_nm and _away_nm and (
+                    _wg_home.lower() in _home_nm.lower() or _home_nm.lower() in _wg_home.lower()
+                ) and (
+                    _wg_away.lower() in _away_nm.lower() or _away_nm.lower() in _wg_away.lower()
+                ):
+                    _wgt_game = _wg
+                    break
+        except Exception:
+            _wgt_game = None
+
+        # Sleeper live score + confirmed starting lineup -- MLB only,
+        # BallDontLie live scores -- replaces Sleeper's role here with
+        # broader, officially-documented coverage (MLB/NFL/WNBA confirmed
+        # real access; NHL returns a genuine 401 despite showing FREE on
+        # the account dashboard, not yet resolved). Confirmed via real
+        # official docs that lineups specifically need a paid tier, so
+        # this shows live score only, not lineups (unlike the old Sleeper
+        # slot, which claimed "confirmed lineup" it usually couldn't back
+        # up with real data anyway).
+        _bdl_game = None
+        if _gsport.upper() in ("MLB", "NFL", "WNBA"):
+            try:
+                _bdl_data = load_from_gist(f"bdl_scores_{_gsport.upper()}", None) or {}
+                for _bdl_g in _bdl_data.get("games", []):
+                    _bdl_home_nm = _bdl_g.get("home_team_name", "")
+                    _bdl_away_nm = _bdl_g.get("away_team_name", "")
+                    if _bdl_home_nm and _bdl_away_nm and _home_nm and _away_nm and (
+                        _bdl_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _bdl_home_nm.lower()
+                    ) and (
+                        _bdl_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _bdl_away_nm.lower()
+                    ):
+                        _bdl_game = _bdl_g
+                        break
+            except Exception:
+                _bdl_game = None
+
+        # OddsShark/Covers totals consensus -- genuinely new data (the
+        # existing Covers integration only covers sides/ML, not totals/O-U).
+        # Deliberately NOT wired into the sides/ML consensus lists below,
+        # since that data is the exact same real Covers number the
+        # existing Covers integration already provides -- adding it there
+        # too would double-count one real consensus figure as if two
+        # independent sources agreed on it.
+        _osk_game = None
+        try:
+            _osk_data = load_from_gist(f"oddsshark_consensus_{_gsport.upper()}", None) or {}
+            for _osk_g in _osk_data.get("games", []):
+                _osk_home, _osk_away = _osk_g.get("home_team", ""), _osk_g.get("away_team", "")
+                if _osk_home and _osk_away and _home_nm and _away_nm and (
+                    _osk_home.lower() in _home_nm.lower() or _home_nm.lower() in _osk_home.lower()
+                ) and (
+                    _osk_away.lower() in _away_nm.lower() or _away_nm.lower() in _osk_away.lower()
+                ):
+                    _osk_game = _osk_g
+                    break
+        except Exception:
+            _osk_game = None
+
+        # AreYouWatchingThis multi-book moneyline feed -- real per-book
+        # prices (DraftKings/FanDuel/MGM/Kalshi/Novig/Polymarket/etc, not
+        # just consensus %), was captured but never shown anywhere. Finds
+        # the best real moneyline price across all listed books for each
+        # side of this specific game.
+        _ayw_best = None
+        try:
+            _ayw_data = load_from_gist(f"areyouwatchingthis_{_gsport.upper()}", None) or {}
+            for _ayw_g in _ayw_data.get("games", []):
+                _ayw_t1 = f"{_ayw_g.get('team1_city','')} {_ayw_g.get('team1_name','')}".strip()
+                _ayw_t2 = f"{_ayw_g.get('team2_city','')} {_ayw_g.get('team2_name','')}".strip()
+                if _ayw_t1 and _ayw_t2 and _home_nm and _away_nm and (
+                    (_ayw_t1.lower() in _home_nm.lower() or _home_nm.lower() in _ayw_t1.lower() or
+                     _ayw_g.get("team1_initials","").lower() == _home_nm.lower()[:3]) or
+                    (_ayw_t2.lower() in _home_nm.lower() or _home_nm.lower() in _ayw_t2.lower() or
+                     _ayw_g.get("team2_initials","").lower() == _home_nm.lower()[:3])
+                ):
+                    _ayw_providers = [p for p in _ayw_g.get("providers", []) if p.get("provider") != "CONSENSUS"]
+                    if _ayw_providers:
+                        _best_1 = max(_ayw_providers, key=lambda p: p.get("moneyline_1_american", -9999) or -9999)
+                        _best_2 = max(_ayw_providers, key=lambda p: p.get("moneyline_2_american", -9999) or -9999)
+                        _ayw_best = {
+                            "team1_book": _best_1.get("provider"), "team1_price": _best_1.get("moneyline_1_american"),
+                            "team2_book": _best_2.get("provider"), "team2_price": _best_2.get("moneyline_2_american"),
+                            "n_books": len(_ayw_providers),
+                        }
+                    break
+        except Exception:
+            _ayw_best = None
+        if _ayw_best and _ayw_best.get("team1_price") is not None and _ayw_best.get("team2_price") is not None:
+            try:
+                st.caption(f"💰 Best ML price across {_ayw_best['n_books']} books: "
+                           f"{int(_ayw_best['team2_price']):+d} ({_ayw_best['team2_book'].replace('_',' ').title()}) / "
+                           f"{int(_ayw_best['team1_price']):+d} ({_ayw_best['team1_book'].replace('_',' ').title()})")
+            except (TypeError, ValueError):
+                pass
+
+        # LineTerminal real plain-language trend notes -- MLB only,
+        # matching this source's own real scope. Was captured but never
+        # shown anywhere. Matches by team name against the same
+        # _home_nm/_away_nm used elsewhere in this section.
+        _lt_matchup = None
+        if _gsport.upper() == "MLB":
+            try:
+                _lt_data = load_from_gist("lineterminal_pulse_MLB", None) or {}
+                for _lt_m in (_lt_data.get("data", {}) or {}).get("matchups", []):
+                    _lt_away_side = _lt_m.get("away", {})
+                    _lt_home_side = _lt_m.get("home", {})
+                    _lt_away_nm = _lt_away_side.get("teamName", "")
+                    _lt_home_nm = _lt_home_side.get("teamName", "")
+                    if _lt_away_nm and _lt_home_nm and _home_nm and _away_nm and (
+                        _lt_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _lt_home_nm.lower()
+                    ) and (
+                        _lt_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _lt_away_nm.lower()
+                    ):
+                        _lt_matchup = _lt_m
+                        break
+            except Exception:
+                _lt_matchup = None
+        if _lt_matchup:
+            _lt_notes = []
+            for _lt_side_key in ("away", "home"):
+                for _n in (_lt_matchup.get(_lt_side_key, {}) or {}).get("notes", [])[:2]:
+                    if _n.get("note"):
+                        _lt_notes.append(_n["note"])
+            if _lt_notes:
+                with st.expander(f"📋 LineTerminal trends ({len(_lt_notes)})", expanded=False):
+                    for _n in _lt_notes[:6]:
+                        st.caption(f"• {_n}")
+
+        # Smarkets real betting-exchange prices -- a real, independent
+        # money-backed probability (like Kalshi/Polymarket, which already
+        # show elsewhere in this section), not a bookmaker's posted line.
+        # MLB only, matching current real coverage. event_name is a single
+        # "Team A at Team B" string here rather than separate away/home
+        # fields, so matched differently than the other sources above.
+        _smk_game = None
+        if _gsport.upper() == "MLB":
+            try:
+                _smk_data = load_from_gist("smarkets_game_lines_MLB", None) or {}
+                for _smk_g in _smk_data.get("games", []):
+                    _smk_evt = _smk_g.get("event_name", "")
+                    if _smk_evt and _home_nm and _away_nm and (
+                        _home_nm.split()[-1].lower() in _smk_evt.lower() and
+                        _away_nm.split()[-1].lower() in _smk_evt.lower()
+                    ):
+                        _smk_game = _smk_g
+                        break
+            except Exception:
+                _smk_game = None
+        if _smk_game:
+            _smk_ml_market = next((m for m in _smk_game.get("markets", []) if m.get("market_type") == "WINNER_2_WAY"), None)
+            if _smk_ml_market:
+                _smk_vol = _smk_ml_market.get("volume_pence")
+                st.markdown('<div style="font-size:12px;color:#6a8aab;margin-top:6px;">🔄 Smarkets exchange</div>', unsafe_allow_html=True)
+                for _c in _smk_ml_market.get("contracts", []):
+                    try:
+                        _smk_back = float(_c.get("best_back_price") or 0)
+                        _smk_lay = float(_c.get("best_lay_price") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if not (_smk_back or _smk_lay):
+                        continue
+                    _smk_back_pct = max(0.0, min(100.0, _smk_back * 100))
+                    _smk_lay_pct = max(0.0, min(100.0, _smk_lay * 100))
+                    st.markdown(
+                        f'<div style="margin-bottom:6px;">'
+                        f'<div style="display:flex;justify-content:space-between;font-size:12px;color:#c9bce8;">'
+                        f'<span>{_c.get("name","")}</span>'
+                        f'<span>Back {_smk_back*100:.0f}¢ / Lay {_smk_lay*100:.0f}¢</span>'
+                        f'</div>'
+                        f'<div style="position:relative;height:8px;border-radius:4px;background:#1a2a3a;overflow:hidden;">'
+                        f'<div style="position:absolute;left:0;width:{_smk_back_pct}%;height:100%;background:#22c55e88;"></div>'
+                        f'<div style="position:absolute;right:0;width:{100-_smk_lay_pct}%;height:100%;background:#e0404088;"></div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
+                if _smk_vol:
+                    try:
+                        st.caption(f"Volume £{float(_smk_vol)/100:,.0f}")
+                    except (TypeError, ValueError):
+                        pass
+
+        # Novig real exchange prices via The Odds API (novig_odds_refresh.py)
+        # -- same category as the Smarkets block above (real money-backed
+        # exchange, not a bookmaker's posted line), all sports rather than
+        # MLB-only. Captured but never shown anywhere until now.
+        _nvg_game = None
+        try:
+            _nvg_data = load_from_gist("novig_odds", None) or {}
+            for _nvg_g in _nvg_data.get("events", []):
+                _nvg_home, _nvg_away = _nvg_g.get("home_team", ""), _nvg_g.get("away_team", "")
+                if _nvg_home and _nvg_away and _home_nm and _away_nm and (
+                    _nvg_home.lower() in _home_nm.lower() or _home_nm.lower() in _nvg_home.lower()
+                ) and (
+                    _nvg_away.lower() in _away_nm.lower() or _away_nm.lower() in _nvg_away.lower()
+                ):
+                    _nvg_game = _nvg_g
+                    break
+        except Exception:
+            _nvg_game = None
+        if _nvg_game:
+            _nvg_h2h = (_nvg_game.get("novig_markets") or {}).get("h2h", [])
+            if _nvg_h2h:
+                _nvg_parts = []
+                for _o in _nvg_h2h:
+                    if _o.get("price") is not None:
+                        try:
+                            _nvg_parts.append(f"{_o.get('name','')} {int(_o['price']):+d}")
+                        except (TypeError, ValueError):
+                            pass
+                if _nvg_parts:
+                    st.caption(f"🔄 Novig exchange: {' vs '.join(_nvg_parts)}")
+
+        # SportsInsights public betting % (bets on spread/total/ML per side)
+        # -- real fresh data, was being scraped every cycle but silently
+        # discarded due to a key mismatch (fetch function expected "data",
+        # real payload uses "games"). Fixed same session this was found.
+        try:
+            _si_games = st.session_state.get("sportsinsights_games", [])
+            _si_game = next((g for g in _si_games if _home_nm and _away_nm and (
+                str(g.get("home_team","")).lower() in _home_nm.lower() or _home_nm.lower() in str(g.get("home_team","")).lower()
+            ) and (
+                str(g.get("away_team","")).lower() in _away_nm.lower() or _away_nm.lower() in str(g.get("away_team","")).lower()
+            )), None)
+        except Exception:
+            _si_game = None
+        if _si_game:
+            _si_parts = []
+            for label, key in (("Spread", "home_pct_spread"), ("Total", "home_pct_ou"), ("ML", "home_pct_ml")):
+                v = _si_game.get(key)
+                if v is not None:
+                    _si_parts.append(f"{label} {v}% home")
+            if _si_parts:
+                st.caption(f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)} ({_si_game.get('total_bets','?'):,} bets)" if isinstance(_si_game.get("total_bets"), (int, float)) else f"👥 Public bets (SportsInsights): {' · '.join(_si_parts)}")
+
+        # MLB probable pitchers -- team-keyed, includes Savant FIP/xFIP/
+        # xwOBA/K%/BB% enrichment already built in. Confirmed unused
+        # anywhere in the codebase before this.
+        if _gsport == "MLB":
+            try:
+                _mlb_pitchers = st.session_state.get("mlb_probable_pitchers", {})
+                _mp_home = next((v for k, v in _mlb_pitchers.items() if _home_nm and (k.lower() in _home_nm.lower() or _home_nm.lower() in k.lower())), None)
+                _mp_away = next((v for k, v in _mlb_pitchers.items() if _away_nm and (k.lower() in _away_nm.lower() or _away_nm.lower() in k.lower())), None)
+            except Exception:
+                _mp_home = _mp_away = None
+            _mp_parts = []
+            for _mp in (_mp_away, _mp_home):
+                if _mp and _mp.get("pitcher"):
+                    _mp_fip = _mp.get("fip_live")
+                    _mp_parts.append(f"{_mp['pitcher']}" + (f" (FIP {_mp_fip})" if _mp_fip is not None else ""))
+            if _mp_parts:
+                st.caption(f"⚾ Probable pitchers: {' vs '.join(_mp_parts)}")
+
+        if _bdl_game:
+            _bdl_home_data = _bdl_game.get("home_team_data") or {}
+            _bdl_away_data = _bdl_game.get("away_team_data") or {}
+            _bdl_status = _bdl_game.get("status", "")
+            _bdl_score_txt = None
+            if _bdl_away_data.get("runs") is not None and _bdl_home_data.get("runs") is not None:
+                _bdl_score_txt = f"{_bdl_away_data.get('runs')}-{_bdl_home_data.get('runs')} ({_bdl_status})"
+            elif _bdl_status:
+                _bdl_score_txt = _bdl_status
+            with st.expander("📊 BallDontLie: live score" + (f" — {_bdl_score_txt}" if _bdl_score_txt else ""), expanded=False):
+                _bdl_c1, _bdl_c2 = st.columns(2)
+                with _bdl_c1:
+                    st.markdown(f"**{_away_nm}**")
+                    if _bdl_away_data:
+                        st.caption(f"R: {_bdl_away_data.get('runs','?')}  H: {_bdl_away_data.get('hits','?')}  E: {_bdl_away_data.get('errors','?')}")
+                with _bdl_c2:
+                    st.markdown(f"**{_home_nm}**")
+                    if _bdl_home_data:
+                        st.caption(f"R: {_bdl_home_data.get('runs','?')}  H: {_bdl_home_data.get('hits','?')}  E: {_bdl_home_data.get('errors','?')}")
+                if _bdl_game.get("venue"):
+                    st.caption(f"📍 {_bdl_game['venue']}")
+
         # Match Covers data to this game
         _cov_game = None
         if isinstance(_cov_data, dict):
@@ -3814,6 +4122,18 @@ with tabs[3]:
                     (_ml_sharp if _vsin_sig.get("confirms") else _ml_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig.get("confirms") else "opposite of model", _vsin_sig["note"])
                     )
+                if _wgt_game and _wgt_game.get("ml"):
+                    _wgt_ml = _wgt_game["ml"]
+                    _wgt_s1, _wgt_s2 = _wgt_ml.get("side1", {}), _wgt_ml.get("side2", {})
+                    if _wgt_s1.get("bet_pct") is not None:
+                        _wgt_pub_side = _away_nm if _wgt_s1.get("bet_pct", 0) > _wgt_s2.get("bet_pct", 0) else _home_nm
+                        _wgt_pub_pct = max(_wgt_s1.get("bet_pct", 0), _wgt_s2.get("bet_pct", 0))
+                        _ml_public.append(("WiseGuyTeam tickets", _wgt_pub_side, f"{_wgt_pub_pct}% of bets"))
+                    if _wgt_ml.get("sharp_side"):
+                        _wgt_sharp_side = _away_nm if _wgt_ml["sharp_side"] == "side1" else _home_nm
+                        _wgt_sharp_d = _wgt_s1 if _wgt_ml["sharp_side"] == "side1" else _wgt_s2
+                        _ml_sharp.append(("WiseGuyTeam money", _wgt_sharp_side,
+                                          f"{_wgt_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_sharp_d.get('bet_pct','?')}% of bets"))
                 _consensus_verdict("Moneyline", _ml_public, _ml_sharp)
 
                 # -- Spread: Action Network spread tickets/money + steam on spread
@@ -3834,6 +4154,17 @@ with tabs[3]:
                     (_sp_sharp if _vsin_sig_sp.get("confirms") else _sp_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig_sp.get("confirms") else "opposite of model", _vsin_sig_sp["note"])
                     )
+                if _wgt_game and _wgt_game.get("spread"):
+                    _wgt_sp = _wgt_game["spread"]
+                    _wgt_sp1, _wgt_sp2 = _wgt_sp.get("side1", {}), _wgt_sp.get("side2", {})
+                    if _wgt_sp1.get("bet_pct") is not None:
+                        _wgt_sp_pub_side = _away_nm if _wgt_sp1.get("bet_pct", 0) > _wgt_sp2.get("bet_pct", 0) else _home_nm
+                        _sp_public.append(("WiseGuyTeam tickets", _wgt_sp_pub_side, f"{max(_wgt_sp1.get('bet_pct',0), _wgt_sp2.get('bet_pct',0))}% of bets"))
+                    if _wgt_sp.get("sharp_side"):
+                        _wgt_sp_sharp_side = _away_nm if _wgt_sp["sharp_side"] == "side1" else _home_nm
+                        _wgt_sp_sharp_d = _wgt_sp1 if _wgt_sp["sharp_side"] == "side1" else _wgt_sp2
+                        _sp_sharp.append(("WiseGuyTeam money", _wgt_sp_sharp_side,
+                                          f"{_wgt_sp_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_sp_sharp_d.get('bet_pct','?')}% of bets"))
                 _consensus_verdict("Spread", _sp_public, _sp_sharp)
 
                 # -- Total: Action Network total tickets/money + steam on total
@@ -3857,6 +4188,21 @@ with tabs[3]:
                     (_tot_sharp if _vsin_sig_tot.get("confirms") else _tot_public).append(
                         ("VSIN Nevada", "model's pick" if _vsin_sig_tot.get("confirms") else "opposite of model", _vsin_sig_tot["note"])
                     )
+                if _wgt_game and _wgt_game.get("total"):
+                    _wgt_tot = _wgt_game["total"]
+                    _wgt_t1, _wgt_t2 = _wgt_tot.get("side1", {}), _wgt_tot.get("side2", {})
+                    if _wgt_t1.get("bet_pct") is not None:
+                        _wgt_tot_pub_side = "Over" if _wgt_t1.get("bet_pct", 0) > _wgt_t2.get("bet_pct", 0) else "Under"
+                        _tot_public.append(("WiseGuyTeam tickets", _wgt_tot_pub_side, f"{max(_wgt_t1.get('bet_pct',0), _wgt_t2.get('bet_pct',0))}% of bets"))
+                    if _wgt_tot.get("sharp_side"):
+                        _wgt_tot_sharp_side = "Over" if _wgt_tot["sharp_side"] == "side1" else "Under"
+                        _wgt_tot_sharp_d = _wgt_t1 if _wgt_tot["sharp_side"] == "side1" else _wgt_t2
+                        _tot_sharp.append(("WiseGuyTeam money", _wgt_tot_sharp_side,
+                                          f"{_wgt_tot_sharp_d.get('handle_pct','?')}% of $ vs {_wgt_tot_sharp_d.get('bet_pct','?')}% of bets"))
+                if _osk_game and _osk_game.get("consensus_ou_side"):
+                    _osk_side = _osk_game["consensus_ou_side"].capitalize()
+                    _osk_pct = max(_osk_game.get("over_pct", 0) or 0, _osk_game.get("under_pct", 0) or 0)
+                    _tot_public.append(("OddsShark/Covers", _osk_side, f"{_osk_pct}% of public picks"))
                 _consensus_verdict("Total", _tot_public, _tot_sharp)
 
                 st.markdown("---")
@@ -7747,6 +8093,129 @@ with tabs[7]:
             pl_name_d = st.session_state.get("pl_name_display", pl_name)
 
             _pl_sport_used = st.session_state.get("pl_sport_used", "NBA")
+
+            # TheScore per-start pitcher lines (K/BB/W-L) -- MLB only,
+            # matching this source's real coverage. Was captured every
+            # 30 min but never shown anywhere until now.
+            if _pl_sport_used == "MLB":
+                try:
+                    _ts_starts = fetch_thescore_pitcher_starts(pl_name_d)
+                except Exception:
+                    _ts_starts = []
+                if _ts_starts:
+                    with st.expander(f"⚾ TheScore: last {min(len(_ts_starts), 10)} starts", expanded=False):
+                        for _ts_s in _ts_starts[:10]:
+                            st.caption(
+                                f"{_ts_s['date'][:16]} vs {_ts_s.get('opponent','?')} — "
+                                f"K: {_ts_s.get('strikeouts','?')}  BB: {_ts_s.get('walks','?')}  "
+                                f"W-L: {_ts_s.get('wins',0)}-{_ts_s.get('losses',0)}"
+                            )
+
+            # GamblingForecast batter-vs-this-pitcher matchup history --
+            # MLB only, matching this source's real coverage.
+            if _pl_sport_used == "MLB":
+                try:
+                    _gf_matchup = fetch_gamblingforecast_matchup(pl_name_d)
+                except Exception:
+                    _gf_matchup = {}
+                if _gf_matchup:
+                    _gf_opp = _gf_matchup.get("opp", "?")
+                    _gf_pitcher = _gf_matchup.get("pitcher", "?")
+                    with st.expander(f"🎯 vs {_gf_pitcher} history ({_gf_opp})", expanded=False):
+                        st.caption(
+                            f"AB: {_gf_matchup.get('ab','?')}  H: {_gf_matchup.get('h','?')}  "
+                            f"HR: {_gf_matchup.get('hr','?')}  RBI: {_gf_matchup.get('rbi','?')}  "
+                            f"BB: {_gf_matchup.get('bb','?')}  K: {_gf_matchup.get('k','?')}"
+                        )
+                        st.caption(
+                            f"AVG: {_gf_matchup.get('avg','?')}  OBP: {_gf_matchup.get('obp','?')}  "
+                            f"SLG: {_gf_matchup.get('slg','?')}  OPS: {_gf_matchup.get('ops','?')}"
+                        )
+
+            # BettingPros hit-rate/streak trend data -- covers all 5
+            # sports this source has (MLB/NBA/NHL/WNBA/NFL).
+            if _pl_sport_used in ("MLB", "NBA", "NHL", "WNBA", "NFL"):
+                try:
+                    _bp_props = fetch_bettingpros_hitrate(pl_name_d, _pl_sport_used)
+                except Exception:
+                    _bp_props = []
+                if _bp_props:
+                    _bp_player_info = (_bp_props[0].get("participant", {}) or {}).get("player", {}) or {}
+                    _bp_headshot = _bp_player_info.get("image")
+                    _bp_pos = _bp_player_info.get("position", "")
+                    _bp_team = _bp_player_info.get("team", "")
+                    if _bp_headshot:
+                        _bp_col1, _bp_col2 = st.columns([1, 5])
+                        with _bp_col1:
+                            st.image(_bp_headshot, width=60)
+                        with _bp_col2:
+                            st.caption(f"{_bp_pos} — {_bp_team}" if _bp_pos or _bp_team else "")
+                for _bp in _bp_props[:3]:
+                    _bp_perf = _bp.get("performance", {})
+                    _bp_over = _bp.get("over", {}) or {}
+                    _bp_under = _bp.get("under", {}) or {}
+                    _bp_proj = _bp.get("projection", {}) or {}
+                    _bp_extra = _bp.get("extra", {}) or {}
+                    _bp_stat = _bp.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                    _bp_streak = _bp_perf.get("streak", 0)
+                    _bp_streak_type = _bp_perf.get("streak_type", "")
+                    with st.expander(f"📊 {_bp_stat or 'Prop'} — BettingPros", expanded=False):
+                        # Line/odds/EV/rating -- best available side and consensus
+                        _bp_rec = str(_bp_proj.get("recommended_side", "")).upper()
+                        _bp_side_block = _bp_over if _bp_rec == "OVER" else _bp_under if _bp_rec == "UNDER" else None
+                        if _bp_side_block:
+                            _bp_stars = "⭐" * int(_bp_side_block.get("bet_rating", 0) or 0)
+                            st.markdown(
+                                f"**{_bp_rec}** best line **{_bp_side_block.get('line','?')}** "
+                                f"({_bp_side_block.get('odds','?'):+} odds) {_bp_stars}"
+                                if isinstance(_bp_side_block.get("odds"), (int, float)) else
+                                f"**{_bp_rec}** best line **{_bp_side_block.get('line','?')}** {_bp_stars}"
+                            )
+                            _bp_ev = _bp_side_block.get("expected_value")
+                            _bp_prob = _bp_side_block.get("probability")
+                            if _bp_ev is not None:
+                                st.caption(f"BettingPros model: {_bp_prob:.1%} win probability, {_bp_ev:+.1%} EV" if _bp_prob is not None else f"EV: {_bp_ev:+.1%}")
+                        _bp_cons_line = _bp_over.get("consensus_line")
+                        if _bp_cons_line is not None:
+                            st.caption(f"Consensus line across books: {_bp_cons_line}")
+                        if _bp_proj.get("value") is not None:
+                            st.caption(f"BettingPros projection: {_bp_proj['value']} (diff vs line: {_bp_proj.get('diff', 0):+})")
+                        # MLB-specific context
+                        if _bp_extra.get("opposing_pitcher"):
+                            st.caption(f"Opposing pitcher: {_bp_extra['opposing_pitcher']}")
+                        if "in_lineup" in _bp_extra:
+                            st.caption(f"Lineup status: {'✅ Confirmed' if _bp_extra['in_lineup'] else '⚠️ Not yet confirmed'}")
+                        _bp_opp_rank = _bp_extra.get("opposition_rank")
+                        if _bp_opp_rank and _bp_opp_rank.get("rank"):
+                            st.caption(f"Opponent ranks #{_bp_opp_rank['rank']} vs this stat")
+                        st.markdown("---")
+                        if _bp_streak and _bp_streak_type:
+                            st.caption(f"Current streak: {_bp_streak} games {_bp_streak_type}")
+                        for window in ("last_5", "last_10", "last_20", "season"):
+                            w = _bp_perf.get(window, {})
+                            o, u, psh = w.get("over", 0), w.get("under", 0), w.get("push", 0)
+                            total = o + u + psh
+                            if total:
+                                label = window.replace("last_", "Last ").replace("season", "Season").title()
+                                st.caption(f"{label}: {o}-{u}" + (f"-{psh}" if psh else "") + f" O/U ({total} games)")
+
+            # coverage fetch_numberfire_direct actually has. Matches by
+            # normalized name against the raw scraped rows.
+            if _pl_sport_used in ("NFL", "NBA"):
+                try:
+                    _nf_data = st.session_state.get(f"numberfire_data_{_pl_sport_used}", {}) or {}
+                    _nf_players = _nf_data.get("players", [])
+                    _nf_match = None
+                    _pl_name_norm = normalize_name(pl_name_d)
+                    for _nf_p in _nf_players:
+                        if normalize_name(_nf_p.get("name", "")) == _pl_name_norm:
+                            _nf_match = _nf_p
+                            break
+                    if _nf_match:
+                        st.caption(f"📊 NumberFire: {_nf_match.get('raw_row', '')[:200]}")
+                except Exception:
+                    pass
+
             stat_key_map = {
                 # NBA / WNBA
                 "Points": "pts", "Rebounds": "reb", "Assists": "ast",
@@ -8439,6 +8908,7 @@ with tabs[8]:
             if col_confirm1.button("✅ Submit All Parsed Bets", key="submit_parsed_bets"):
                 submitted = 0
                 _skipped_pending = 0
+                _submit_errors = []
                 for bet in parsed_bets:
                     if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
                         _skipped_pending += 1
@@ -8458,7 +8928,8 @@ with tabs[8]:
                         )
                         log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals)
                         submitted += 1
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as _sbe:
+                        _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
                         continue
                 if submitted > 0:
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
@@ -8469,6 +8940,8 @@ with tabs[8]:
                     st.rerun()
                 elif _skipped_pending:
                     st.warning(f"All {_skipped_pending} parsed bet(s) are still PENDING — nothing to log yet.")
+                if _submit_errors:
+                    st.error("⚠️ " + str(len(_submit_errors)) + " parsed bet(s) failed to log (bad line/wager value most likely from a misread screenshot) — fix these in the review section above and re-submit:\n\n" + "\n".join(f"- {e}" for e in _submit_errors))
             if col_confirm2.button("❌ Clear Parsed Bets", key="clear_parsed_bets"):
                 st.session_state["parsed_bets"] = []
                 st.session_state["ocr_raw_text"] = ""
@@ -8499,6 +8972,24 @@ with tabs[9]:
                 ls_sources.setdefault(k, {}).setdefault(prop, {})[source_name] = float(line)
 
         _ls_add(st.session_state.get("ud_props_compare", []), "Underdog")
+        # ── BettingPros (public props API, best line + cross-book consensus) ──
+        _bp_ls_props, _bp_ls_consensus = [], []
+        for _bp_lp in st.session_state.get("bettingpros_props", []):
+            _bp_lp_player = (_bp_lp.get("participant", {}) or {}).get("player", {}) or {}
+            _bp_lp_name = f"{_bp_lp_player.get('first_name','')} {_bp_lp_player.get('last_name','')}".strip()
+            _bp_lp_stat = _bp_lp.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+            if not _bp_lp_name or not _bp_lp_stat:
+                continue
+            _bp_lp_proj = _bp_lp.get("projection", {}) or {}
+            _bp_lp_side = "over" if str(_bp_lp_proj.get("recommended_side","")).lower() != "under" else "under"
+            _bp_lp_line = _bp_lp.get(_bp_lp_side, {}).get("line")
+            _bp_lp_cons = _bp_lp.get("over", {}).get("consensus_line")
+            if _bp_lp_line is not None:
+                _bp_ls_props.append({"Player": _bp_lp_name, "Prop": _bp_lp_stat, "Line": _bp_lp_line})
+            if _bp_lp_cons is not None:
+                _bp_ls_consensus.append({"Player": _bp_lp_name, "Prop": _bp_lp_stat, "Line": _bp_lp_cons})
+        _ls_add(_bp_ls_props, "BettingPros (best)")
+        _ls_add(_bp_ls_consensus, "BettingPros (consensus)")
         # ── Unabated (data.unabated.com, 15-min cron, no auth/WAF dependency) ──
         # Independent of the token-gated scrapers below — still fresh even
         # when Caesars/Bovada/DK Pick6 tokens have expired since last capture.
@@ -9153,6 +9644,8 @@ with tabs[11]:
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": f"🟢 {len(_oddspapi)} props", "Action": "None"})
     elif "oddspapi" in str(_error_sources).lower():
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "🟡 Rate limited or quota hit", "Action": "Wait for daily reset (100/day, 1000/month)"})
+    elif not ODDSPAPI_KEY:
+        _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "🟡 Add ODDSPAPI_KEY to secrets", "Action": "None"})
     else:
         _src_statuses.append({"Source": "OddsPAPI (DK/FD/BetMGM/Pin/365)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
@@ -9169,13 +9662,6 @@ with tabs[11]:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": f"🟢 {len(_bov)} lines", "Action": "None"})
     else:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
-
-    # Pick6 (SSR scrape via GitHub Actions, no login/browser needed)
-    _pk6 = st.session_state.get("pick6_props_h", [])
-    if _pk6:
-        _src_statuses.append({"Source": "Pick6", "Status": f"🟢 {len(_pk6)} props (auto via GitHub Actions)", "Action": "None"})
-    else:
-        _src_statuses.append({"Source": "Pick6", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Action Network (live public API, no auth needed)
     _an = st.session_state.get("action_network_data", {})
@@ -9648,6 +10134,40 @@ with tabs[11]:
                                 )
     except Exception:
         st.caption("Model self-learning status unavailable right now.")
+
+    # ── Third-Party Model Comparison (plain-language) ─────────────────
+    # Surfaces betcouncil_third_party_calibration.json, which was being
+    # computed daily (real grading against the same ground-truth resolvers
+    # BetCouncil's own board uses) but never shown anywhere. Real names,
+    # real sample-size caveats -- not editorializing about whether any
+    # number is "good," just showing what's actually there honestly.
+    st.markdown("### 📡 Third-Party Model Comparison")
+    try:
+        _tpc = load_from_gist("third_party_calibration", None) or {}
+        _tpc_display_names = {
+            "favoredprops": "FavoredProps", "draftedge": "DraftEdge", "dimers": "Dimers",
+            "covers": "Covers", "lineterminal": "LineTerminal", "wagerbird": "WagerBird",
+            "dk_most_bet": "DK Most Bet",
+        }
+        if not _tpc:
+            st.caption("No comparison data yet.")
+        else:
+            st.caption("Same real games, same grading logic BetCouncil uses on its own board — "
+                       "not a different methodology, so these are directly comparable. Sources with "
+                       "few graded picks so far are marked as too small to read into yet.")
+            for _key, _label in _tpc_display_names.items():
+                _stats = _tpc.get(_key, {})
+                _gradable = _stats.get("gradable", 0)
+                _wins = _stats.get("wins", 0)
+                _losses = _stats.get("losses", 0)
+                if _gradable < 30:
+                    st.caption(f"**{_label}**: only {_gradable} graded picks so far — too small to read into yet.")
+                else:
+                    _wr = _wins / _gradable if _gradable else 0
+                    st.markdown(f"**{_label}**: {_wr:.1%} hit rate over {_gradable:,} graded picks "
+                                f"({_wins:,}-{_losses:,})")
+    except Exception:
+        st.caption("Third-party comparison data unavailable right now.")
 
     # ── Harvester Health Monitor ─────────────────────────────────────
     # Checks actual Gist captured_at ages against each source's expected
@@ -11456,34 +11976,6 @@ with tabs[1]:
         if shortlist["props"] and shortlist["games"]:
             st.markdown("**🧮 Should you parlay props + game lines together, all in one slip?**")
             _nb_verdict_card(evaluate_parlay_verdict(props_legs + games_legs))
-
-        # ── FanDuel Parlay Hub: not per-pick matchable, shown as its own block ──
-        if cmp.get("fd_parlayhub"):
-            st.markdown("#### 🔷 FanDuel Parlay Hub")
-            for sport, items in cmp["fd_parlayhub"].items():
-                st.markdown(f'<span style="color:#8ab4d4;font-size:12px;font-weight:700;">{sport}</span>', unsafe_allow_html=True)
-                for item in items[:5]:
-                    if isinstance(item, dict) and "narrative" in item:
-                        _fd_odds = item.get("american_odds")
-                        _fd_odds_str = f"+{_fd_odds}" if isinstance(_fd_odds, (int, float)) and _fd_odds > 0 else str(_fd_odds or "")
-                        _fd_text = (
-                            f'<b>{item.get("narrative") or item.get("matchup") or item.get("type","")}</b>'
-                            f'<div style="color:#8ab4d4;font-size:11px;margin-top:2px;">'
-                            f'{item.get("type","")} · {item.get("num_legs","?")} legs · {_fd_odds_str} · '
-                            f'{item.get("total_bets","?")} bets placed</div>'
-                        )
-                    else:
-                        _fd_text = str(item)[:140]
-                    st.markdown(
-                        f'<div style="background:{_SOURCE_STYLE["fd"]["color"]}15;border:1px solid {_SOURCE_STYLE["fd"]["color"]}44;'
-                        f'border-radius:6px;padding:6px 10px;margin-bottom:5px;font-size:12px;color:#e6edf3;">'
-                        f'{_fd_text}</div>', unsafe_allow_html=True
-                    )
-        elif comparison:
-            st.caption(
-                "🔷 No FanDuel Parlay Hub data yet — open scripts/tampermonkey_fanduel_parlayhub_harvester.user.js, "
-                "fill in the Parlay Hub endpoint, install it, and browse Parlay Hub in a logged-in FanDuel tab."
-            )
     else:
         st.caption("Click the button above to scan today's boards and check them against the public sources.")
 
@@ -11650,4 +12142,74 @@ with tabs[13]:
                 st.caption(f"Showing top 60 of {len(_ms_all_props)} props by {_ms_sort.lower()}.")
     except Exception:
         st.info("Market Scanner data unavailable right now — try loading a board first.")
+
+    # ── Kalshi order book ──────────────────────────────────────────
+    # Real bid/ask spread + volume/liquidity/open interest per market
+    # (same fields the Game Lines Kalshi block reads, just shown per-market
+    # instead of collapsed to one midpoint %). For multi-strike totals
+    # events, shows the real implied-probability distribution across
+    # strikes instead of just the top market -- genuine depth data that
+    # was already being fetched but not displayed anywhere.
+    try:
+        _mko_events = st.session_state.get("kalshi_events_scraped", [])
+    except Exception:
+        _mko_events = []
+    if _mko_events:
+        st.markdown('<div class="ms-glow-line" style="margin-top:1.2rem;"></div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:1.1rem;font-weight:800;color:#f3eeff;margin-bottom:2px;">🔷 Kalshi Order Book</div>', unsafe_allow_html=True)
+        st.caption("Real bid/ask spread, volume, liquidity, and open interest per market. Multi-strike totals show the full implied-probability distribution.")
+
+        def _mko_vol(ev):
+            tot = 0.0
+            for m in ev.get("markets", []):
+                try:
+                    tot += float(m.get("volume") or 0)
+                except (TypeError, ValueError):
+                    pass
+            return tot
+
+        for _mko_ev in sorted(_mko_events, key=_mko_vol, reverse=True)[:8]:
+            _mko_markets = _mko_ev.get("markets") or []
+            if not _mko_markets:
+                continue
+            st.markdown(
+                f'<div class="ms-card" style="padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="color:#f3eeff;font-weight:700;font-size:1.0rem;margin-bottom:6px;">'
+                f'{_mko_ev.get("title","")} <span style="color:#9a86c9;font-size:11px;font-weight:400;">· {_mko_ev.get("sport","")}</span></div>',
+                unsafe_allow_html=True
+            )
+            _mko_sorted_markets = sorted(_mko_markets, key=lambda x: float(x.get("volume") or 0), reverse=True)
+            for _mm in _mko_sorted_markets[:6]:
+                try:
+                    _mko_bid = float(_mm.get("yes_bid") or 0)
+                    _mko_ask = float(_mm.get("yes_ask") or 0)
+                except (TypeError, ValueError):
+                    _mko_bid, _mko_ask = 0.0, 0.0
+                _mko_bid_pct = max(0.0, min(100.0, _mko_bid * 100))
+                _mko_ask_pct = max(0.0, min(100.0, _mko_ask * 100))
+                def _mko_num(v):
+                    try:
+                        return float(v or 0)
+                    except (TypeError, ValueError):
+                        return 0.0
+                _mko_vol_val = _mko_num(_mm.get("volume"))
+                _mko_liq = _mko_num(_mm.get("liquidity"))
+                _mko_oi = _mko_num(_mm.get("open_interest"))
+                st.markdown(
+                    f'<div style="margin-bottom:8px;">'
+                    f'<div style="display:flex;justify-content:space-between;font-size:12px;color:#c9bce8;margin-bottom:2px;">'
+                    f'<span>{_mm.get("title","")}</span>'
+                    f'<span>Bid {_mko_bid*100:.0f}¢ / Ask {_mko_ask*100:.0f}¢</span>'
+                    f'</div>'
+                    f'<div style="position:relative;height:10px;border-radius:5px;background:#1a1428;overflow:hidden;">'
+                    f'<div style="position:absolute;left:0;width:{_mko_bid_pct}%;height:100%;background:#22c55e88;"></div>'
+                    f'<div style="position:absolute;right:0;width:{100-_mko_ask_pct}%;height:100%;background:#e0404088;"></div>'
+                    f'</div>'
+                    f'<div style="font-size:11px;color:#7a6a9c;margin-top:2px;">'
+                    f'Volume ${_mko_vol_val:,.0f} · Liquidity ${_mko_liq:,.0f} · Open Interest {_mko_oi:,.0f}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
 

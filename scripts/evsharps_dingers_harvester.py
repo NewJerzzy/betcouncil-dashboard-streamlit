@@ -122,6 +122,14 @@ def run() -> None:
         data = fetch_json(f"{API_BASE}/api/ev?sport=mlb")
     except Exception as e:
         log(f"ERROR fetching /api/ev: {e}")
+        try:
+            push_to_gist("betcouncil_evsharps_dingers_debug.json", {
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__,
+            })
+        except Exception:
+            pass  # don't let a failed debug push mask the real exit code
         sys.exit(1)
 
     raw_entries = data.get("data", [])

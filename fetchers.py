@@ -5239,6 +5239,115 @@ def fetch_paddypower_lines(sport="NBA"):
     except Exception as e:
         return {}
 
+def fetch_bettingpros_props(sport: str) -> list:
+    """
+    Whole-sport BettingPros props (line/consensus/odds/probability/EV/
+    bet_rating/projection/performance per prop), for the harvester loop
+    -- feeds the SignalNotes overlay in score_pick_standalone, matched
+    per-player the same way GamblingForecast's playerProps is.
+    """
+    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    if not data:
+        return []
+    return data.get("props", [])
+
+
+def fetch_bettingpros_hitrate(player_name, sport="MLB"):
+    """
+    Prop-level hit-rate/streak trend data (last 1/5/10/15/20 games,
+    season, prior season, h2h vs opponent, current streak) from
+    scripts/bettingpros_refresh.py (betcouncil_bettingpros_{sport}.json).
+
+    This is the real data hitrate_logger.py's compute_hit_rate() was
+    always meant to compute but never could (that function is a stub
+    that always returns None, waiting on resolved-outcome data that
+    was never wired in) -- this fills that gap directly instead.
+
+    Returns a list of matching prop dicts (a player can have multiple
+    props -- e.g. Strikeouts and Outs Recorded for a pitcher), each
+    with its own performance/over/under/projection blocks. Matches by
+    participant.player.short_name (BettingPros' own compact format,
+    e.g. "S. Drohan").
+    """
+    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    if not data:
+        return []
+    props = data.get("props", [])
+    if not props:
+        return []
+
+    parts = player_name.strip().split()
+    if not parts:
+        return []
+    search_last = parts[-1].lower()
+    search_first_initial = parts[0][0].lower() if parts[0] else ""
+
+    matches = []
+    for p in props:
+        player = (p.get("participant", {}) or {}).get("player", {}) or {}
+        short = str(player.get("short_name", "")).lower()
+        last = str(player.get("last_name", "")).lower()
+        first = str(player.get("first_name", "")).lower()
+        if last == search_last and (not search_first_initial or first[:1] == search_first_initial or search_first_initial in short):
+            matches.append(p)
+    return matches
+
+
+def fetch_gamblingforecast_matchup(player_name):
+    """
+    Batter-vs-this-specific-pitcher history (H/HR/RBI/AVG/OPS) from
+    scripts/gamblingforecast_refresh.py (betcouncil_gamblingforecast_
+    mlb_matchups.json). Real field names discovered live via GraphQL
+    introspection when the scraper ran (not guessed).
+
+    Name matching quirk (confirmed against real captured data): the
+    stored `name` field glues FirstName+LastInitial+"."+LastName with
+    no spaces, e.g. "SeiyaS.Suzuki" for Seiya Suzuki -- a formatting
+    artifact on their end, not something to normalize away naively.
+    Parses first/last name out of both the stored glued format and the
+    plain search name, then compares those.
+    """
+    data = _read_gist_file("betcouncil_gamblingforecast_mlb_matchups.json", cache_minutes=180)
+    if not data:
+        return {}
+    matchups = data.get("matchups", [])
+    if not matchups:
+        return {}
+
+    search_parts = player_name.strip().split()
+    search_first = search_parts[0].lower() if search_parts else ""
+    search_last = search_parts[-1].lower() if len(search_parts) > 1 else ""
+    if not search_first or not search_last:
+        return {}
+
+    for m in matchups:
+        stored = str(m.get("name", "")).strip()
+        glued = re.match(r"^([A-Za-z]+)([A-Z])\.([A-Za-z\-]+)$", stored)
+        if glued:
+            stored_first, _, stored_last = glued.groups()
+        else:
+            parts = stored.split()
+            stored_first = parts[0] if parts else ""
+            stored_last = parts[-1] if len(parts) > 1 else ""
+        if stored_first.lower() == search_first and stored_last.lower() == search_last:
+            return m
+    return {}
+
+
+def fetch_gamblingforecast_props(sport: str) -> list:
+    """
+    GamblingForecast's own model projection-vs-line, pre-sorted by edge
+    (projDiff), from scripts/gamblingforecast_refresh.py
+    (betcouncil_gamblingforecast_props_{sport}.json). Covers MLB/NBA/NFL.
+    A second independent model's opinion, matched per-player into
+    SignalNotes the same way SignalOdds/BetsLib already is.
+    """
+    data = _read_gist_file(f"betcouncil_gamblingforecast_props_{sport}.json", cache_minutes=30)
+    if not data:
+        return []
+    return data.get("props", [])
+
+
 def fetch_soccer_player_stats(player_name):
     """
     Confirmed dead end (live-tested): ESPN does not publish individual
@@ -8361,17 +8470,20 @@ def fetch_odds_api_game_lines(sport):
                         outcomes = mkt.get("outcomes", [])
                         if key == "h2h":
                             for o in outcomes:
-                                if o["name"] == home:
-                                    home_ml = o["price"]
-                                elif o["name"] == away:
-                                    away_ml = o["price"]
+                                if o.get("name") == home:
+                                    home_ml = o.get("price", home_ml)
+                                elif o.get("name") == away:
+                                    away_ml = o.get("price", away_ml)
                         elif key == "spreads":
                             for o in outcomes:
-                                if o["name"] == home:
-                                    spread = f"{home} {o['point']:+.1f}"
+                                if o.get("name") == home and o.get("point") is not None:
+                                    try:
+                                        spread = f"{home} {float(o['point']):+.1f}"
+                                    except (TypeError, ValueError):
+                                        pass
                         elif key == "totals":
                             for o in outcomes:
-                                if o["name"] == "Over":
+                                if o.get("name") == "Over":
                                     total = o.get("point", "N/A")
                     break
                 if odds_source != "N/A":
@@ -8394,7 +8506,7 @@ def fetch_odds_api_game_lines(sport):
             with open(cache_path, "wb") as f:
                 pickle.dump(result, f)
         return result
-    except (IOError, ValueError) as e:
+    except Exception as e:
         print(f"[ODDS_API] game lines fetch exception for {sport}: {e}")
         return [], {}, {}
 
@@ -14320,6 +14432,13 @@ def fetch_heritage_game_lines(sport: str) -> list:
     return []
 
 
+_SBR_SPORT_PATHS = {
+    "NFL": "nfl-football", "NBA": "nba-basketball", "MLB": "mlb-baseball",
+    "NHL": "nhl-hockey", "WNBA": "wnba-basketball",
+    "NCAAF": "ncaaf-football", "NCAAB": "ncaab-basketball", "CFL": "cfl-football",
+}
+
+
 def fetch_sbr_game_lines(sport: str) -> list:
     """
     Scrape SportsbookReview.com odds for all supported sports/leagues.
@@ -14367,6 +14486,12 @@ def fetch_sbr_game_lines(sport: str) -> list:
     if all_games:
         _safe_save_pkl(cache_path, all_games)
     return all_games
+
+_SPORTSLINE_SPORT_PATHS = {
+    "NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl",
+    "WNBA": "wnba", "Soccer": "soccer",
+}
+
 
 def fetch_sportsline_game_lines(sport: str) -> list:
     """
@@ -14513,6 +14638,12 @@ def fetch_sportsline_game_lines(sport: str) -> list:
     if games:
         _safe_save_pkl(cache_path, games)
     return games
+
+
+BOOKMAKER_SPORT_PATHS = {
+    "NFL": "football/nfl", "NBA": "basketball/nba", "MLB": "baseball/mlb",
+    "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+}
 
 
 def fetch_bookmaker_game_lines(sport: str) -> list:
@@ -15202,6 +15333,14 @@ def _amer_to_prob(odds):
         o=float(odds)
         return 100.0/(o+100.0) if o>0 else (-o)/((-o)+100.0)
     except Exception: return 0.5
+
+SHARPAPI_LEAGUE_MAP = {
+    "MLB": "baseball", "NBA": "basketball", "WNBA": "basketball",
+    "NFL": "football", "NHL": "hockey", "NCAAF": "football",
+    "NCAAB": "basketball", "Soccer": "soccer", "Tennis": "tennis",
+    "Golf": "golf", "UFC": "mma",
+}
+
 
 def fetch_sharpapi_line_drops(sport: str, min_drop_pct: float = 0.03) -> list:
     """
@@ -16014,6 +16153,7 @@ def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -
         print(f"[Pick6] {len(results)} props from SSR scrape (no login required)")
         return results, "ssr_scrape"
     return [], "unavailable"
+
 
 
 
@@ -17599,6 +17739,17 @@ def _px_parse_prop_name(market_name):
     return market_name, market_name
 
 
+_PROPHETX_GAME_MARKETS = {
+    "moneyline", "moneyline (2 way)", "spread", "game spread",
+    "run line", "puck line", "point spread", "total", "totals",
+    "total points", "total runs", "total goals (regular time)",
+    "total games", "total sets", "total rounds",
+    "spread (regular time)", "draw (90 min)",
+    "1st inning moneyline", "1st inning total runs",
+    "1st-5th inning moneyline", "1st-5th inning spread", "1st-5th inning total runs",
+}
+
+
 def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport):
     """Split one event's raw v2 markets payload into (game_line_rows, prop_rows)."""
     lines_out, props_out = [], []
@@ -17669,7 +17820,7 @@ def _parse_prophetx_event_markets(markets_payload, game_label, home, away, sport
                 p1 = _px_best_price(ml_sels[1])
                 if not (p0 and p1):
                     continue
-                mkt_label = "Spread" if label_lc == "spread" else "Total"
+                mkt_label = "Spread" if any(k in label_lc for k in ("spread", "run line", "puck line")) else "Total"
                 lines_out.append({
                     "game": game_label, "home": home, "away": away,
                     "market": mkt_label,
@@ -18190,7 +18341,7 @@ def fetch_numberfire_direct(sport: str) -> dict:
 
 def fetch_sportsinsights_from_gist(sport):
     data=_read_gist_file(f"betcouncil_sportsinsights_{sport}.json",5)
-    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,18): return data.get("games",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_baseballpress_from_gist():
@@ -18200,7 +18351,7 @@ def fetch_baseballpress_from_gist():
 
 def fetch_rotogrinders_from_gist(sport):
     data=_read_gist_file(f"betcouncil_rotogrinders_{sport}.json",5)
-    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,32): return data.get("records",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_oddsportal_from_gist(sport):
@@ -18495,7 +18646,7 @@ def get_linestar_game_weather(weather_gist_data, team_abbrev):
 
 def fetch_scoresandodds_from_gist(sport):
     data=_read_gist_file(f"betcouncil_scoresandodds_{sport}.json",5)
-    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,18): return data.get("games",{}), "browser_harvester"
     return {}, "unavailable"
 
 def _parse_evbets_data(raw, sport: str) -> list:

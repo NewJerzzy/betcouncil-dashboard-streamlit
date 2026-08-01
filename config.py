@@ -20,6 +20,12 @@ PROP_FUZZY_MATCH_THRESHOLD    = 90    # rapidfuzz score threshold for player nam
 PROP_HITRATE_LOG_FILE         = "betcouncil_prop_hitrate_log.json"
 PROP_HITRATE_RETENTION_DAYS   = 60    # days before log entries are pruned
 ODDS_API_KEY = st.secrets.get("ODDS_API_KEY", "")
+# Dedicated second key for game-lines fetching (moneyline/spread/total),
+# so it stops sharing the same 500/month budget as MLB props -- each
+# game-lines call burns 60 credits at once (10 events x 3 markets x 2
+# regions), so the shared key would exhaust in ~8 calls total. Falls
+# back to the main key if this one isn't set yet.
+ODDS_API_KEY_GAMES = st.secrets.get("ODDS_API_KEY_GAMES", "") or ODDS_API_KEY
 ODDSPAPI_KEY = st.secrets.get("ODDSPAPI_KEY", "")
 ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
 OCR_SPACE_API_KEY = st.secrets.get("OCR_SPACE_API_KEY", "")
@@ -277,6 +283,14 @@ API_BUDGETS = {
         "monthly_limit": 500,
         "counter_path": os.path.join(CACHE_DIR, "odds_api_counter.json"),
         "description": "The Odds API",
+        "hard_stop_pct": 0.80,
+    },
+    "ODDS_API_GAMES": {
+        "key": "ODDS_API_KEY_GAMES",
+        "daily_limit": None,
+        "monthly_limit": 500,
+        "counter_path": os.path.join(CACHE_DIR, "odds_api_games_counter.json"),
+        "description": "The Odds API (dedicated game-lines key)",
         "hard_stop_pct": 0.80,
     },
     "ACTION_NETWORK": {

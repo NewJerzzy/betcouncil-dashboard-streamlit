@@ -123,6 +123,7 @@ from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
 from fetchers import _fetch_wnba_roster_via_teams  # leading underscore -> not covered by the star import above
 from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscore-prefixed names
+from prop_market_intelligence import record_prop_snapshot, get_odds_type_flips
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
 def _bc_track(stage, duration, meta=None):
@@ -1483,6 +1484,17 @@ def render_signal_chart(prop, sport="NBA"):
     if zero_signals:
         zero_html = f'<div style="font-size:16px;color:#4a5a6a;margin-top:4px">No impact: {", ".join(zero_signals)}</div>'
 
+    _sig_notes = str(prop.get("SignalNotes", "")).strip()
+    signal_notes_html = ""
+    if _sig_notes:
+        signal_notes_html = (
+            f'<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1e2d3d;">'
+            f'<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;">'
+            f'External signals & market checks</div>'
+            f'<div style="font-size:13px;color:#c9d8e8;line-height:1.8;">{_sig_notes}</div>'
+            f'</div>'
+        )
+
     # Overall verdict in plain English
     strong_count = sum(1 for v in signals.values() if abs(v) >= 0.06)
     moderate_count = sum(1 for v in signals.values() if 0.02 <= abs(v) < 0.06)
@@ -1628,6 +1640,7 @@ def render_signal_chart(prop, sport="NBA"):
   <div style="font-size:16px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Signal breakdown — what is pushing this pick</div>
   {rows_html}
   {zero_html}
+  {signal_notes_html}
 </div>"""
     return html
 
@@ -7422,6 +7435,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 home_power = power_ratings[home_full]
                 away_power = power_ratings[away_full]
                 power_diff = home_power - away_power
+                if sport in ("MLB", "NHL"):
+                    # Convert the ~100-scale power index to run/goal-equivalent
+                    # units before comparing against market_spread, which is
+                    # already in those units. Without this, power_diff (which
+                    # can be 10-15+ across the full league range) completely
+                    # dominates a market_spread of ~1.5-2.5, producing a wildly
+                    # inflated edge that just pins at the ±20% ceiling on
+                    # nearly every matchup with any real rating gap.
+                    power_diff = power_diff / 10.0
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / 10.0
@@ -13293,7 +13315,7 @@ def load_sport_data(sport):
                 "SignalBase": edge, "SignalDefense": 0, "SignalLocation": 0,
                 "SignalUsage": 0, "SignalRest": 0, "SignalPace": 0,
                 "SignalBlowout": 0, "WeatherNote": "",
-                "Movement": "", "Efficiency": "—", "EffScore": 0,
+                "Movement": "", "OddsTypeFlip": "", "Efficiency": "—", "EffScore": 0,
                 "SharpFlag": "",
                 "source": p.get("source", ""), "OddsType": "standard",
                 "DisplayOnly": False,
@@ -13462,7 +13484,8 @@ def load_sport_data(sport):
             return []
     def _pf_covers():
         try:
-            return fetch_covers_consensus(sport)
+            raw, _src = fetch_covers_from_gist(sport)
+            return raw
         except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_public():       return fetch_public_betting(sport) if sport in ["NBA","MLB","NHL","NFL","WNBA"] else {}
@@ -13513,6 +13536,13 @@ def load_sport_data(sport):
     def _pf_sharpapi_ev():   return fetch_sharpapi_ev_opportunities(sport)
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
+    def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
+    def _pf_bettingpros():   return fetch_bettingpros_props(sport)
+    def _pf_sportsinsights(): return fetch_sportsinsights_from_gist(sport)[0]
+    def _pf_mlb_pitchers(): return fetch_mlb_probable_pitchers() if sport == "MLB" else {}
+    def _pf_oddsportal():
+        _op_raw, _ = fetch_oddsportal_from_gist(sport)
+        return _op_raw
     def _pf_betslib_live():  return fetch_betslib_live_events(sport)
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
@@ -13802,7 +13832,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
-        _pf_signalodds, _pf_betslib, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
+        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -13820,7 +13850,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
-     signalodds_raw, betslib_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
+     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -13973,7 +14003,6 @@ def load_sport_data(sport):
         ("fetch_rotogrinders_from_gist",       "rotogrinders_data",      "rotogrinders_src"),
         ("fetch_oddsportal_from_gist",         "oddsportal_data",        "oddsportal_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
-        ("fetch_pick6_props_from_gist",        "pick6_props_h",          "pick6_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
         ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
     ]
@@ -14005,6 +14034,11 @@ def load_sport_data(sport):
     st.session_state["action_network_data"] = st.session_state.get("covers_consensus", {})  # same underlying data as covers (fetch_action_network_from_gist and fetch_covers_from_gist were identical, calling the same source twice)
     st.session_state["signalodds_events"]   = signalodds_raw      or []
     st.session_state["betslib_predictions"] = betslib_raw         or []
+    st.session_state["gamblingforecast_props"] = gamblingforecast_raw or []
+    st.session_state["bettingpros_props"] = bettingpros_raw or []
+    st.session_state["sportsinsights_games"] = sportsinsights_raw or []
+    st.session_state["mlb_probable_pitchers"] = mlb_pitchers_raw or {}
+    st.session_state["oddsportal_data"] = oddsportal_raw or {}
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
     try:
         st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
@@ -14110,6 +14144,7 @@ def load_sport_data(sport):
             injuries[pname] = {"status": item["status"], "note": item.get("note", ""), "source": "ESPN"}
     _merge_injury_source(injuries, rw_injuries,   "RotoWire")
     _merge_injury_source(injuries, cbs_injuries,  "CBS Sports")
+    st.session_state["injuries"] = injuries
     st.session_state["espn_injuries"] = espn_injuries
     # Market intelligence data
     if kalshi_raw:
@@ -15338,7 +15373,7 @@ def load_sport_data(sport):
         _stat_n   = STAT_NORMALIZE.get((sport, _prop_key), _prop_key)
         if _prop_key in _OVER_ONLY_STATS or _stat_n in _OVER_ONLY_STATS:
             _p["Side"] = "OVER"   # no book offers HR/Goal/TD UNDER
-        elif _p.get("source") == "PrizePicks" and _p.get("OddsType","") in ("goblin", "demon"):
+        elif _p.get("Book") == "PrizePicks" and _p.get("OddsType","") in ("goblin", "demon"):
             _p["Side"] = "OVER"   # PrizePicks goblin/demon lines are More-only, confirmed by user
 
     enriched = []
@@ -15447,6 +15482,9 @@ def load_sport_data(sport):
             _log_results = _fetch_parallel(_log_fns, show_progress=False)
             for _pl, _res in zip(_log_players, _log_results):
                 _bdl_logs_prefetch[_pl] = _res if _res is not None else []
+            st.session_state["player_game_logs"] = {
+                normalize_name(_k): _v for _k, _v in _bdl_logs_prefetch.items()
+            }
     if sport == "NBA":
         _unique_teams = set()
         for _g in games:
@@ -16021,7 +16059,8 @@ def load_sport_data(sport):
         _is_over_only = (
             stat_norm in _OVER_ONLY_PROPS or
             p.get("Prop", "") in _OVER_ONLY_PROPS or
-            p.get("stat_key", "") in _OVER_ONLY_PROPS
+            p.get("stat_key", "") in _OVER_ONLY_PROPS or
+            (p.get("Book") == "PrizePicks" and p.get("OddsType", "") in ("goblin", "demon"))
         )
 
         if under_edge > over_edge and (under_edge - over_edge) > 0.05 and not _is_over_only:
@@ -16221,6 +16260,87 @@ def load_sport_data(sport):
                         final_edge = final_edge*0.92
             except Exception:
                 _logger.debug("Silent except at line 12407")
+                pass
+
+        # ── GamblingForecast model overlay ───────────────────────────────
+        # A second independent model's projection-vs-line, matched by
+        # player name (not team, unlike SignalOdds above -- this is a
+        # per-player call, not a per-game prediction).
+        if player:
+            try:
+                _gf_props = st.session_state.get("gamblingforecast_props", [])
+                _gf_norm = normalize_name(player)
+                _gf_hit = next((gp for gp in _gf_props
+                    if normalize_name(str(gp.get("name",""))) == _gf_norm), None)
+                if _gf_hit:
+                    _gf_call = str(_gf_hit.get("overUnder","")).upper()
+                    _gf_diff = _gf_hit.get("projDiff", 0)
+                    try:
+                        _gf_diff_val = float(str(_gf_diff).replace("+",""))
+                    except (TypeError, ValueError):
+                        _gf_diff_val = 0
+                    if _gf_call == best_side and abs(_gf_diff_val) > 0:
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" 📈 GF:{_gf_call}({_gf_diff:+} proj gap)"
+                        final_edge = min(final_edge * 1.04, EDGE_CAP)
+                    elif _gf_call and _gf_call != best_side:
+                        p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ GF disagrees:{_gf_call}"
+            except Exception:
+                pass
+
+        # ── BettingPros model overlay ─────────────────────────────────────
+        # Their own recommended_side/probability/EV, matched by player
+        # name, disambiguated by stat when a player has multiple
+        # BettingPros props (e.g. a pitcher with both Strikeouts and
+        # Outs Recorded). Best available line/odds are also captured
+        # here (not just used for scoring) so they can render in
+        # Summary/New Bettor the same way Player Lookup already does.
+        if player:
+            try:
+                _bp_props = st.session_state.get("bettingpros_props", [])
+                _bp_norm = normalize_name(player)
+                _bp_candidates = [
+                    bp for bp in _bp_props
+                    if normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("last_name", ""))) 
+                    in _bp_norm or normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("short_name", ""))).replace(".", "") in _bp_norm
+                ]
+                _bp_hit = None
+                if len(_bp_candidates) == 1:
+                    _bp_hit = _bp_candidates[0]
+                elif len(_bp_candidates) > 1 and stat_norm:
+                    _stat_key = stat_norm.lower().replace(" ", "")
+                    _bp_hit = next((bp for bp in _bp_candidates
+                        if _stat_key in bp.get("links", {}).get("odds", "").replace("-", "")), _bp_candidates[0])
+                if _bp_hit:
+                    _bp_proj = _bp_hit.get("projection", {}) or {}
+                    _bp_call = str(_bp_proj.get("recommended_side", "")).upper()
+                    _bp_diff = _bp_proj.get("diff", 0)
+                    _bp_side_data = _bp_hit.get("over" if _bp_call == "OVER" else "under", {}) or {}
+                    p["BettingProsLine"] = _bp_side_data.get("line")
+                    p["BettingProsConsensusLine"] = _bp_hit.get("over", {}).get("consensus_line")
+                    p["BettingProsOdds"] = _bp_side_data.get("odds")
+                    if _bp_call and abs(_bp_diff or 0) > 0:
+                        if _bp_call == best_side:
+                            p["SignalNotes"] = p.get("SignalNotes","") + f" 🎯 BP:{_bp_call}(proj {_bp_proj.get('value','?')}, diff {_bp_diff:+})"
+                            final_edge = min(final_edge * 1.03, EDGE_CAP)
+                        else:
+                            p["SignalNotes"] = p.get("SignalNotes","") + f" ⚠️ BP disagrees:{_bp_call}"
+            except Exception:
+                pass
+
+        # ── Market consensus overlay (Kalshi/Polymarket/Covers) ─────────────
+        # Was fully built (volume-weighted divergence vs prediction markets)
+        # but never called anywhere -- confirmed via full-repo search.
+        if player:
+            try:
+                _mc_model_prob = over_prob if best_side == "OVER" else under_prob
+                _mc = compute_market_consensus(_mc_model_prob, player, stat_norm, sport)
+                if _mc and _mc.get("signal") not in (None, "AGREEMENT"):
+                    p["SignalNotes"] = p.get("SignalNotes", "") + f" {_mc['note']}"
+                    if _mc["signal"] in ("MODEL_BULLISH", "MODEL_LEAN_BULLISH") and best_side:
+                        final_edge = min(final_edge + _mc["edge_adj"], EDGE_CAP)
+                    elif _mc["signal"] == "MARKET_BULLISH":
+                        final_edge = max(final_edge + _mc["edge_adj"], -EDGE_CAP)
+            except Exception:
                 pass
 
         # ── FantasyPros projection cross-check ──────────────────────────────
@@ -16598,7 +16718,7 @@ def load_sport_data(sport):
             "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0),
             "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0),
             "SignalBlowout": blowout_adj, "SignalH2H": h2h_adj, "H2HNote": h2h_note,
-            "WeatherNote": weather_note, "Movement": "",
+            "WeatherNote": weather_note, "Movement": "", "OddsTypeFlip": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
             "source": p.get("source", ""), "Source": p.get("source","").title() or "Unknown",  # uppercase for Audit 3
             "ProjConfidence": _proj_conf.get("score", 50),
@@ -17432,10 +17552,29 @@ def load_sport_data(sport):
     st.session_state["all_sports_best"] = existing_best[:10]
     line_movement = track_line_movement(enriched)
     st.session_state["line_movement"] = line_movement
+    # Goblin/Demon (odds_type) re-pricing detector -- records this board
+    # load as a snapshot, then flags any prop whose odds_type changed
+    # since an earlier snapshot (standard -> goblin/demon or back), the
+    # same signal a sharp bettor watches for: PrizePicks re-pricing a
+    # prop in reaction to sharp/consensus pressure. Cold-start safe --
+    # returns [] until enough snapshot history has accumulated.
+    try:
+        _pp_props_for_snapshot = [p for p in enriched if p.get("Book") == "PrizePicks"]
+        if _pp_props_for_snapshot:
+            record_prop_snapshot(sport, {"PrizePicks": _pp_props_for_snapshot})
+        odds_type_flips = get_odds_type_flips(sport)
+    except Exception:
+        odds_type_flips = []
+    _flip_lookup = {f"{f['player']}_{f['stat']}": f for f in odds_type_flips if f.get("book") == "PrizePicks"}
     for prop in enriched:
         key = f"{prop['Player']}_{prop['Prop']}"
         move = line_movement.get(key, {})
         prop["Movement"] = (move.get("direction", "") + str(abs(move.get("diff", 0))) if move else "")
+        _flip = _flip_lookup.get(key)
+        prop["OddsTypeFlip"] = (
+            f"{_flip['from_type']}\u2192{_flip['to_type']} ({_flip['minutes_between']:.0f}m ago)"
+            if _flip else ""
+        )
     # ── Store snapshots and opening lines ────────────────────
     # MLB lineup status applied to enriched props
     if sport == "MLB":
@@ -17874,33 +18013,38 @@ with st.sidebar:
     _regime_data  = detect_season_regime("MLB")
     _regime_label = _regime_data.get("label", "REGULAR FLOOR")
     _edge_thresh  = _regime_data.get("edge_floor", 0.045)
-    # Auto-generated "why" sentence from the actual per-sport breakdown —
-    # answers "why is it low" without the user having to open History.
+    # Per-sport grade badges -- quick scan instead of a paragraph. Same
+    # grade words as the History tab (ELITE/GOOD/FAIR/NEEDS WORK) so this
+    # can never disagree with the detailed breakdown there.
     _per_sport_cal = _brier_data.get("per_sport", {}) or {}
-    _cal_explainer = ""
-    _grade_plain = {
-        "NEEDS WORK": "predicted win probabilities haven't matched what actually happened",
-        "FAIR":       "predicted win probabilities have drifted somewhat from actual results",
-    }
+    _grade_color = {"ELITE": "#22c55e", "GOOD": "#22c55e", "FAIR": "#e8a020", "NEEDS WORK": "#e04040"}
+    _cal_badges_html = ""
+    _any_low = False
     if not _thin_sample and _per_sport_cal:
         _ranked = sorted(_per_sport_cal.items(), key=lambda x: x[1]["brier_score"])
-        _best   = _ranked[0]
-        _worst  = _ranked[-1]
-        if _worst[1]["grade"] in ("FAIR", "NEEDS WORK") and _worst[0] != _best[0]:
-            _plain = _grade_plain.get(_worst[1]["grade"], "")
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is the main drag on this number — "
-                               f"its {_plain}. Kelly sizing is one global multiplier across ALL sports, not per-sport — "
-                               f"so a recent stretch like this one throttles every bet's stake, including {_best[0]}'s, "
-                               f"until overall recent performance recovers. "
-                               f"{_best[0]} is grading {_best[1]['grade']}.")
-        elif _worst[1]["grade"] in ("FAIR", "NEEDS WORK"):
-            _plain = _grade_plain.get(_worst[1]["grade"], "")
-            _cal_explainer = (f"{_worst[0]} ({_worst[1]['grade']}, {_worst[1]['n']} bets) is your only tracked sport so far — "
-                               f"its {_plain}. Kelly sizing is throttled globally in response, not just for {_worst[0]}.")
-        else:
-            _cal_explainer = f"All tracked sports are grading GOOD or better — {_best[0]} leads at {_best[1]['grade']}."
-    if not _cal_explainer:
-        _cal_explainer = "How closely your predicted win probabilities have matched real results (higher = better calibrated). See the History tab for the full breakdown."
+        for _sp_name, _sp_data in _ranked:
+            _sp_grade = _sp_data["grade"]
+            _sp_n = _sp_data["n"]
+            _sp_color = _grade_color.get(_sp_grade, "#6a7a8a")
+            if _sp_grade in ("FAIR", "NEEDS WORK"):
+                _any_low = True
+            _cal_badges_html += (
+                f'<span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:10px;'
+                f'background:{_sp_color}22;color:{_sp_color};border:0.5px solid {_sp_color}44;'
+                f'margin-right:6px;margin-top:4px;display:inline-block;" '
+                f'title="{_sp_n} settled bets">{_sp_name}: {_sp_grade}</span>'
+            )
+    _cal_note = (
+        "Bet sizes are reduced across every sport until this improves — not just the sport(s) grading low."
+        if _any_low else
+        "How closely your predicted win probabilities have matched real results. See the History tab for the full breakdown."
+    )
+    _grade_gloss = {
+        "ELITE": "your predictions are landing almost exactly as often as expected",
+        "GOOD": "your predictions are landing close to as often as expected",
+        "FAIR": "your predictions are landing somewhat off from what's expected",
+        "NEEDS WORK": "your predictions aren't landing close to as often as expected",
+    }.get(_cal_grade, "")
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:2px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
@@ -17909,13 +18053,14 @@ with st.sidebar:
         f'</div>'
         + (f'<div style="font-size:16px;font-weight:700;color:var(--bc-dim);margin-top:4px;">Building sample<span style="font-size:11px;font-weight:400;"> (n={_bs_n}, need 20+)</span></div>'
            if _thin_sample else
-           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n}) · {_cal_grade}</span></div>')
+           f'<div style="font-size:28px;font-weight:800;color:{_integrity_color};">{_integrity}<span style="font-size:14px;color:#4a6a8a;font-weight:400;"> /100 (n={_bs_n}) · {_cal_grade}</span></div>'
+           + (f'<div style="font-size:11px;color:#8a9aab;margin-top:2px;">{_grade_gloss}</div>' if _grade_gloss else ''))
         + f'<div style="background:#1a2a3a;border-radius:3px;height:4px;margin-top:4px;">'
         f'<div style="width:{_integrity if not _thin_sample else 0}%;height:100%;background:linear-gradient(90deg,#e04040,#e8a020,#22c55e);border-radius:3px;"></div>'
         f'</div></div>', unsafe_allow_html=True)
-    st.caption(_cal_explainer)
-    if not _thin_sample and _cal_grade in ("FAIR", "NEEDS WORK"):
-        st.warning(f"⚠️ Calibration is {_cal_grade} — model confidence has drifted from actual outcomes. Kelly sizing is one global multiplier across your whole recent history, and it's already being throttled for every sport as a result, not just the sport(s) driving this grade down.")
+    if _cal_badges_html:
+        st.markdown(f'<div style="margin-top:2px;">{_cal_badges_html}</div>', unsafe_allow_html=True)
+    st.caption(_cal_note)
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
@@ -18015,6 +18160,11 @@ with st.sidebar:
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
                       {"props": len(board), "sport": sport_sel})
             st.session_state.board_data = board
+            st.session_state["board"] = board
+            try:
+                st.session_state["bankroll_multiplier"] = compute_bankroll_multiplier()
+            except Exception:
+                pass
             # Auto-populate closing line DB from board
             try:
                 from bc_utils import auto_populate_closing_lines as _apcl
