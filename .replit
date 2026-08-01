@@ -1,1 +1,5 @@
 modules = ["python-base-3.13"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["gitFull", "glibcLocales", "libxcrypt", "ocl-icd", "opencl-headers", "pkg-config", "playwright-driver", "rapidfuzz-cpp", "taskflow", "tesseract", "xsimd"]

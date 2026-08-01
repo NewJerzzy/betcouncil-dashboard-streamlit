@@ -1,2 +1,5 @@
 - [theScore Bet GraphQL](thescore-bet-graphql.md) — real endpoint is subdomain, not homepage; hash current but 37 schema errors, not 1; sectionId required not competitionSlug
 - [Pick6 Props Pipeline](pick6-pipeline.md) — gist at 300-file cap so uses betcouncil_pick6_props.json; SSR has no player names (confirmed all APIs); token is collaborator, can't create new files
+- [EVBets endpoint](evbets-endpoint.md) — SSR Astro on Cloudflare, bet data in HTML table, no JS needed; requests must decode as UTF-8 explicitly or bookmaker names mojibake
+- [VSIN Splits endpoint](vsin-splits-endpoint.md) — SSR HTML at data.vsin.com/betting-splits, no auth; splits table fully embedded, sp-row tbody rows, confirmed 2026-08-01
+- [Gist 300-file cap rename](gist-300-file-rename.md) — at cap, use GitHub Gist PATCH rename API to atomically rename a dead file to the new filename; check existence first via GET

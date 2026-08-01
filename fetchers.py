@@ -19990,6 +19990,93 @@ def _fh_wrap(_fh_name, _fh_fn):
     return _fh_wrapped
 
 
+def fetch_evbets_from_gist(sport: str = "MLB", max_age_minutes: int = 35) -> list:
+    """
+    Read betcouncil_evbets_combined.json from the shared Gist and return a flat
+    list of value-bet dicts filtered to the requested sport.
+
+    Each returned dict includes at minimum:
+      "event"   — matchup string (e.g. "Hawthorn Hawks vs North Melbourne Kangaroos")
+      "ev_pct"  — EV as decimal number (e.g. 0.524 = +0.52%)
+      "book"    — bookmaker slug (e.g. "betfair")
+
+    The JSON is produced by scripts/evbets_refresh.py (pushed every 30 min by GH Actions).
+    When there are no active bets the file records total_bets==0 — an empty list is
+    returned and is NOT treated as an error.
+
+    Sport matching: slug-based lookup is attempted first (baseball-mlb → MLB), then
+    display-name matching. Falls back to all bets if sport mapping is unknown.
+    """
+    _SLUG_TO_SPORT = {
+        "baseball-mlb":              "MLB",
+        "basketball-nba":            "NBA",
+        "american-football-nfl":     "NFL",
+        "hockey-nhl":                "NHL",
+        "mma-mixed-martial-arts":    "UFC",
+        "basketball-wnba":           "WNBA",
+        "soccer-epl":                "SOCCER",
+        "aussierules-afl":           "AFL",
+    }
+    data = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=max_age_minutes)
+    if not data:
+        return []
+    by_sport = data.get("by_sport", {})
+    if not by_sport:
+        return []
+    sport_upper = sport.upper()
+    matches: list[dict] = []
+    for display_name, sport_block in by_sport.items():
+        if not isinstance(sport_block, dict):
+            continue
+        slug = sport_block.get("slug", "")
+        mapped = _SLUG_TO_SPORT.get(slug, display_name).upper()
+        if mapped == sport_upper or display_name.upper() == sport_upper:
+            matches.extend(sport_block.get("value_bets", []))
+    return matches
+
+
+def fetch_vsin_splits_from_gist(sport: str = "MLB", max_age_minutes: int = 35) -> list:
+    """
+    Read betcouncil_vsin_splits.json from the shared Gist and return a list of
+    game-split dicts filtered to the requested sport.
+
+    Each game dict shape:
+    {
+      "gamecode":        "20260731MLB00019",
+      "sport":           "MLB",
+      "date":            "2026-07-31",
+      "road_team":       "New York Yankees",
+      "home_team":       "Chicago Cubs",
+      "vsin_pick_count": 8,
+      "spread": {
+        "road": {"line": "+1.5", "handle_pct": 21, "bets_pct": 47},
+        "home": {"line": "-1.5", "handle_pct": 79, "bets_pct": 53}
+      },
+      "total": {
+        "line": "9",
+        "over":  {"handle_pct": 60, "bets_pct": 44},
+        "under": {"handle_pct": 40, "bets_pct": 56}
+      },
+      "moneyline": {
+        "road": {"line": "+141", "handle_pct": 23, "bets_pct": 35},
+        "home": {"line": "-171", "handle_pct": 77, "bets_pct": 65}
+      }
+    }
+
+    Produced by scripts/vsin_splits_refresh.py (GH Actions cron).
+    Returns [] on parse error or stale/missing file (not an error — caller handles
+    empty gracefully). Sport filter is exact-match on the "sport" field.
+    """
+    data = _read_gist_file("betcouncil_vsin_splits.json", cache_minutes=max_age_minutes)
+    if not data:
+        return []
+    games = data.get("games", [])
+    if not isinstance(games, list):
+        return []
+    sport_upper = sport.upper()
+    return [g for g in games if isinstance(g, dict) and g.get("sport", "").upper() == sport_upper]
+
+
 def _fh_instrument_all():
     for _fh_gname in list(globals().keys()):
         if not _fh_gname.startswith("fetch_"):

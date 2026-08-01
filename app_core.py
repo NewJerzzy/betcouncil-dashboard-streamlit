@@ -13844,6 +13844,23 @@ def load_sport_data(sport):
     st.session_state[f"unabated_props_{sport}"]     = _unabated_props_lines
     st.session_state[f"unabated_props_src_{sport}"] = _unabated_props_src
 
+    # ── EVBets +EV signals — same isolated-batch pattern as Unabated above.
+    # Reads betcouncil_evbets_combined.json (pushed every 30 min by GH Actions
+    # via scripts/evbets_refresh.py). Two keys to match the consumer at line
+    # ~16170: evbets_ev_picks (game-level value bets) and evbets_prop_picks
+    # (prop bets — currently always empty since evbets.app only publishes
+    # moneyline/spread/total value bets, no player props as of 2026-08-01).
+    # Keyed per-sport so a refresh of one sport doesn't clobber another.
+    try:
+        from fetchers import fetch_evbets_from_gist as _fetch_evbets
+        _evbets_bets = _fetch_evbets(sport)
+        st.session_state["evbets_ev_picks"]   = _evbets_bets
+        st.session_state["evbets_prop_picks"] = []
+    except Exception as _evb_err:
+        st.session_state.setdefault("evbets_ev_picks",   [])
+        st.session_state.setdefault("evbets_prop_picks", [])
+        print(f"[WARN] fetch_evbets_from_gist({sport}): {_evb_err}")
+
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
