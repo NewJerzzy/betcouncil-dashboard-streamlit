@@ -14002,20 +14002,11 @@ def load_sport_data(sport):
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
-        ("fetch_covers_from_gist",          "covers_consensus",       "covers_src"),
-        ("fetch_draftkings_props_from_gist","dk_props_harvested",     "dk_props_src"),
-        ("fetch_unabated_from_gist",        "unabated_lines_h",       "unabated_src"),
         ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
-        ("fetch_underdog_from_gist",          "underdog_props_h",       "underdog_src"),
         ("fetch_prophetx_game_lines_from_gist","prophetx_lines_h",       "prophetx_lines_src"),
         ("fetch_prophetx_props_from_gist",     "prophetx_props_h",       "prophetx_props_src"),
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
-        ("fetch_bet365_from_gist",             "bet365_lines_h",         "bet365_src"),
-        ("fetch_fantasylabs_from_gist",        "fantasylabs_data_h",     "fantasylabs_src"),
-        ("fetch_rotowire_from_gist",           "rotowire_injuries_h",    "rotowire_src"),
-        ("fetch_sportsinsights_from_gist",     "sportsinsights_data",    "sportsinsights_src"),
         ("fetch_rotogrinders_from_gist",       "rotogrinders_data",      "rotogrinders_src"),
-        ("fetch_oddsportal_from_gist",         "oddsportal_data",        "oddsportal_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
         ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
