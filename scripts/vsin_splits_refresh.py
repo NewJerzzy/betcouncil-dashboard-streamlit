@@ -348,7 +348,7 @@ def main() -> int:
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    payload = {
+    vsin_payload = {
         "captured_at": now_iso,
         "source": "vsin_splits",
         "page_url": BASE_URL,
@@ -356,34 +356,36 @@ def main() -> int:
         "sports": sport_counts,
         "games": games,
     }
-    content = json.dumps(payload, indent=2)
-
-    # ── Gist slot management (300-file hard cap) ──────────────────────────
-    # Check whether betcouncil_vsin_splits.json already exists.
-    # If not, repurpose betcouncil_oddsshark_NBA.json (143b dead placeholder)
-    # via the GitHub Gist rename API — atomically renames + updates content,
-    # keeping total file count at 300.
-    log("Checking gist slot availability")
-    existing_files = _get_gist_files(github_token)
-
-    if TARGET_FILE in existing_files:
-        log(f"  Target '{TARGET_FILE}' exists — pushing update")
-        files_payload = {TARGET_FILE: {"content": content}}
-    else:
-        log(f"  Target '{TARGET_FILE}' not found — repurposing '{LEGACY_FILE}' via rename")
-        files_payload = {
-            LEGACY_FILE: {
-                "filename": TARGET_FILE,
-                "content": content,
-            }
-        }
 
     if not games:
         log("No games parsed — aborting push (not overwriting with empty data)")
         return 1
 
+    # ── Gist slot management ────────────────────────────────────────────
+    # New-file creation on this gist is confirmed broken as of 2026-08-01
+    # (exhaustively tested: several distinct filenames, real delete-then-
+    # create with a 60s wait, all silently failed with 200-but-absent
+    # responses -- not a naming collision, not a rate limit, confirmed via
+    # x-ratelimit headers). Updates to EXISTING files remain 100% reliable
+    # all session. Rather than fight for a new slot, merge into the
+    # shared_combined file (shared with evbets_refresh.py, which already
+    # writes there successfully) as a sibling top-level key.
+    SHARED_FILE = "betcouncil_evbets_combined.json"
+    log(f"Merging into shared file '{SHARED_FILE}' (new-file creation confirmed unreliable on this gist)")
+    try:
+        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                          timeout=15)
+        existing = json.loads(r.json()["files"][SHARED_FILE]["content"]) if SHARED_FILE in r.json().get("files", {}) else {}
+    except Exception as e:
+        log(f"Could not read existing shared file, starting fresh: {e}")
+        existing = {}
+    existing["vsin_splits"] = vsin_payload
+    content = json.dumps(existing, indent=2)
+    files_payload = {SHARED_FILE: {"content": content}}
+
     pushed = push_files(files_payload, github_token)
-    log(f"Pushed {pushed} file(s) → {TARGET_FILE}")
+    log(f"Pushed {pushed} file(s) → {SHARED_FILE} (vsin_splits key)")
     return 0 if pushed > 0 else 1
 
 
