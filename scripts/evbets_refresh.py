@@ -67,6 +67,30 @@ def _try_json_get(url: str, referer: str = None):
         return None
 
 
+def fetch_value_bets_html_snippet(sport: str, slug: str):
+    """Diagnostic: fetch the real HTML page and look for embedded JSON."""
+    import re
+    try:
+        r = requests.get(f"https://evbets.app/value-bets/{slug}",
+                          headers={**HEADERS, "Accept": "text/html"}, timeout=15)
+        text = r.text
+        patterns = {
+            "__NEXT_DATA__": r'__NEXT_DATA__"[^>]*>([^<]+)<',
+            "__NUXT__": r'window\.__NUXT__\s*=\s*(\{.+?\});?\s*</script>',
+            "__INITIAL_STATE__": r'__INITIAL_STATE__\s*=\s*(\{.+?\});?\s*</script>',
+            "application/json script": r'<script[^>]*type="application/json"[^>]*>([^<]+)</script>',
+        }
+        found = {}
+        for name, pat in patterns.items():
+            m = re.search(pat, text, re.DOTALL)
+            if m:
+                found[name] = len(m.group(1))
+        return {"status": r.status_code, "len": len(text), "found_patterns": found,
+                "snippet": text[:500], "mid_snippet": text[len(text)//2:len(text)//2+500]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
 def fetch_value_bets(sport: str, slug: str):
     data = _try_json_get(f"https://evbets.app/value-bets/{slug}", "https://evbets.app/")
     if data:
@@ -125,34 +149,10 @@ def main() -> int:
         return 1
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    combined = {"captured_at": now_iso, "source": "evbets_refresh_scraper", "by_sport": {}}
-    any_data = False
-
-    for sport, slug in SPORT_SLUGS.items():
-        vb = fetch_value_bets(sport, slug)
-        if vb:
-            any_data = True
-        log(f"{sport} value-bets: {'OK' if vb else 'empty'}")
-
-        pb = fetch_prop_bets(sport, slug)
-        if pb:
-            any_data = True
-        log(f"{sport} prop-bets: {'OK' if pb else 'empty'}")
-
-        combined["by_sport"][sport] = {"value_bets": vb or {}, "prop_bets": pb or {}}
-
-    combined["requests_debug"] = DEBUG_LOG[:15]
-
-    if not any_data:
-        log("No data captured across any sport -- not overwriting existing data with empty")
-        push_files({"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evbets diag", **combined}, default=str)}})
-        return 1
-
-    pushed = push_files({"betcouncil_evbets_combined.json": {"content": json.dumps(combined)}})
-    if not pushed:
-        push_files({"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evbets diag - push failed", **combined}, default=str)}})
-    log(f"Pushed {pushed} file" if pushed else "Push FAILED")
-    return 0 if pushed else 1
+    diag = fetch_value_bets_html_snippet("MLB", "baseball-mlb")
+    push_files({"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evbets HTML diag", "captured_at": now_iso, "diag": diag}, default=str)}})
+    log(f"diag pushed: {diag.get('found_patterns')}")
+    return 0
 
 
 if __name__ == "__main__":
