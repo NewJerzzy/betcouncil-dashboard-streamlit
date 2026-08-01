@@ -18284,7 +18284,7 @@ def fetch_numberfire_direct(sport: str) -> dict:
 
 def fetch_sportsinsights_from_gist(sport):
     data=_read_gist_file(f"betcouncil_sportsinsights_{sport}.json",5)
-    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,18): return data.get("games",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_baseballpress_from_gist():
@@ -18294,7 +18294,7 @@ def fetch_baseballpress_from_gist():
 
 def fetch_rotogrinders_from_gist(sport):
     data=_read_gist_file(f"betcouncil_rotogrinders_{sport}.json",5)
-    if data and _is_fresh(data,32): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,32): return data.get("records",{}), "browser_harvester"
     return {}, "unavailable"
 
 def fetch_oddsportal_from_gist(sport):
@@ -18589,7 +18589,7 @@ def get_linestar_game_weather(weather_gist_data, team_abbrev):
 
 def fetch_scoresandodds_from_gist(sport):
     data=_read_gist_file(f"betcouncil_scoresandodds_{sport}.json",5)
-    if data and _is_fresh(data,18): return data.get("data",{}), "browser_harvester"
+    if data and _is_fresh(data,18): return data.get("games",{}), "browser_harvester"
     return {}, "unavailable"
 
 def _parse_evbets_data(raw, sport: str) -> list:
