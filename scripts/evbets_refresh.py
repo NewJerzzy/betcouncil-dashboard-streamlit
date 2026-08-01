@@ -145,9 +145,12 @@ def main() -> int:
 
     if not any_data:
         log("No data captured across any sport -- not overwriting existing data with empty")
+        push_files({"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evbets diag", **combined}, default=str)}})
         return 1
 
     pushed = push_files({"betcouncil_evbets_combined.json": {"content": json.dumps(combined)}})
+    if not pushed:
+        push_files({"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP evbets diag - push failed", **combined}, default=str)}})
     log(f"Pushed {pushed} file" if pushed else "Push FAILED")
     return 0 if pushed else 1
 
