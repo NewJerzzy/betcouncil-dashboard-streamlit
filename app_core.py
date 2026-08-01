@@ -14054,7 +14054,7 @@ def load_sport_data(sport):
     st.session_state["mlb_probable_pitchers"] = mlb_pitchers_raw or {}
     st.session_state["oddsportal_data"] = oddsportal_raw or {}
     st.session_state["soccer_club_elo"] = soccer_elo_raw or {}
-    st.session_state["numberfire_data"] = numberfire_raw or {}
+    st.session_state[f"numberfire_data_{sport}"] = numberfire_raw or {}
     st.session_state["betslib_models"] = betslib_models_raw or []
     st.session_state["sleeper_scoreboard"] = sleeper_raw or {}
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
