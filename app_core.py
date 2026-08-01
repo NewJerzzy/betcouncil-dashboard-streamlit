@@ -13891,6 +13891,13 @@ def load_sport_data(sport):
         st.session_state.setdefault("evbets_prop_picks", [])
         print(f"[WARN] fetch_evbets_from_gist({sport}): {_evb_err}")
 
+    try:
+        from fetchers import fetch_vsin_splits_from_gist as _fetch_vsin_splits
+        st.session_state["vsin_splits_games"] = _fetch_vsin_splits(sport)
+    except Exception as _vs_err:
+        st.session_state.setdefault("vsin_splits_games", [])
+        print(f"[WARN] fetch_vsin_splits_from_gist({sport}): {_vs_err}")
+
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
         games, is_playoff, home_teams, away_teams = _game_lines_result
