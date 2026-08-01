@@ -125,7 +125,7 @@ def main() -> int:
         return 1
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    files_payload = {}
+    combined = {"captured_at": now_iso, "source": "evbets_refresh_scraper", "by_sport": {}}
     any_data = False
 
     for sport, slug in SPORT_SLUGS.items():
@@ -133,30 +133,22 @@ def main() -> int:
         if vb:
             any_data = True
         log(f"{sport} value-bets: {'OK' if vb else 'empty'}")
-        files_payload[f"betcouncil_evbets_{sport}.json"] = {
-            "content": json.dumps({"sport": sport, "captured_at": now_iso,
-                                    "data": vb or {}, "source": "evbets_refresh_scraper"})
-        }
 
         pb = fetch_prop_bets(sport, slug)
         if pb:
             any_data = True
         log(f"{sport} prop-bets: {'OK' if pb else 'empty'}")
-        files_payload[f"betcouncil_evbets_props_{sport}.json"] = {
-            "content": json.dumps({"sport": sport, "captured_at": now_iso,
-                                    "data": pb or {}, "source": "evbets_refresh_scraper"})
-        }
 
-    files_payload["betcouncil_evbets_debug.json"] = {
-        "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:20]}, indent=2)
-    }
+        combined["by_sport"][sport] = {"value_bets": vb or {}, "prop_bets": pb or {}}
+
+    combined["requests_debug"] = DEBUG_LOG[:15]
 
     if not any_data:
-        log("No data captured across any sport -- pushing debug only, not overwriting existing data with empty")
+        log("No data captured across any sport -- not overwriting existing data with empty")
         return 1
 
-    pushed = push_files(files_payload)
-    log(f"Pushed {pushed} files" if pushed else "Push FAILED")
+    pushed = push_files({"betcouncil_evbets_combined.json": {"content": json.dumps(combined)}})
+    log(f"Pushed {pushed} file" if pushed else "Push FAILED")
     return 0 if pushed else 1
 
 
