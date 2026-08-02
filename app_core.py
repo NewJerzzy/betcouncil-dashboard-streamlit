@@ -13561,6 +13561,10 @@ def load_sport_data(sport):
     def _pf_numberfire(): return fetch_numberfire_direct(sport) if sport in ("NFL", "NBA") else {}
     def _pf_betslib_models(): return fetch_betslib_models() if sport == "MLB" else []
     def _pf_sleeper(): return fetch_sleeper_mlb_scoreboard() if sport == "MLB" else {}
+    def _pf_bobbys_picks():
+        _bb_sport_map = {"MLB": "mlb", "NBA": "nba", "WNBA": "wnba", "NFL": "nfl", "NHL": "nhl"}
+        _bb_slug = _bb_sport_map.get(sport)
+        return fetch_bobbys_bets_picks(_bb_slug) if _bb_slug else []
     def _pf_betslib_live():  return fetch_betslib_live_events(sport)
     def _pf_fp_proj():       return fetch_fantasypros_projections(sport)
     def _pf_def_rank():      return fetch_opponent_defense_rankings(sport)
@@ -13850,7 +13854,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
-        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_soccer_elo, _pf_numberfire, _pf_betslib_models, _pf_sleeper, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
+        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_soccer_elo, _pf_numberfire, _pf_betslib_models, _pf_sleeper, _pf_bobbys_picks, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -13868,7 +13872,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
-     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, soccer_elo_raw, numberfire_raw, betslib_models_raw, sleeper_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
+     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, soccer_elo_raw, numberfire_raw, betslib_models_raw, sleeper_raw, bobbys_picks_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -14059,6 +14063,7 @@ def load_sport_data(sport):
     st.session_state[f"numberfire_data_{sport}"] = numberfire_raw or {}
     st.session_state["betslib_models"] = betslib_models_raw or []
     st.session_state["sleeper_scoreboard"] = sleeper_raw or {}
+    st.session_state["bobbys_bets_picks"] = bobbys_picks_raw or []
     st.session_state["betslib_live_events"] = betslib_live_raw    or []
     try:
         st.session_state["signalodds_arbitrage"] = fetch_signalodds_arbitrage_from_gist()
