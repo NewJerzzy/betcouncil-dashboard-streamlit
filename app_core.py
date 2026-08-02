@@ -13574,6 +13574,10 @@ def load_sport_data(sport):
         _bb_sport_map = {"MLB": "mlb", "NBA": "nba", "WNBA": "wnba", "NFL": "nfl", "NHL": "nhl"}
         _bb_slug = _bb_sport_map.get(sport)
         return fetch_bobbys_bets_picks(_bb_slug) if _bb_slug else []
+    def _pf_bobbys_props():
+        _bb_sport_map = {"MLB": "mlb", "NBA": "nba", "WNBA": "wnba", "NFL": "nfl", "NHL": "nhl"}
+        _bb_slug = _bb_sport_map.get(sport)
+        return fetch_bobbys_bets_props_from_gist(_bb_slug) if _bb_slug else []
     def _pf_bobbys_briefing():
         _bb_sport_map = {"MLB": "mlb", "NBA": "nba", "WNBA": "wnba", "NFL": "nfl", "NHL": "nhl"}
         _bb_slug = _bb_sport_map.get(sport)
@@ -13873,7 +13877,7 @@ def load_sport_data(sport):
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
-        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_soccer_elo, _pf_numberfire, _pf_betslib_models, _pf_sleeper, _pf_bobbys_picks, _pf_bobbys_briefing, _pf_bobbys_scoreboard, _pf_bobbys_best_prices, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
+        _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_soccer_elo, _pf_numberfire, _pf_betslib_models, _pf_sleeper, _pf_bobbys_picks, _pf_bobbys_props, _pf_bobbys_briefing, _pf_bobbys_scoreboard, _pf_bobbys_best_prices, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_nba_advanced, _pf_pinnacle_lines,
@@ -13891,7 +13895,7 @@ def load_sport_data(sport):
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
-     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, soccer_elo_raw, numberfire_raw, betslib_models_raw, sleeper_raw, bobbys_picks_raw, bobbys_briefing_raw, bobbys_scoreboard_raw, bobbys_best_prices_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
+     signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, soccer_elo_raw, numberfire_raw, betslib_models_raw, sleeper_raw, bobbys_picks_raw, bobbys_props_raw, bobbys_briefing_raw, bobbys_scoreboard_raw, bobbys_best_prices_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      nba_advanced_raw, pinnacle_lines_raw,
@@ -14083,6 +14087,7 @@ def load_sport_data(sport):
     st.session_state["betslib_models"] = betslib_models_raw or []
     st.session_state["sleeper_scoreboard"] = sleeper_raw or {}
     st.session_state["bobbys_bets_picks"] = bobbys_picks_raw or []
+    st.session_state["bobbys_bets_props"] = bobbys_props_raw or []
     st.session_state["bobbys_bets_briefing"] = bobbys_briefing_raw or {}
     st.session_state["bobbys_bets_scoreboard"] = bobbys_scoreboard_raw or []
     st.session_state["bobbys_bets_best_prices"] = bobbys_best_prices_raw or {}
@@ -16387,6 +16392,37 @@ def load_sport_data(sport):
                         final_edge = min(final_edge + _mc["edge_adj"], EDGE_CAP)
                     elif _mc["signal"] == "MARKET_BULLISH":
                         final_edge = max(final_edge + _mc["edge_adj"], -EDGE_CAP)
+            except Exception:
+                pass
+
+        # ── Bobby's Bets full props board overlay ────────────────────────────
+        # Their own EV/model call per prop, matched by player name +
+        # disambiguated by stat when a player has multiple Bobby's Bets
+        # props (mirrors the BettingPros pattern).
+        if player:
+            try:
+                _bbp_props = st.session_state.get("bobbys_bets_props", [])
+                _bbp_norm = normalize_name(player)
+                _bbp_candidates = [
+                    bp for bp in _bbp_props
+                    if normalize_name(str(bp.get("player_name", ""))) == _bbp_norm
+                ]
+                _bbp_hit = None
+                if len(_bbp_candidates) == 1:
+                    _bbp_hit = _bbp_candidates[0]
+                elif len(_bbp_candidates) > 1 and stat_norm:
+                    _bbp_stat_key = stat_norm.lower().replace(" ", "")
+                    _bbp_hit = next((bp for bp in _bbp_candidates
+                        if _bbp_stat_key in str(bp.get("stat_category", "")).lower().replace(" ", "")), _bbp_candidates[0])
+                if _bbp_hit:
+                    _bbp_call = str(_bbp_hit.get("label", "")).upper()
+                    _bbp_ev = _bbp_hit.get("ev")
+                    if _bbp_call and _bbp_ev is not None:
+                        if _bbp_call == best_side:
+                            p["SignalNotes"] = p.get("SignalNotes", "") + f" 🏈 BB:{_bbp_call}(EV {_bbp_ev:+})"
+                            final_edge = min(final_edge * 1.03, EDGE_CAP)
+                        else:
+                            p["SignalNotes"] = p.get("SignalNotes", "") + f" ⚠️ BB disagrees:{_bbp_call}"
             except Exception:
                 pass
 
