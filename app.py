@@ -33,7 +33,7 @@ del _name_copy_guard
 # (each tab depends on variables computed by the ones before it in the same
 # script run) and wasn't safe to split blind in the same pass.
 
-tabs = st.tabs(["📋 Summary", "🆕 New Bettor", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner"])
+tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -141,8 +141,39 @@ with tabs[0]:
             unsafe_allow_html=True
         )
     # ══════════════════════════════════════════════════════
-    # TOP METRICS BAR — first thing user sees
+    # WEEKLY TRACK RECORD BANNER — real W/L from actual resolved
+    # bets, not a static claim. Only shows if there's a real
+    # sample this week; says nothing rather than fabricate one.
     # ══════════════════════════════════════════════════════
+    try:
+        from datetime import timedelta as _td_wk
+        _wk_cutoff = datetime.now() - _td_wk(days=7)
+        _wk_resolved = [
+            h for h in st.session_state.get("history", [])
+            if h.get("outcome") in ("WIN", "LOSS")
+            and str(h.get("tier", "")).upper() in ("SOVEREIGN", "ELITE")
+        ]
+        def _wk_parse(ts):
+            try:
+                return datetime.fromisoformat(str(ts)[:19])
+            except Exception:
+                return datetime.min
+        _wk_resolved = [h for h in _wk_resolved if _wk_parse(h.get("timestamp","")) >= _wk_cutoff]
+        _wk_wins = sum(1 for h in _wk_resolved if h.get("outcome") == "WIN")
+        _wk_total = len(_wk_resolved)
+        if _wk_total >= 5:
+            _wk_pct = _wk_wins / _wk_total
+            st.markdown(
+                f'<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
+                f'border-radius:6px;padding:10px 16px;margin-bottom:12px;">'
+                f'<span style="color:#fff;font-weight:700;font-size:14px;">🎯 SOVEREIGN/ELITE picks are '
+                f'{_wk_wins}-{_wk_total - _wk_wins} ({_wk_pct:.0%}) this week</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+    except Exception:
+        pass
+
     _board_all   = st.session_state.board_data or []
     _sov_all     = sum(1 for p in _board_all if p.get("Tier","") == "SOVEREIGN")
     _elite_all   = sum(1 for p in _board_all if p.get("Tier","") == "ELITE")
@@ -1725,6 +1756,7 @@ with tabs[2]:
                 # and smaller font, not a separate feature mode. Whales can
                 # fit more rows on screen; new bettors can ignore it.
                 _density = st.selectbox("Density", ["Standard", "Dense"], key="ev_density")
+            _view_mode = st.radio("View", ["Table", "Cards"], index=0, horizontal=True, key="ev_view_mode")
 
         st.html(
             '<div class="heatmap-legend" title="Background intensity on the Edge % column scales with edge size, '
@@ -2229,7 +2261,42 @@ with tabs[2]:
             '<span style="text-align:center">● Rely</span>'
             '</div>'
         )
-        st.markdown(_header, unsafe_allow_html=True)
+        if _view_mode != "Cards":
+            st.markdown(_header, unsafe_allow_html=True)
+
+        if _view_mode == "Cards":
+            _tier_badge_colors = {"SOVEREIGN": "#f5c518", "ELITE": "#1e90ff", "APPROVED": "#3ac47d", "LEAN": "#8ab4d4"}
+            _cards_per_row = 3
+            for _ci in range(0, len(_rows), _cards_per_row):
+                _card_cols = st.columns(_cards_per_row)
+                for _cj, _rc in enumerate(_rows[_ci:_ci + _cards_per_row]):
+                    with _card_cols[_cj]:
+                        _tbc = _tier_badge_colors.get(_rc.get("_tier", ""), "#6a7a8a")
+                        st.markdown(
+                            f'<div style="background:var(--bc-bg-card);border:1px solid {_tbc}44;'
+                            f'border-radius:10px;padding:12px 14px;margin-bottom:12px;min-height:190px;">'
+                            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                            f'<span style="font-weight:700;font-size:14px;color:var(--bc-text);">{_rc.get("_player","")}</span>'
+                            f'<span style="background:{_tbc};color:#0a1628;font-weight:700;font-size:11px;'
+                            f'padding:2px 8px;border-radius:10px;">{_rc.get("_grade","")}</span>'
+                            f'</div>'
+                            f'<div style="color:var(--bc-dim);font-size:12px;margin-top:2px;">{_rc.get("_team","")}</div>'
+                            f'<div style="font-size:15px;font-weight:600;color:var(--bc-text);margin-top:8px;">'
+                            f'{_rc.get("_side","")} {_rc.get("_line","")} {_rc.get("_prop","")}</div>'
+                            f'<div style="display:flex;gap:14px;margin-top:8px;">'
+                            f'<div><div style="font-size:10px;color:var(--bc-dim);">EDGE</div>'
+                            f'<div style="font-size:15px;font-weight:700;color:{_rc.get("_grade_color","var(--bc-text)")};">{_rc.get("_edge_pct","")}%</div></div>'
+                            f'<div><div style="font-size:10px;color:var(--bc-dim);">MODEL</div>'
+                            f'<div style="font-size:15px;font-weight:700;color:var(--bc-text);">{_rc.get("_model_prob","")}%</div></div>'
+                            f'<div><div style="font-size:10px;color:var(--bc-dim);">BEST</div>'
+                            f'<div style="font-size:13px;font-weight:600;color:var(--bc-text);">'
+                            f'{_rc.get("_pinn") if _rc.get("_pinn") not in ("—","") else (_rc.get("_dk") if _rc.get("_dk") not in ("—","") else _rc.get("_fd",""))}</div></div>'
+                            f'</div>'
+                            f'<div style="color:var(--bc-dim);font-size:11px;margin-top:8px;">'
+                            f'L5 {_rc.get("_l5","—")} · L10 {_rc.get("_l10","—")} · Szn {_rc.get("_szn","—")}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
 
         # Density toggle -- same data, tighter spacing/smaller font in
         # Dense mode. Not a feature mode, purely a display density setting.
@@ -2242,7 +2309,7 @@ with tabs[2]:
         _html_rows = []
         _lock_buttons = []  # collect lock actions outside HTML
         _prev_tier_group = None
-        for _r in _rows:
+        for _r in (_rows if _view_mode != "Cards" else []):
             if _r.get("_tier") != _prev_tier_group:
                 _prev_tier_group = _r.get("_tier")
                 _grp_color = _tier_colors.get(_prev_tier_group, "#6a7a8a")
@@ -11911,7 +11978,7 @@ with tabs[1]:
     st.markdown(
         '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
         'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
-        '<div style="color:#fff;font-weight:700;font-size:15px;">🆕 New Bettor Mode</div>'
+        '<div style="color:#fff;font-weight:700;font-size:15px;">🎯 Pick For You</div>'
         '<div style="color:#8ab4d4;font-size:12.5px;margin-top:4px;">'
         'A shortlist for when you don\'t have time to read the full board — only SOVEREIGN/ELITE plays, '
         'correlation-checked, with a go/caution/don\'t verdict already worked out, and how it compares '
