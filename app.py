@@ -8221,6 +8221,35 @@ with tabs[7]:
                                 label = window.replace("last_", "Last ").replace("season", "Season").title()
                                 st.caption(f"{label}: {o}-{u}" + (f"-{psh}" if psh else "") + f" O/U ({total} games)")
 
+            # Bobby's Bets picks -- confirmed live 2026-08-01, no auth/CF.
+            # Matches by exact player_name string against the real API
+            # response (their own naming, not necessarily normalized the
+            # same way as our board).
+            try:
+                _bb_picks = st.session_state.get("bobbys_bets_picks", [])
+                _bb_matches = [p for p in _bb_picks
+                               if normalize_name(str(p.get("player_name",""))) == normalize_name(pl_name_d)]
+            except Exception:
+                _bb_matches = []
+            for _bb in _bb_matches[:3]:
+                _bb_stat = str(_bb.get("stat_category","")).upper()
+                _bb_label = _bb.get("label","")
+                _bb_line = _bb.get("line","?")
+                with st.expander(f"🎯 {_bb_stat} {_bb_label} {_bb_line} — Bobby's Bets", expanded=False):
+                    _bb_odds = _bb.get("odds_american")
+                    if _bb_odds is not None:
+                        st.markdown(f"**{_bb_label} {_bb_line}** ({_bb_odds:+d} odds)" if isinstance(_bb_odds, int) else f"**{_bb_label} {_bb_line}** ({_bb_odds} odds)")
+                    _bb_streak = _bb.get("current_streak")
+                    if _bb_streak:
+                        st.caption(f"Current streak: {_bb_streak} games {_bb_label.lower()}")
+                    for hr_key, hr_label in (("hit_rate_l5","Last 5"), ("hit_rate_l10","Last 10"),
+                                              ("hit_rate_l20","Last 20"), ("hit_rate_all","Season")):
+                        v = _bb.get(hr_key)
+                        if v is not None:
+                            st.caption(f"{hr_label} hit rate: {v}%")
+                    if _bb.get("hit_rate_home") is not None or _bb.get("hit_rate_away") is not None:
+                        st.caption(f"Home: {_bb.get('hit_rate_home','?')}% · Away: {_bb.get('hit_rate_away','?')}%")
+
             # coverage fetch_numberfire_direct actually has. Matches by
             # normalized name against the raw scraped rows.
             if _pl_sport_used in ("NFL", "NBA"):
