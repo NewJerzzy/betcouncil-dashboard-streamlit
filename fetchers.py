@@ -15099,21 +15099,24 @@ def fetch_betslib_predictions(sport: str, limit: int = 20) -> list:
     if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < 30:
         c = _safe_load_pkl(cp)
         if c is not None: return c
-    jwt = _betslib_jwt()
-    if not jwt: return []
+    jwt = _betslib_jwt() or None
     try:
         hdrs = {
-            "Authorization": f"Bearer {jwt}",
             "Accept":        "application/json, text/plain, */*",
             "Origin":        "https://signalodds.com",
             "Referer":       "https://signalodds.com/",
             "x-client-source": "web",
             "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
+        if jwt:
+            hdrs["Authorization"] = f"Bearer {jwt}"
         url = f"{BETSLIB_BASE}/predictions?date_filter=upcoming&limit={limit}&page=1&sort_by=commence_time&sort_dir=asc&sport={slug}"
         r   = _http.get(url, headers=hdrs, timeout=15)
+        if r.status_code == 401 and jwt:
+            hdrs.pop("Authorization", None)
+            r = _http.get(url, headers=hdrs, timeout=15)
         if r.status_code == 401:
-            print("[WARN] betslib: JWT expired — refresh SIGNAL_ODDS_JWT in secrets"); return []
+            print("[WARN] betslib: 401 even anonymous — endpoint now requires auth"); return []
         if r.status_code != 200:
             print(f"[WARN] betslib HTTP {r.status_code}"); return []
         raw  = r.json()
