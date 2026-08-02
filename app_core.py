@@ -12845,6 +12845,54 @@ def store_opening_lines(game_analysis, sport):
         pass
 
 
+def store_closing_lines(game_analysis, sport):
+    """
+    Store the last line seen right as/after a game starts as the closing
+    line. Fills the real gap fetch_all_closing_lines() was built for but
+    never had a producer for -- persisted to the Gist (betcouncil_
+    closing_lines.json via save_to_gist) so it survives across sessions,
+    unlike the local-file-only opening lines.
+
+    Only records once per game per day (checks GameTime <= now), same
+    guard pattern as store_opening_lines' "first time seen" check.
+    """
+    if not game_analysis:
+        return
+    try:
+        stored = fetch_all_closing_lines() or {}
+        today_str = date.today().strftime("%Y-%m-%d")
+        changed = False
+        for game in game_analysis:
+            matchup = game.get("matchup", "")
+            key = f"{today_str}_{matchup}_{sport}"
+            if key in stored:
+                continue  # already captured this game's closing line today
+            game_time_str = game.get("GameTime", "") or game.get("game_time", "")
+            if not game_time_str:
+                continue
+            try:
+                gt = datetime.strptime(str(game_time_str)[:16], "%Y-%m-%d %H:%M")
+            except Exception:
+                continue
+            if gt > datetime.now():
+                continue  # game hasn't started yet -- not closing time
+            stored[key] = {
+                "matchup":        matchup,
+                "sport":          sport,
+                "date":           today_str,
+                "close_spread":   game.get("Spread", "N/A"),
+                "close_total":    game.get("Total", "N/A"),
+                "close_home_ml":  game.get("HomeML", "N/A"),
+                "close_edge":     game.get("best_edge", 0),
+                "stored_at":      datetime.now().strftime("%H:%M"),
+            }
+            changed = True
+        if changed:
+            save_to_gist("closing_lines", stored, force_flush=False)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        pass
+
+
 def get_line_movement_summary(matchup, sport, current_game):
     """
     Compare current line vs opening line for a game.
@@ -18293,6 +18341,7 @@ with st.sidebar:
             # Store opening lines + line origins now that game_analysis exists
             if game_analysis:
                 store_opening_lines(game_analysis, sport_sel)
+                store_closing_lines(game_analysis, sport_sel)
                 st.session_state["line_origins"] = track_line_origin(game_analysis, sport_sel)
             # Fetch alt lines and enrich game_analysis
             _alt_lines_data = fetch_alt_lines(sport_sel)
