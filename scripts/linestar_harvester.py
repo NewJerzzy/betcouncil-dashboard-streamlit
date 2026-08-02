@@ -233,9 +233,31 @@ def push_gist(files, token, label=""):
                 continue
             body = exc.read()[:500]
             log(f"  [error] Gist push failed for {label or 'batch'}: HTTP {exc.code} {body}")
+            try:
+                _diag_body = json.dumps({"files": {"betcouncil_bettingpros_debug.json": {
+                    "content": json.dumps({"note": "TEMP linestar diag httperror", "label": label,
+                                            "payload_bytes": len(payload), "num_files": len(files),
+                                            "http_code": exc.code, "body": body.decode(errors="replace")}, default=str)}}}).encode()
+                _diag_req = urllib.request.Request(f"https://api.github.com/gists/{GIST_ID}",
+                    data=_diag_body, method="PATCH",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                urllib.request.urlopen(_diag_req, timeout=15)
+            except Exception:
+                pass
             return False
         except Exception as exc:
             log(f"  [error] Gist push failed for {label or 'batch'}: {exc}")
+            try:
+                _diag_body = json.dumps({"files": {"betcouncil_bettingpros_debug.json": {
+                    "content": json.dumps({"note": "TEMP linestar diag", "label": label,
+                                            "payload_bytes": len(payload), "num_files": len(files),
+                                            "error": str(exc), "error_type": type(exc).__name__}, default=str)}}}).encode()
+                _diag_req = urllib.request.Request(f"https://api.github.com/gists/{GIST_ID}",
+                    data=_diag_body, method="PATCH",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                urllib.request.urlopen(_diag_req, timeout=15)
+            except Exception:
+                pass
             return False
     return False
 
