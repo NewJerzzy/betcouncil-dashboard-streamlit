@@ -130,6 +130,16 @@ with tabs[0]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
     # ═══════════════════════════════════════════════════════
+    _bb_briefing = st.session_state.get("bobbys_bets_briefing", {})
+    if _bb_briefing.get("headline"):
+        st.markdown(
+            f'<div style="background:var(--bc-bg-card);border-left:3px solid var(--bc-blue);'
+            f'border-radius:4px;padding:10px 14px;margin-bottom:12px;">'
+            f'<div style="font-size:0.95rem;font-weight:700;color:var(--bc-text);">📰 {_bb_briefing["headline"]}</div>'
+            + (f'<div style="font-size:0.82rem;color:var(--bc-dim);margin-top:2px;">{_bb_briefing.get("subhead","")}</div>' if _bb_briefing.get("subhead") else '')
+            + '</div>',
+            unsafe_allow_html=True
+        )
     # ══════════════════════════════════════════════════════
     # TOP METRICS BAR — first thing user sees
     # ══════════════════════════════════════════════════════
@@ -3968,6 +3978,35 @@ with tabs[3]:
                     _mp_parts.append(f"{_mp['pitcher']}" + (f" (FIP {_mp_fip})" if _mp_fip is not None else ""))
             if _mp_parts:
                 st.caption(f"⚾ Probable pitchers: {' vs '.join(_mp_parts)}")
+
+        # Bobby's Bets live scoreboard + weather/park factor -- MLB only,
+        # matching this source's real coverage.
+        if _gsport == "MLB":
+            try:
+                _bb_games = st.session_state.get("bobbys_bets_scoreboard", [])
+                _bb_game = next((g for g in _bb_games if _home_nm and _away_nm and (
+                    str(g.get("home", {}).get("team", "")).lower() in _home_nm.lower() or
+                    _home_nm.lower() in str(g.get("home", {}).get("team", "")).lower()
+                ) and (
+                    str(g.get("away", {}).get("team", "")).lower() in _away_nm.lower() or
+                    _away_nm.lower() in str(g.get("away", {}).get("team", "")).lower()
+                )), None)
+            except Exception:
+                _bb_game = None
+            if _bb_game and _bb_game.get("status") not in ("Scheduled", None):
+                _bb_away_s = _bb_game.get("away", {})
+                _bb_home_s = _bb_game.get("home", {})
+                st.caption(f"📊 Live (Bobby's Bets): {_bb_away_s.get('abbreviation','?')} {_bb_away_s.get('score','?')} — "
+                           f"{_bb_home_s.get('abbreviation','?')} {_bb_home_s.get('score','?')} ({_bb_game.get('status','')})")
+            try:
+                _bb_home_abbr = _bb_game.get("home", {}).get("abbreviation") if _bb_game else None
+                if _bb_home_abbr:
+                    _bb_weather = fetch_bobbys_bets_weather(_bb_home_abbr, "mlb")
+                    _bb_impact = _bb_weather.get("impact", {})
+                    if _bb_impact.get("summary"):
+                        st.caption(f"🌤️ {_bb_impact['summary']}")
+            except Exception:
+                pass
 
         if _bdl_game:
             _bdl_home_data = _bdl_game.get("home_team_data") or {}
@@ -9045,6 +9084,19 @@ with tabs[9]:
                 _bp_ls_consensus.append({"Player": _bp_lp_name, "Prop": _bp_lp_stat, "Line": _bp_lp_cons})
         _ls_add(_bp_ls_props, "BettingPros (best)")
         _ls_add(_bp_ls_consensus, "BettingPros (consensus)")
+        # ── Bobby's Bets best-prices (real cross-book comparison, confirmed live) ──
+        _bb_ls_props = []
+        for _bb_key, _bb_val in st.session_state.get("bobbys_bets_best_prices", {}).items():
+            _bb_parts = _bb_key.split("|")
+            if len(_bb_parts) != 4:
+                continue
+            _bb_player, _bb_stat, _bb_line, _bb_side = _bb_parts
+            try:
+                _bb_line_f = float(_bb_line)
+            except (TypeError, ValueError):
+                continue
+            _bb_ls_props.append({"Player": _bb_player.title(), "Prop": f"{_bb_stat} ({_bb_side})", "Line": _bb_line_f})
+        _ls_add(_bb_ls_props, "Bobby's Bets (best)")
         # ── Unabated (data.unabated.com, 15-min cron, no auth/WAF dependency) ──
         # Independent of the token-gated scrapers below — still fresh even
         # when Caesars/Bovada/DK Pick6 tokens have expired since last capture.
