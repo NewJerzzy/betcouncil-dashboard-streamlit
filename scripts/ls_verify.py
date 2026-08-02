@@ -8,22 +8,19 @@ def main():
     url = "https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fantasy/GetSalariesV5?site=1&sport=3&periodId=2804"
     r = requests.get(url, headers=headers, timeout=15)
     d = r.json()
-    scj = d.get("SalaryContainerJson")
-    result = {"scj_type": str(type(scj)), "scj_len": len(scj) if scj else 0}
-    if scj:
-        parsed = json.loads(scj) if isinstance(scj, str) else scj
-        if isinstance(parsed, list):
-            result["parsed_type"] = "list"
-            result["parsed_len"] = len(parsed)
-            result["sample"] = parsed[0] if parsed else None
-        elif isinstance(parsed, dict):
-            result["parsed_type"] = "dict"
-            result["parsed_keys"] = list(parsed.keys())
-
+    scj = json.loads(d.get("SalaryContainerJson"))
+    sal = scj.get("Salaries", [])
+    result = {
+        "is_truncated": scj.get("IsTruncated"),
+        "truncated_count": scj.get("TruncatedSalaryCount"),
+        "num_salaries": len(sal),
+        "slates": scj.get("Slates"),
+        "sample_player": sal[0] if sal else None,
+    }
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP linestar SalaryContainerJson", "result": result}, default=str)}}},
+        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP linestar salaries deep", "result": result}, default=str)}}},
     )
     print("push:", resp.status_code)
     return 0
