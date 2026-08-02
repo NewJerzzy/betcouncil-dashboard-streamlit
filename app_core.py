@@ -13542,7 +13542,7 @@ def load_sport_data(sport):
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
     def _pf_sharpapi_lines():  return []  # SharpAPI removed (Aug 1 2026) -- redundant with EVSharps (free EV) + ODDS_API_IO_KEY (Pinnacle), user declined to pay for anything SharpAPI would add
     def _pf_bookmaker_lines(): return fetch_bookmaker_game_lines(sport)
-    def _pf_heritage_lines():  return fetch_heritage_game_lines(sport)
+    def _pf_heritage_lines():  return []  # Heritage Sports: confirmed dead end (needs a paid aggregator subscription, no free/credential path exists) -- removed Aug 2 2026
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_sportsline_lines(): return fetch_sportsline_game_lines(sport)
     def _pf_sbr_lines():        return fetch_sbr_game_lines(sport)
