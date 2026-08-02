@@ -2,7 +2,7 @@ name: WiseGuyTeam Sharp Report Refresh
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "13,33,53 * * * *"   # offset from :00/:20/:40 -- confirmed contended slot, likely cause of this script's persistent push failures
   workflow_dispatch: {}
 
 jobs:
