@@ -14393,27 +14393,6 @@ def _sbr_parse_html(html: str, sport: str, league_path: str = "") -> list:
     return games
 
 
-def fetch_heritage_game_lines(sport: str) -> list:
-    """
-    Was called (app.py's parallel fetch list, _pf_heritage_lines) but
-    never defined anywhere in this codebase -- a NameError on every
-    single board load, caught by _fetch_parallel's per-source exception
-    handling (so it didn't crash the board, just showed "0.0 ❌ NameError"
-    in the Data Source Status table every time).
-
-    Returns [] rather than fabricating a scraper: there's no endpoint,
-    schema, or prior partial implementation for "Heritage" (a sportsbook
-    name) anywhere else in this codebase to build one from, and this
-    sandbox has no network access to a real Heritage Sports API to
-    verify one against. Guessing at an unverified external endpoint here
-    would be worse than an honest empty result -- heritage_game_lines
-    already defaults safely to [] downstream wherever it's read.
-    If a real Heritage integration is wanted, this is the place to build
-    it once the actual API/scrape target is confirmed.
-    """
-    return []
-
-
 _SBR_SPORT_PATHS = {
     "NFL": "nfl-football", "NBA": "nba-basketball", "MLB": "mlb-baseball",
     "NHL": "nhl-hockey", "WNBA": "wnba-basketball",
