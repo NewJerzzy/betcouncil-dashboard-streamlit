@@ -13366,9 +13366,6 @@ def fetch_thescore_game_lines(sport: str) -> list:
       sha256Hash    : 1ec1bed0d31b92e88825523405e45e88d6f34d484f4b0f3bbe4beb319229cab6
       Gist file     : betcouncil_thescore_games.json
     """
-    primary = fetch_unabated_straight_from_gist(sport, 36, "theScore Bet")
-    if primary:
-        return primary
     props, _src = fetch_thescore_from_gist(sport)
     return props
 
@@ -13412,7 +13409,7 @@ def fetch_bet365_game_lines(sport: str) -> list:
         ]
         if primary:
             return primary
-    return fetch_unabated_straight_from_gist(sport, 78, "Bet365")
+    return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -19462,110 +19459,6 @@ def fetch_fanduel_lines(sport: str = "MLB") -> list:
     return result
 
 
-def fetch_unabated_straight_from_gist(sport: str, source_id: int, book_label: str) -> list:
-    """
-    Read Caesars/Bet365/theScore game lines from Unabated's `straight` market
-    data — pushed by scripts/src/unabated_refresher/refresh.py (a real
-    scheduled server-side script hitting data.unabated.com/market/{league}/
-    straight/odds, confirmed live Jul 10 2026, no auth). Same free/no-login
-    tier as the existing Unabated props integration.
-
-    source_id mapping (confirmed): 20=Caesars, 78=Bet365, 36=theScore US
-    (60=theScore CA, 118=theScore Fast — not used here).
-
-    bet_type_id mapping (confirmed): 1=Moneyline, 2=Spread, 3=Total.
-
-    side_index mapping (Jul 10 2026, CORRECTED after real verification):
-    side_index 0 = AWAY, side_index 1 = HOME — confirmed via US rotation-
-    number convention (odd rotation = away, even = home) across every
-    tested NFL and MLB event. The original version of this function used
-    "first team_id encountered in the row list" to guess away/home, which
-    was WRONG — JSON row order isn't guaranteed to list away first, so it
-    mislabeled home/away for roughly 5 of 6 tested events. Do not revert
-    to first-seen ordering; use side_index directly.
-
-    Total (Over/Under) — NOT assignable from this data. Confirmed: for a
-    Total row pair, both sides report the SAME points value (it's the
-    total line itself), and side_index still means away/home here too —
-    NOT over/under. There is no field in the raw data that labels a price
-    as Over or Under; the two prices per event are just "the away side's
-    number" and "the home side's number" for the total market, and which
-    one corresponds to Over vs Under cannot be determined without cross-
-    referencing a source that does label it. Rather than guess (the
-    previous version wrongly assumed side_index 0=Over), OverOdds/
-    UnderOdds are left unset here — only the Total points value itself
-    is populated, since that part IS reliable (confirmed identical across
-    both sides in every event checked).
-
-    Also guards against a confirmed artifact: some events showed points=0.5
-    for MLB leaking into the Total field (was actually a Q1 team-assignment
-    bug feeding an unrelated Spread row's alt-line value into Total) — a
-    sanity floor of points > 3 on Total rows catches this class of error
-    even if a different root cause produces it again later.
-
-    Returns list of:
-        {Home, Away, HomeML, AwayML, Spread, SpreadOdds,
-         Total, Book, Sport, source}
-        (OverOdds/UnderOdds intentionally omitted — see note above)
-    """
-    fname = f"betcouncil_unabated_straight_{sport.upper()}.json"
-    data = _read_gist_file(fname, cache_minutes=10)
-    if not data:
-        return []
-    rows = data if isinstance(data, list) else data.get("lines", data.get("data", []))
-    if not rows:
-        return []
-
-    by_event = {}
-    for r in rows:
-        if r.get("source_id") != source_id:
-            continue
-        eid = r.get("event_id")
-        if eid is None:
-            continue
-        by_event.setdefault(eid, {"event": r.get("event", ""), "rows": []})
-        by_event[eid]["rows"].append(r)
-
-    out = []
-    for eid, bundle in by_event.items():
-        event_str = bundle["event"]
-        rows_for_event = bundle["rows"]
-        if " @ " not in event_str:
-            continue
-        away_str, home_str = [s.strip() for s in event_str.split(" @ ", 1)]
-
-        entry = {
-            "Home": home_str, "Away": away_str,
-            "HomeML": None, "AwayML": None,
-            "Spread": None, "SpreadOdds": None,
-            "Total": None,
-            "Book": book_label, "Sport": sport, "source": f"Unabated_straight_{book_label}",
-        }
-        for r in rows_for_event:
-            bt = r.get("bet_type_id")
-            si = r.get("side_index")
-            price = r.get("price")
-            points = r.get("points")
-            is_away = (si == 0)
-            is_home = (si == 1)
-            if bt == 1:  # Moneyline
-                if is_home:
-                    entry["HomeML"] = price
-                elif is_away:
-                    entry["AwayML"] = price
-            elif bt == 2:  # Spread
-                if is_home and points is not None:
-                    entry["Spread"] = points
-                    entry["SpreadOdds"] = price
-            elif bt == 3:  # Total — points identical on both sides; sanity
-                           # floor guards against the confirmed 0.5 artifact
-                if points is not None and points > 3 and entry["Total"] is None:
-                    entry["Total"] = points
-        if entry["HomeML"] is not None or entry["AwayML"] is not None:
-            out.append(entry)
-    return out
-
-
 def fetch_caesars_lines(sport: str = "MLB") -> list:
     """
     Caesars Sportsbook game lines (ML, spread, total) — no browser required.
@@ -19588,9 +19481,7 @@ def fetch_caesars_lines(sport: str = "MLB") -> list:
        Total, OverOdds, UnderOdds, book="Caesars", book_id=123}
     """
     primary = _fetch_an_book_lines(sport, 123, "Caesars")
-    if primary:
-        return primary
-    return fetch_unabated_straight_from_gist(sport, 20, "Caesars")
+    return primary
 
 
 
