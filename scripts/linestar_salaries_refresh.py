@@ -48,14 +48,14 @@ BASE_URL = "https://www.linestarapp.com/DesktopModules/DailyFantasyApi/API/Fanta
 # real periodId changes daily/per-slate, so we also try to discover the
 # current one from the same response if this guess is stale)
 SPORTS = {
-    3:  "MLB",
-    12: "WNBA",
-    8:  "MMA",
-    1:  "NFL",
-    2:  "NBA",
-    6:  "NHL",
-    5:  "PGA",
-    11: "CFL",
+    3:  ("MLB",  2804),
+    12: ("WNBA", 1165),
+    8:  ("MMA",  502),
+    1:  ("NFL",  403),
+    2:  ("NBA",  2608),
+    6:  ("NHL",  2646),
+    5:  ("PGA",  515),
+    11: ("CFL",  285),
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -71,17 +71,21 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def _discover_period_id(sport_id: int) -> int | None:
+def _discover_period_id(sport_id: int, seed_period_id: int) -> int | None:
     """
-    Discover today's real periodId for this sport. periodId=0 does NOT
-    work as a "give me current" signal (confirmed live -- it just echoes
-    back 0). What DOES work: call with ANY periodId (even stale/wrong),
-    and the response's own "Periods" list always has today's real,
-    current period first (Periods[0]["Id"]), regardless of what period
-    was requested. Confirmed live 2026-08-02.
+    Discover today's real periodId for this sport. periodId=0 and small
+    arbitrary guesses (e.g. 1) do NOT work -- confirmed live, they return
+    a totally empty null response shell with no Periods list to read.
+    What DOES work: call with a REAL, recently-known-valid periodId (even
+    if it's gone stale by a few days), and the response's own "Periods"
+    list always has today's real, current period first (Periods[0]["Id"]).
+    seed_period_id needs occasional manual updating as it drifts further
+    from real (period IDs appear to be daily-incrementing counters) --
+    same maintenance category as a session cookie going stale, not a code
+    bug. Confirmed live 2026-08-02 with seed=2804 (real that day).
     """
     try:
-        r = requests.get(BASE_URL, params={"site": 1, "sport": sport_id, "periodId": 1},
+        r = requests.get(BASE_URL, params={"site": 1, "sport": sport_id, "periodId": seed_period_id},
                           headers=HEADERS, timeout=20)
         if r.status_code != 200:
             return None
@@ -94,10 +98,10 @@ def _discover_period_id(sport_id: int) -> int | None:
         return None
 
 
-def fetch_sport(sport_id: int, sport_name: str) -> list:
-    period_id = _discover_period_id(sport_id)
+def fetch_sport(sport_id: int, sport_name: str, seed_period_id: int) -> list:
+    period_id = _discover_period_id(sport_id, seed_period_id)
     if not period_id:
-        DEBUG_LOG.append({"sport": sport_name, "note": "could not discover periodId, skipping"})
+        DEBUG_LOG.append({"sport": sport_name, "note": "could not discover periodId (seed may be too stale), skipping"})
         return []
 
     try:
@@ -195,8 +199,8 @@ def main() -> int:
     files_payload = {}
     any_data = False
 
-    for sport_id, sport_name in SPORTS.items():
-        players = fetch_sport(sport_id, sport_name)
+    for sport_id, (sport_name, seed_period_id) in SPORTS.items():
+        players = fetch_sport(sport_id, sport_name, seed_period_id)
         if players:
             any_data = True
         files_payload[f"betcouncil_linestar_salaries_{sport_name}.json"] = {
