@@ -210,7 +210,17 @@ def push_to_gist(key: str, payload: dict) -> bool:
         )
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                return r.status == 200
+                if r.status != 200:
+                    return False
+                resp_body = json.loads(r.read())
+                if key in (resp_body.get("files") or {}):
+                    return True
+                log(f"  Push returned 200 but {key} missing from response -- retrying")
+                if attempt < 2:
+                    import time as _t
+                    _t.sleep(5 * (attempt + 1))
+                    continue
+                return False
         except urllib.error.HTTPError as e:
             if e.code in (403, 429, 409) and attempt < 2:
                 base_wait = 10 * (2 ** attempt)
