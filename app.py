@@ -9962,11 +9962,11 @@ with tabs[11]:
         "Status": f"🟢 {len(_bkr)} lines" if _bkr else "🟡 Add BOOKMAKER_CF + BOOKMAKER_SESSID",
         "Action": "None"})
 
-    # Heritage Sports
-    _her = st.session_state.get("heritage_game_lines", [])
-    _src_statuses.append({"Source": "Heritage Sports (sharp lines)",
-        "Status": f"🟢 {len(_her)} lines" if _her else ("⚪ Not loaded" if st.secrets.get("HERITAGE_GSID") else "🟡 Add HERITAGE_GSID"),
-        "Action": "None"})
+    # Heritage Sports: removed Aug 2 2026 -- confirmed dead end by two
+    # independent investigations (this session + Replit's). Cloudflare
+    # blocks every datacenter IP regardless of credentials; the only real
+    # path is a paid aggregator subscription (SportsGameOdds/The Odds
+    # API), a payment decision not made. Not a missing-secret issue.
 
 
 
