@@ -17312,8 +17312,12 @@ def _parse_prizepicks_harvested(raw, sport: str) -> list:
 
 
 def fetch_underdog_from_gist(sport: str) -> tuple:
-    """PRIMARY: Underdog props from browser harvester. SECONDARY: scraper."""
-    data = _read_gist_file(f"betcouncil_underdog_{sport}.json", cache_minutes=5)
+    """PRIMARY: Underdog props merged into betcouncil_evbets_combined.json
+    (per-sport standalone files confirmed to never successfully land on
+    this Gist -- see push_sport_files in underdog_ssr_scraper.py).
+    SECONDARY: scraper."""
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("underdog", {}).get(sport)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
