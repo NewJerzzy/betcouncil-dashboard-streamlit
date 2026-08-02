@@ -5280,21 +5280,85 @@ def fetch_bobbys_bets_picks(sport: str = "mlb") -> list:
         return []
 
 
-def fetch_bobbys_bets_briefing(sport: str = "mlb") -> str:
-    """Bobby's Bets AI slate briefing (one sentence), confirmed live, no auth."""
+def fetch_bobbys_bets_briefing(sport: str = "mlb") -> dict:
+    """
+    Bobby's Bets AI slate briefing, confirmed live, no auth. Real shape
+    (confirmed via live test, corrected from an earlier wrong guess):
+      {"exists": bool, "date": str, "headline": str, "subhead": str,
+       "spot": {"title": str, "why": str}}
+    """
     try:
-        r = requests.get(f"https://app.bobbysbets.com/api/briefing",
+        r = requests.get("https://app.bobbysbets.com/api/briefing",
                           params={"sport": sport.lower()},
                           headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
                                                   "Chrome/124.0.0.0 Safari/537.36"},
                           timeout=10)
         if r.status_code != 200:
-            return ""
+            return {}
         data = r.json()
-        return data.get("briefing") or data.get("text") or ""
+        return data if data.get("exists") else {}
     except Exception:
-        return ""
+        return {}
+
+
+def fetch_bobbys_bets_scoreboard(sport: str = "mlb") -> list:
+    """Bobby's Bets live scoreboard, confirmed live, no auth. Returns games list."""
+    try:
+        r = requests.get(f"https://app.bobbysbets.com/api/{sport.lower()}/live/scoreboard",
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                  "Chrome/124.0.0.0 Safari/537.36"},
+                          timeout=15)
+        if r.status_code != 200:
+            return []
+        return r.json().get("games", [])
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_bobbys_bets_weather(team: str, sport: str = "mlb") -> dict:
+    """
+    Bobby's Bets stadium/weather/park-factor data for one team, confirmed
+    live, no auth. Returns {"stadium": {...}, "weather": {...}, "impact": {...}}.
+    Cached 30 min + fast-fail timeout -- called live per-game in a Game
+    Lines render loop (up to 15 MLB games), so must never risk stacking
+    up slow sequential calls the way the pre-fix Log Bet loop did.
+    """
+    try:
+        r = requests.get(f"https://app.bobbysbets.com/api/{sport.lower()}/weather",
+                          params={"team": team.upper()},
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                  "Chrome/124.0.0.0 Safari/537.36"},
+                          timeout=5)
+        if r.status_code != 200:
+            return {}
+        return r.json()
+    except Exception:
+        return {}
+
+
+def fetch_bobbys_bets_best_prices(sport: str = "mlb") -> dict:
+    """
+    Bobby's Bets best-price-across-books comparison, confirmed live, no
+    auth. Real shape: {"best": {"player|stat|line|side": {"book":str,
+    "odds":int,"n_books":int}, ...}}. Key is a real, plain pipe-joined
+    string exactly as returned -- lowercase player name.
+    """
+    try:
+        r = requests.get(f"https://app.bobbysbets.com/api/best-prices",
+                          params={"sport": sport.lower()},
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                  "Chrome/124.0.0.0 Safari/537.36"},
+                          timeout=20)
+        if r.status_code != 200:
+            return {}
+        return r.json().get("best", {})
+    except Exception:
+        return {}
 
 
 def fetch_bettingpros_hitrate(player_name, sport="MLB"):
