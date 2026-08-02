@@ -242,6 +242,71 @@ def parse_html(html: str) -> list[dict]:
     return games
 
 
+def push_merged_to_gist(accumulated: dict) -> bool:
+    """
+    Confirmed real bug (Aug 2 2026): standalone betcouncil_vsin_{SPORT}.json
+    filenames never once landed in this Gist despite the workflow
+    repeatedly reporting success -- proven across 4 independent scripts
+    (Underdog, WiseGuyTeam, Unabated, VSIN) hitting the identical
+    symptom: this Gist reliably cannot create brand-new filenames.
+    Merges into the already-existing, actively-written
+    betcouncil_evbets_combined.json under a "vsin_lines" key instead.
+    """
+    if not GITHUB_TOKEN:
+        log("ERROR: GITHUB_TOKEN not set")
+        return False
+    SHARED_FILE = "betcouncil_evbets_combined.json"
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            listing = json.loads(r.read())
+        r_files = listing.get("files", {})
+        if SHARED_FILE in r_files:
+            raw_url = r_files[SHARED_FILE]["raw_url"]
+            with urllib.request.urlopen(raw_url, timeout=15) as r2:
+                existing = json.loads(r2.read())
+        else:
+            existing = {}
+    except Exception as e:
+        log(f"Could not read existing shared file, starting fresh: {e}")
+        existing = {}
+    existing["vsin_lines"] = accumulated
+    body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing)}}}).encode()
+
+    for attempt in range(4):
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}",
+            data=body,
+            method="PATCH",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept":        "application/vnd.github.v3+json",
+                "Content-Type":  "application/json",
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                if r.status != 200:
+                    return False
+                resp_body = json.loads(r.read())
+                if SHARED_FILE in (resp_body.get("files") or {}):
+                    return True
+                log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 429, 409) or attempt >= 3:
+                log(f"  Gist push failed: HTTP {e.code}")
+                return False
+        except Exception as e:
+            log(f"  Gist push failed: {e}")
+            return False
+        if attempt < 3:
+            import time as _t
+            _t.sleep(8 * (attempt + 1))
+    return False
+
+
 def push_to_gist(key: str, payload: dict) -> bool:
     if not GITHUB_TOKEN:
         log("ERROR: GITHUB_TOKEN not set")
@@ -283,6 +348,7 @@ def push_to_gist(key: str, payload: dict) -> bool:
 
 def run():
     fetched_any = False
+    accumulated = {}
     for sport, sport_id in SPORTS.items():
         try:
             log(f"Fetching VSiN {sport} ({sport_id}) ...")
@@ -304,14 +370,17 @@ def run():
                 "books":   ALL_BOOKS,
                 "games":   games,
             }
-            key = f"betcouncil_vsin_{sport}.json"
-            if push_to_gist(key, payload):
-                log(f"  {sport}: pushed {key} ✓")
-                fetched_any = True
-            else:
-                log(f"  {sport}: Gist push failed")
+            accumulated[sport] = payload
+            fetched_any = True
         except Exception as e:
             log(f"  {sport}: ERROR — {e}")
+
+    if accumulated:
+        if push_merged_to_gist(accumulated):
+            log(f"Pushed {len(accumulated)} sports merged ✓")
+        else:
+            log("Merged push failed")
+            fetched_any = False
 
     if not fetched_any:
         log("No sports had real data this run -- this is a real failure, not exiting 0")
