@@ -5280,6 +5280,19 @@ def fetch_bobbys_bets_picks(sport: str = "mlb") -> list:
         return []
 
 
+def fetch_bobbys_bets_props_from_gist(sport: str = "mlb") -> list:
+    """
+    Full Bobby's Bets props board (all props, not just curated picks),
+    from scripts/bobbys_bets_props_refresh.py -- scheduled scraper,
+    handles the large payload (5.2MB raw for MLB) that's too big for a
+    live in-app fetch on every board load.
+    """
+    data = _read_gist_file(f"betcouncil_bobbysbets_props_{sport.lower()}.json", cache_minutes=25)
+    if not data:
+        return []
+    return data.get("props", [])
+
+
 def fetch_bobbys_bets_briefing(sport: str = "mlb") -> dict:
     """
     Bobby's Bets AI slate briefing, confirmed live, no auth. Real shape
