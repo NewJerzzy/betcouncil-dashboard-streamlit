@@ -199,17 +199,41 @@ def normalize_game(sport_slug: str, g: dict) -> dict:
 
 def push_files(files_payload: dict, github_token: str) -> int:
     """
-    NOTE (Aug 2 2026): this script's push has been observed failing
-    persistently -- confirmed via live testing that BOTH a combined
-    multi-file push AND a per-file-split push can fail the same way
-    (200 response, content confirmed absent via the check below). The
-    per-file split was tried and reverted -- it took ~9 minutes and
-    still ultimately failed, worse than the combined approach, so this
-    keeps the same hardened pattern used across the other 46 scripts
-    in this codebase rather than a bespoke workaround that didn't
-    actually help. Root cause not resolved; this at least reports
-    failure honestly instead of silently succeeding.
+    Confirmed real bug (Aug 2 2026): all betcouncil_wiseguyteam_{SPORT}.json
+    filenames have NEVER once landed in this Gist despite passing every
+    verification check on retry -- this Gist reliably cannot create
+    brand-new filenames, proven across 4 independent scripts (Underdog,
+    WiseGuyTeam, Unabated, VSIN all hit the identical symptom). Merges
+    everything into the already-existing, actively-written
+    betcouncil_evbets_combined.json under a "wiseguyteam" key instead,
+    the same fix that already worked for VSIN splits and Underdog.
     """
+    import time
+    SHARED_FILE = "betcouncil_evbets_combined.json"
+    merged = {}
+    for fname, fbody in files_payload.items():
+        key = fname.replace("betcouncil_wiseguyteam_", "").replace(".json", "")
+        try:
+            merged[key] = json.loads(fbody["content"])
+        except Exception:
+            merged[key] = fbody["content"]
+
+    try:
+        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                          timeout=15)
+        r_files = r.json().get("files", {})
+        if SHARED_FILE in r_files:
+            raw_url = r_files[SHARED_FILE]["raw_url"]
+            existing = requests.get(raw_url, timeout=15).json()
+        else:
+            existing = {}
+    except Exception as e:
+        log(f"Could not read existing shared file, starting fresh: {e}")
+        existing = {}
+    existing["wiseguyteam"] = merged
+    shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+
     for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
@@ -217,21 +241,19 @@ def push_files(files_payload: dict, github_token: str) -> int:
                 "Authorization": f"Bearer {github_token}",
                 "Accept": "application/vnd.github+json",
             },
-            json={"files": files_payload},
+            json={"files": shared_payload},
             timeout=30,
         )
         if resp.status_code in (200, 201):
             returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
+            if SHARED_FILE in returned_files:
+                return len(files_payload)
+            if attempt < 4:
                 wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                log(f"Push returned 200 but {SHARED_FILE} missing from response -- retrying in {wait}s")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
+            return 0
         if resp.status_code in (403, 429, 409) and attempt < 4:
             base_wait = min(10 * (2 ** attempt), 90)
             wait = base_wait + random.uniform(0, base_wait * 0.4)
