@@ -56,7 +56,21 @@ query GetEvents($after: DateTime!, $before: DateTime!, $league: LeagueEnum!, $li
     channel
     homeTeam { lastName preferredAbbreviation teamStats { wins losses atswins atslosses } }
     awayTeam { lastName preferredAbbreviation teamStats { wins losses atswins atslosses } }
-    lines { type period homeSpread awaySpread awayMoney homeMoney total lineType bookId }
+    lines {
+      type period homeSpread awaySpread homePrice awayPrice
+      homeMoney awayMoney drawMoney total overPrice underPrice
+      book { name }
+    }
+    communityStats {
+      betType awayCount homeCount drawCount
+    }
+    homePlayerProps {
+      player { fullName }
+      props {
+        propName propAbbreviation bookValue projectedValue direction stars
+        book { name }
+      }
+    }
   }
 }
 """
@@ -94,16 +108,65 @@ def fetch_league_events(sport: str, league: str) -> list:
     return events if isinstance(events, list) else []
 
 
+def normalize_line(l: dict) -> dict:
+    """Multi-book line with actual book name, spread, moneyline, total + juice."""
+    book = (l.get("book") or {}).get("name", "")
+    return {
+        "book": book, "period": l.get("period"),
+        "home_spread": l.get("homeSpread"), "away_spread": l.get("awaySpread"),
+        "home_price": l.get("homePrice"), "away_price": l.get("awayPrice"),
+        "home_ml": l.get("homeMoney"), "away_ml": l.get("awayMoney"), "draw_ml": l.get("drawMoney"),
+        "total": l.get("total"), "over_price": l.get("overPrice"), "under_price": l.get("underPrice"),
+    }
+
+
+def normalize_community(stats: list) -> list:
+    """Flattens communityStats -- BetQL users' own pick distribution per bet type."""
+    out = []
+    for s in (stats or []):
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            "bet_type": s.get("betType"),
+            "away_count": s.get("awayCount", 0),
+            "home_count": s.get("homeCount", 0),
+            "draw_count": s.get("drawCount", 0),
+        })
+    return out
+
+
+def normalize_player_props(home_props: list) -> list:
+    """Flattens homePlayerProps (PlayerWithProps[]) into per-prop records with player name attached."""
+    out = []
+    for pwp in (home_props or []):
+        if not isinstance(pwp, dict):
+            continue
+        player_name = (pwp.get("player") or {}).get("fullName", "")
+        for p in (pwp.get("props") or []):
+            if not isinstance(p, dict):
+                continue
+            out.append({
+                "player": player_name,
+                "prop": p.get("propName"), "prop_abbr": p.get("propAbbreviation"),
+                "book": (p.get("book") or {}).get("name", ""),
+                "line": p.get("bookValue"), "projection": p.get("projectedValue"),
+                "direction": p.get("direction"), "stars": p.get("stars"),
+            })
+    return out
+
+
 def normalize_event(sport: str, ev: dict) -> dict:
     home, away = ev.get("homeTeam", {}) or {}, ev.get("awayTeam", {}) or {}
-    lines = [l for l in (ev.get("lines") or []) if isinstance(l, dict)]
+    lines = [normalize_line(l) for l in (ev.get("lines") or []) if isinstance(l, dict)]
     return {
         "sport": sport, "event_id": ev.get("id"), "slug_id": ev.get("slugId"),
         "start_date": ev.get("startDate"), "event_state": ev.get("eventState"),
         "home_team": home.get("preferredAbbreviation"), "away_team": away.get("preferredAbbreviation"),
         "home_team_name": home.get("lastName"), "away_team_name": away.get("lastName"),
         "home_record": (home.get("teamStats") or {}), "away_record": (away.get("teamStats") or {}),
-        "lines": lines,  # multi-book, keep raw
+        "lines": lines,
+        "community": normalize_community(ev.get("communityStats")),
+        "player_props": normalize_player_props(ev.get("homePlayerProps")),
     }
 
 
@@ -202,7 +265,10 @@ def main() -> int:
                 log(f"  {sport}: normalize error — {e}")
 
         any_data = True
-        log(f"  {sport}: {len(normalized)} events")
+        _n_lines = sum(1 for e in normalized if e.get("lines"))
+        _n_props = sum(1 for e in normalized if e.get("player_props"))
+        _n_comm = sum(1 for e in normalized if e.get("community"))
+        log(f"  {sport}: {len(normalized)} events | {_n_lines} with lines | {_n_props} with props | {_n_comm} with community")
         files_payload[f"betcouncil_betql_{sport}.json"] = {
             "content": json.dumps({
                 "source": "betql", "sport": sport,
