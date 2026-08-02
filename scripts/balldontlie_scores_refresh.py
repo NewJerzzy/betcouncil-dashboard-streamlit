@@ -38,14 +38,32 @@ def log(msg: str) -> None:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-        json={"files": files_payload}, timeout=30,
-    )
-    if resp.status_code in (200, 201):
-        return len(files_payload)
-    log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+    import time, random
+    for attempt in range(5):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": files_payload}, timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            returned_files = resp.json().get("files", {}) or {}
+            missing = [fn for fn in files_payload if fn not in returned_files]
+            if missing and attempt < 4:
+                wait = min((attempt + 1) * 5, 30)
+                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            if missing:
+                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
+                return len(files_payload) - len(missing)
+            return len(files_payload)
+        if resp.status_code in (403, 429, 409) and attempt < 4:
+            wait = min(10 * (2 ** attempt), 90) + random.uniform(0, 5)
+            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s")
+            time.sleep(wait)
+            continue
+        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+        return 0
     return 0
 
 
