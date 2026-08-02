@@ -252,6 +252,16 @@ def push_files(files_payload: dict, github_token: str) -> int:
             timeout=60,
         )
         if resp.status_code in (200, 201):
+            returned_files = resp.json().get("files", {}) or {}
+            missing = [fn for fn in files_payload if fn not in returned_files]
+            if missing and attempt < 4:
+                wait = min((attempt + 1) * 5, 30)
+                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            if missing:
+                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
+                return len(files_payload) - len(missing)
             return len(files_payload)
         if resp.status_code in (409, 403, 429) and attempt < 4:
             base_wait = min(4 * (2 ** attempt), 60)
