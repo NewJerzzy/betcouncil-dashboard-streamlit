@@ -197,7 +197,19 @@ def normalize_game(sport_slug: str, g: dict) -> dict:
     }
 
 
-def _push_one(files_payload: dict, github_token: str) -> int:
+def push_files(files_payload: dict, github_token: str) -> int:
+    """
+    NOTE (Aug 2 2026): this script's push has been observed failing
+    persistently -- confirmed via live testing that BOTH a combined
+    multi-file push AND a per-file-split push can fail the same way
+    (200 response, content confirmed absent via the check below). The
+    per-file split was tried and reverted -- it took ~9 minutes and
+    still ultimately failed, worse than the combined approach, so this
+    keeps the same hardened pattern used across the other 46 scripts
+    in this codebase rather than a bespoke workaround that didn't
+    actually help. Root cause not resolved; this at least reports
+    failure honestly instead of silently succeeding.
+    """
     for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
@@ -229,28 +241,6 @@ def _push_one(files_payload: dict, github_token: str) -> int:
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
         return 0
     return 0
-
-
-def push_files(files_payload: dict, github_token: str) -> int:
-    """
-    Pushes files ONE AT A TIME instead of one combined multi-file PATCH.
-    Confirmed real bug (Aug 2 2026): pushing all ~7 files in a single
-    PATCH call was consistently and persistently failing the same
-    silent-partial-failure check across every retry (all 7 filenames
-    missing from the response together, every single attempt) -- unlike
-    other scripts in this codebase pushing fewer files per call, which
-    only hit this bug intermittently. Splitting isolates whichever push
-    is actually problematic and lets the others land independently
-    rather than all failing together as one unit.
-    """
-    total_pushed = 0
-    for filename, content in files_payload.items():
-        pushed = _push_one({filename: content}, github_token)
-        total_pushed += pushed
-        if pushed == 0:
-            log(f"  {filename}: failed")
-        time.sleep(1.5)  # small gap between individual pushes
-    return total_pushed
 
 
 def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
