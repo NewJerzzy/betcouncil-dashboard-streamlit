@@ -3627,7 +3627,7 @@ with tabs[3]:
                         if _era:
                             st.caption(f"⚾ {_label} SP: ERA {_era}, WHIP {_whip}")
 
-            # BetQL (multi-book lines + season/ATS records) — display only.
+            # BetQL (multi-book lines + season/ATS records + community) — display only.
             try:
                 _bq_match = get_betql_match(_matchup, _gsport)
             except Exception:
@@ -3640,6 +3640,28 @@ with tabs[3]:
                         f"{_bq_match.get('home_team','')} {_bq_hr.get('atswins','?')}-{_bq_hr.get('atslosses','?')} "
                         f"({len(_bq_match.get('lines',[]))} books)"
                     )
+                _bq_comm = _bq_match.get("community", [])
+                _bq_ml = next((c for c in _bq_comm if c.get("bet_type") == "moneyline"), None)
+                if _bq_ml and (_bq_ml.get("home_count") or _bq_ml.get("away_count")):
+                    _bq_tot = _bq_ml.get("home_count", 0) + _bq_ml.get("away_count", 0)
+                    if _bq_tot:
+                        st.caption(
+                            f"👥 BetQL community: {_bq_match.get('away_team','')} "
+                            f"{_bq_ml.get('away_count',0)/_bq_tot:.0%} · "
+                            f"{_bq_match.get('home_team','')} {_bq_ml.get('home_count',0)/_bq_tot:.0%} "
+                            f"({_bq_tot} picks)"
+                        )
+                _bq_lines = _bq_match.get("lines", [])
+                if len(_bq_lines) >= 2:
+                    _bq_best_home_ml = max((l.get("home_ml") for l in _bq_lines if l.get("home_ml") is not None), default=None)
+                    _bq_best_away_ml = max((l.get("away_ml") for l in _bq_lines if l.get("away_ml") is not None), default=None)
+                    if _bq_best_home_ml is not None and _bq_best_away_ml is not None:
+                        _bq_best_home_book = next((l.get("book") for l in _bq_lines if l.get("home_ml") == _bq_best_home_ml), "")
+                        _bq_best_away_book = next((l.get("book") for l in _bq_lines if l.get("away_ml") == _bq_best_away_ml), "")
+                        st.caption(
+                            f"💵 BetQL best ML: {_bq_match.get('away_team','')} {_bq_best_away_ml:+d} ({_bq_best_away_book}) · "
+                            f"{_bq_match.get('home_team','')} {_bq_best_home_ml:+d} ({_bq_best_home_book})"
+                        )
 
             # Lock buttons for each bet type
             _lk_cols = st.columns(4)
@@ -12512,5 +12534,36 @@ with tabs[14]:
                             f"via {p.get('bookmaker', p.get('book',''))} · EV {p.get('ev_pct', p.get('ev',0))}")
         else:
             st.caption("No EVBets value picks loaded right now.")
+
+    # ── BetQL (community consensus + player props) ─────────────────────
+    with st.expander("👥 BetQL", expanded=False):
+        _pred_bq_games = []
+        for _bq_sport in ("MLB", "NBA", "NFL", "NHL"):
+            if _pred_sport_match(_bq_sport):
+                try:
+                    _pred_bq_games.extend(fetch_betql_from_gist(_bq_sport))
+                except Exception:
+                    pass
+        _pred_bq_any = False
+        for g in _pred_bq_games[:20]:
+            _bq_comm = g.get("community", [])
+            _bq_ml = next((c for c in _bq_comm if c.get("bet_type") == "moneyline"), None)
+            _bq_props = g.get("player_props", [])
+            if not _bq_ml and not _bq_props:
+                continue
+            _pred_bq_any = True
+            _line = f"**{g.get('away_team','')} @ {g.get('home_team','')}** ({g.get('sport','')})"
+            if _bq_ml:
+                _tot = _bq_ml.get("home_count", 0) + _bq_ml.get("away_count", 0)
+                if _tot:
+                    _line += f" — community: {g.get('away_team','')} {_bq_ml.get('away_count',0)/_tot:.0%} / {g.get('home_team','')} {_bq_ml.get('home_count',0)/_tot:.0%}"
+            st.markdown(_line)
+            for pp in _bq_props[:5]:
+                _dir = "Over" if (pp.get("direction") or 0) > 0 else "Under"
+                _stars = "⭐" * int(pp.get("stars") or 0)
+                st.caption(f"　{pp.get('player','')} — {_dir} {pp.get('line','?')} {pp.get('prop','')} "
+                           f"(proj {pp.get('projection','?')}) {_stars} · {pp.get('book','')}")
+        if not _pred_bq_any:
+            st.caption("No BetQL community picks or player props loaded for this sport right now.")
 
 
