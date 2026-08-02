@@ -33,7 +33,7 @@ del _name_copy_guard
 # (each tab depends on variables computed by the ones before it in the same
 # script run) and wasn't safe to split blind in the same pass.
 
-tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner"])
+tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner", "🔮 Predictions"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -12420,4 +12420,97 @@ with tabs[13]:
                     unsafe_allow_html=True
                 )
             st.markdown('</div>', unsafe_allow_html=True)
+
+
+with tabs[14]:
+    st.markdown(
+        '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
+        'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
+        '<div style="color:#fff;font-weight:700;font-size:15px;">🔮 Predictions</div>'
+        '<div style="color:#8ab4d4;font-size:12.5px;margin-top:4px;">'
+        'Each source\'s own independent picks — player props and game lines — shown as-is, '
+        'not filtered through our own model. Different from "Why this pick" elsewhere, which only '
+        'shows whether a source agrees or disagrees with a pick we already made.'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+
+    _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC"], key="pred_sport_filter")
+
+    def _pred_sport_match(s):
+        return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
+
+    # ── SignalOdds (predictions + game-line arbitrage) ──────────────────
+    with st.expander("📡 Signal Odds", expanded=True):
+        _pred_so = st.session_state.get("betslib_predictions", [])
+        _pred_so = [p for p in _pred_so if _pred_sport_match(p.get("sport"))]
+        if _pred_so:
+            for p in _pred_so[:25]:
+                _conf = p.get("confidence", 0)
+                _ev = p.get("ev", 0)
+                st.markdown(
+                    f"**{p.get('away','')} @ {p.get('home','')}** ({p.get('sport','')}) — "
+                    f"**{p.get('pick','')}** via {p.get('market','h2h')} "
+                    f"· {_conf:.0%} confidence · EV {_ev:+.1%} · {p.get('bookmaker','')} {p.get('odds','')}"
+                )
+        else:
+            st.caption("No Signal Odds predictions loaded for this sport right now.")
+        _pred_so_arb = [a for a in st.session_state.get("signalodds_arbitrage", []) if not a.get("locked")]
+        if _pred_so_arb:
+            st.markdown("**Game-line arbitrage (free rows):**")
+            for a in _pred_so_arb[:10]:
+                st.caption(f"{a.get('away_team','')} @ {a.get('home_team','')} — {a.get('margin_percent',0)}% margin, {a.get('market','')}")
+
+    # ── GamblingForecast ──────────────────────────────────────────────
+    with st.expander("📈 GamblingForecast", expanded=False):
+        _pred_gf_all = []
+        for _gf_sport in ("MLB", "NBA", "NFL"):
+            if _pred_sport_match(_gf_sport):
+                _pred_gf_all.extend(
+                    {**p, "_sport": _gf_sport} for p in (st.session_state.get("gamblingforecast_props", []) or [])
+                    if str(p.get("league", "")).upper() == _gf_sport
+                )
+        if _pred_gf_all:
+            for p in _pred_gf_all[:25]:
+                st.markdown(f"**{p.get('name','')}** ({p.get('_sport','')}) — **{p.get('overUnder','')}** {p.get('prop','')} · diff {p.get('projDiff','')}")
+        else:
+            st.caption("No GamblingForecast projections loaded for this sport right now.")
+
+    # ── BettingPros ──────────────────────────────────────────────────
+    with st.expander("🎯 BettingPros", expanded=False):
+        _pred_bp = [p for p in (st.session_state.get("bettingpros_props", []) or [])
+                    if (p.get("projection", {}) or {}).get("recommended_side")]
+        if _pred_bp:
+            for p in _pred_bp[:25]:
+                _bp_player = (p.get("participant", {}) or {}).get("player", {}) or {}
+                _bp_name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
+                _bp_proj = p.get("projection", {}) or {}
+                _bp_call = str(_bp_proj.get("recommended_side", "")).upper()
+                _bp_side = (p.get(_bp_call.lower(), {}) or {}) if _bp_call else {}
+                _bp_stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                st.markdown(f"**{_bp_name}** — **{_bp_call}** {_bp_side.get('line','?')} {_bp_stat} · "
+                            f"proj {_bp_proj.get('value','?')} (diff {_bp_proj.get('diff',0):+})")
+        else:
+            st.caption("No BettingPros model picks loaded right now.")
+
+    # ── Bobby's Bets ───────────────────────────────────────────────────
+    with st.expander("📊 Bobby's Bets", expanded=False):
+        _pred_bb = st.session_state.get("bobbys_bets_picks", [])
+        if _pred_bb:
+            for p in _pred_bb[:25]:
+                st.markdown(f"**{p.get('player_name','')}** — **{p.get('label','')}** {p.get('line','?')} {p.get('stat_category','')} "
+                            f"· grade {p.get('grade','?')} · EV {p.get('ev','?')}")
+        else:
+            st.caption("No Bobby's Bets picks loaded right now.")
+
+    # ── EVBets ─────────────────────────────────────────────────────────
+    with st.expander("💰 EVBets", expanded=False):
+        _pred_evb = st.session_state.get("evbets_ev_picks", [])
+        if _pred_evb:
+            for p in _pred_evb[:25]:
+                st.markdown(f"**{p.get('event', p.get('matchup',''))}** — **{p.get('outcome', p.get('side',''))}** "
+                            f"via {p.get('bookmaker', p.get('book',''))} · EV {p.get('ev_pct', p.get('ev',0))}")
+        else:
+            st.caption("No EVBets value picks loaded right now.")
+
 
