@@ -35,6 +35,7 @@ def log(msg: str) -> None:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
+    import time
     for attempt in range(3):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
@@ -42,9 +43,18 @@ def push_files(files_payload: dict, github_token: str) -> int:
             json={"files": files_payload}, timeout=60,
         )
         if resp.status_code in (200, 201):
+            returned_files = resp.json().get("files", {}) or {}
+            missing = [fn for fn in files_payload if fn not in returned_files]
+            if missing and attempt < 2:
+                wait = min((attempt + 1) * 5, 30)
+                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                time.sleep(wait)
+                continue
+            if missing:
+                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
+                return len(files_payload) - len(missing)
             return len(files_payload)
         if resp.status_code == 409 and attempt < 2:
-            import time
             time.sleep((attempt + 1) * 4)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
