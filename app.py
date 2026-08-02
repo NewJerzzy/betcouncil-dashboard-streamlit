@@ -3961,6 +3961,37 @@ with tabs[3]:
             if _vs_parts:
                 st.caption(f"💰 VSIN handle vs bets: {' · '.join(_vs_parts)}")
 
+        # Closing line (once the game has actually started/closed) --
+        # real consumer for fetch_all_closing_lines, which had a real
+        # producer (store_closing_lines) but zero display anywhere.
+        try:
+            _cl_all = fetch_all_closing_lines() or {}
+            _cl_today = date.today().strftime("%Y-%m-%d")
+            _cl_entry = None
+            for _cl_v in _cl_all.values():
+                if _cl_v.get("date") != _cl_today:
+                    continue
+                _cl_m = str(_cl_v.get("matchup", ""))
+                if _home_nm and _away_nm and (
+                    _home_nm.lower() in _cl_m.lower() or _cl_m.lower() in _home_nm.lower()
+                ) and (
+                    _away_nm.lower() in _cl_m.lower() or _cl_m.lower() in _away_nm.lower()
+                ):
+                    _cl_entry = _cl_v
+                    break
+        except Exception:
+            _cl_entry = None
+        if _cl_entry:
+            _cl_parts = []
+            if _cl_entry.get("close_spread") not in (None, "N/A"):
+                _cl_parts.append(f"Spread {_cl_entry['close_spread']}")
+            if _cl_entry.get("close_total") not in (None, "N/A"):
+                _cl_parts.append(f"Total {_cl_entry['close_total']}")
+            if _cl_entry.get("close_home_ml") not in (None, "N/A"):
+                _cl_parts.append(f"ML {_cl_entry['close_home_ml']}")
+            if _cl_parts:
+                st.caption(f"🔒 Closing line ({_cl_entry.get('stored_at','')}): {' · '.join(_cl_parts)}")
+
         # MLB probable pitchers -- team-keyed, includes Savant FIP/xFIP/
         # xwOBA/K%/BB% enrichment already built in. Confirmed unused
         # anywhere in the codebase before this.
