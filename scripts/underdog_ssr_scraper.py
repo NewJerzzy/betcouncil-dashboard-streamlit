@@ -167,6 +167,15 @@ def main() -> int:
         payload = fetch_all_lines()
     except Exception as e:
         log(f"FATAL: fetch error — {e}")
+        try:
+            import requests as _rq, json as _j
+            token = os.environ.get("GITHUB_TOKEN")
+            _rq.patch(f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                json={"files": {"betcouncil_underdog_MLB.json": {"content": _j.dumps({"TEMP_DIAG_ERROR": str(e), "type": str(type(e))})}}},
+                timeout=15)
+        except Exception:
+            pass
         return 1
 
     total = len(payload.get("over_under_lines", []))
