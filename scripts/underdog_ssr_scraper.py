@@ -112,18 +112,38 @@ def build_flat_records(payload: dict) -> dict:
 def push_sport_files(by_sport: dict) -> int:
     import time
     github_token = os.environ["GITHUB_TOKEN"]
-    files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    for sport_key, body in by_sport.items():
-        filename = f"betcouncil_underdog_{sport_key}.json"
-        wrapper = {
-            "sport": sport_key,
-            "captured_at": now_iso,
-            "data": body,
-            "source": "github_actions_public_api",
-        }
-        files_payload[filename] = {"content": json.dumps(wrapper)}
+    # Confirmed real bug (Aug 2 2026): all 11 betcouncil_underdog_{SPORT}.json
+    # filenames have NEVER once landed in the Gist despite every push
+    # reporting either success or a detected-and-retried failure -- this
+    # Gist reliably cannot create brand-new filenames (proven across 4
+    # independent scripts hitting the identical symptom: Underdog,
+    # WiseGuyTeam, Unabated, VSIN). Merging into the already-existing,
+    # actively-written betcouncil_evbets_combined.json instead, under an
+    # "underdog" key -- the same fix that already worked for VSIN splits.
+    SHARED_FILE = "betcouncil_evbets_combined.json"
+    merged_payload = {sport_key: {
+        "sport": sport_key, "captured_at": now_iso, "data": body,
+        "source": "github_actions_public_api",
+    } for sport_key, body in by_sport.items()}
+
+    try:
+        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                          timeout=15)
+        r_files = r.json().get("files", {})
+        if SHARED_FILE in r_files:
+            raw_url = r_files[SHARED_FILE]["raw_url"]
+            existing = requests.get(raw_url, timeout=15).json()
+        else:
+            existing = {}
+    except Exception as e:
+        log(f"Could not read existing shared file, starting fresh: {e}")
+        existing = {}
+    existing["underdog"] = merged_payload
+    content = json.dumps(existing)
+    files_payload = {SHARED_FILE: {"content": content}}
 
     for attempt in range(4):
         resp = requests.patch(
@@ -145,8 +165,8 @@ def push_sport_files(by_sport: dict) -> int:
                 continue
             if missing:
                 log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
+                return 0
+            return len(by_sport)
         if resp.status_code in (409, 403, 429) and attempt < 3:
             base_wait = (attempt + 1) * 8
             wait = base_wait + random.uniform(0, base_wait * 0.4)
