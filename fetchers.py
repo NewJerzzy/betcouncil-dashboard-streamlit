@@ -5252,6 +5252,51 @@ def fetch_bettingpros_props(sport: str) -> list:
     return data.get("props", [])
 
 
+def fetch_bobbys_bets_picks(sport: str = "mlb") -> list:
+    """
+    Bobby's Bets curated picks (app.bobbysbets.com) -- confirmed live via
+    GH Actions test 2026-08-01: real 200, no auth, no Cloudflare. Direct
+    in-app fetch, no gist scraper needed (unlike PrizePicks/DK which are
+    CF-gated).
+
+    Deliberately scoped to /api/{sport}/picks (curated subset, ~100KB),
+    NOT /api/{sport}/props (confirmed 5.2MB for MLB alone -- too large to
+    fetch live on every board load).
+
+    Each pick includes: player_name, stat_category, line, label (Over/
+    Under), odds, hit_rate_l5/l10/l15/l20/home/away/all, current_streak,
+    last5/10/20_values, dk_event_id/dk_outcome_id (deep-link IDs).
+    """
+    try:
+        r = requests.get(f"https://app.bobbysbets.com/api/{sport.lower()}/picks",
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                  "Chrome/124.0.0.0 Safari/537.36"},
+                          timeout=15)
+        if r.status_code != 200:
+            return []
+        return r.json().get("picks", [])
+    except Exception:
+        return []
+
+
+def fetch_bobbys_bets_briefing(sport: str = "mlb") -> str:
+    """Bobby's Bets AI slate briefing (one sentence), confirmed live, no auth."""
+    try:
+        r = requests.get(f"https://app.bobbysbets.com/api/briefing",
+                          params={"sport": sport.lower()},
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                                  "Chrome/124.0.0.0 Safari/537.36"},
+                          timeout=10)
+        if r.status_code != 200:
+            return ""
+        data = r.json()
+        return data.get("briefing") or data.get("text") or ""
+    except Exception:
+        return ""
+
+
 def fetch_bettingpros_hitrate(player_name, sport="MLB"):
     """
     Prop-level hit-rate/streak trend data (last 1/5/10/15/20 games,
