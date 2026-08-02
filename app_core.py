@@ -2055,7 +2055,7 @@ _GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "i
 # This is why settled slips could keep reappearing in Locks & Ledger even
 # after clicking Win/Loss Slip. Now flushes synchronously, same as history.
 
-def save_to_gist(data_type, data):
+def save_to_gist(data_type, data, force_flush=True):
     """
     Batched Gist writer — marks data as dirty and flushes once per batch window.
 
@@ -2064,6 +2064,14 @@ def save_to_gist(data_type, data):
     window expires, ALL dirty keys are flushed in a SINGLE Gist PATCH request.
     This replaces the previous per-key PATCH pattern and reduces API calls
     proportionally to the number of keys written together.
+
+    force_flush=False skips the immediate-flush-on-critical-key behavior
+    for this one call, letting the caller batch several critical writes
+    together (e.g. logging N bets in a loop) and flush once at the end
+    instead of once per item. Only pass False when the caller guarantees
+    a real flush happens before the run ends -- this exists specifically
+    to fix a confirmed hang (log_manual_bet's history/bankroll saves were
+    each forcing a real network PATCH per bet in a bulk-submit loop).
     """
     if not GITHUB_TOKEN or not GITHUB_GIST_ID:
         return False
@@ -2082,7 +2090,7 @@ def save_to_gist(data_type, data):
     # Flush ALL dirty keys in one PATCH when:
     #   (a) a critical key was just written — don't delay history/bankroll
     #   (b) the batch window has expired — coalesce whatever accumulated
-    if is_critical or batch_age >= _GIST_BATCH_WINDOW:
+    if (is_critical and force_flush) or batch_age >= _GIST_BATCH_WINDOW:
         return _flush_batch_gist(st.session_state["gist_dirty"], now)
     # Still within window — stay queued
     return True
@@ -6185,7 +6193,7 @@ def _board_prop_signal_values(p: dict) -> dict:
 
 
 
-def record_signal_performance(lock, outcome):
+def record_signal_performance(lock, outcome, defer_gist_flush=False):
     # Primary source: signals_active (explicit boolean flags set by older code paths).
     # Fallback: signal_values (raw magnitudes captured at lock-creation time via
     # _board_prop_signal_values) — convert to boolean flags here.
@@ -6266,7 +6274,7 @@ def record_signal_performance(lock, outcome):
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     performance.append(record)
     save_json_data(SIGNAL_PERFORMANCE_PATH, performance)
-    save_to_gist("signal_performance", performance)
+    save_to_gist("signal_performance", performance, force_flush=not defer_gist_flush)
 
 def analyze_signal_performance():
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
@@ -10933,7 +10941,7 @@ def parse_prizepicks_history_text(raw_text: str) -> list:
     return slips
 
 
-def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None, clv_capture=None):
+def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, bet_type, source, bet_date, tier=None, edge=None, prob=None, notes="", signals=None, clv_capture=None, defer_gist_flush=False):
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
         if bet_type == "prop":
@@ -11062,11 +11070,11 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
         pass
     st.session_state.setdefault("history", []).append(record)
     save_json_data(HISTORY_PATH, st.session_state.get("history", []))
-    save_to_gist("history", st.session_state.get("history", []))
+    save_to_gist("history", st.session_state.get("history", []), force_flush=not defer_gist_flush)
     st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) + net
     save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
-    save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
-    record_signal_performance(record, outcome)
+    save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL), force_flush=not defer_gist_flush)
+    record_signal_performance(record, outcome, defer_gist_flush=defer_gist_flush)
     # ── Auto-record CLV from history bet ───────────────────────
     # Don't require Track This Bet — if we have a line and outcome,
     # record CLV using the board's current line as "closing line"
@@ -11113,13 +11121,14 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     # Prevents running 10x per session when board reloads.
     # Key: {sport}_{n_resolved_bets} — changes only when a
     # new resolved bet (WIN/LOSS) is logged.
-    _n_resolved = sum(1 for h in st.session_state.get("history", [])
-                      if h.get("outcome") in ("WIN","LOSS"))
-    _opt_key = f"_opt_last_run_{sport}"
-    _last_run = st.session_state.get(_opt_key, -1)
-    if _n_resolved != _last_run and _n_resolved >= WEIGHT_OPTIMIZER_MIN_BETS:
-        compute_optimized_weights(sport)
-        st.session_state[_opt_key] = _n_resolved
+    if not defer_gist_flush:
+        _n_resolved = sum(1 for h in st.session_state.get("history", [])
+                          if h.get("outcome") in ("WIN","LOSS"))
+        _opt_key = f"_opt_last_run_{sport}"
+        _last_run = st.session_state.get(_opt_key, -1)
+        if _n_resolved != _last_run and _n_resolved >= WEIGHT_OPTIMIZER_MIN_BETS:
+            compute_optimized_weights(sport)
+            st.session_state[_opt_key] = _n_resolved
     return record
 
 
