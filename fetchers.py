@@ -19615,7 +19615,8 @@ def fetch_vsin_from_gist(sport: str = "MLB", max_age_minutes: int = 45) -> tuple
         {time, away_team, home_team, open: {spread,ml,total},
          books: {book_name: {spread, ml, total, spread_odds, ...}}}
     """
-    data = _read_gist_file(f"betcouncil_vsin_{sport.upper()}.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=10)
+    data = (combined or {}).get("vsin_lines", {}).get(sport.upper()) if combined else None
     if not data or not isinstance(data, dict):
         return [], "unavailable"
 
