@@ -58,9 +58,8 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
-def _headers(jwt: str) -> dict:
-    return {
-        "Authorization": f"Bearer {jwt}",
+def _headers(jwt: str | None) -> dict:
+    h = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br",
         "Origin": "https://signalodds.com",
@@ -68,6 +67,9 @@ def _headers(jwt: str) -> dict:
         "x-client-source": "web",
         "User-Agent": UA,
     }
+    if jwt:
+        h["Authorization"] = f"Bearer {jwt}"
+    return h
 
 
 def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | None:
@@ -93,8 +95,27 @@ def _fetch_all_pages(endpoint: str, jwt: str, max_pages: int = 20) -> list | Non
                            "body_snippet": r.text[:4000]})
 
         if r.status_code == 401:
-            log(f"  {endpoint}: HTTP 401 — JWT rejected (expired or revoked)")
-            return None
+            if jwt:
+                log(f"  {endpoint}: HTTP 401 with JWT — retrying anonymously")
+                try:
+                    r2 = requests.get(
+                        f"{BASE_URL}{endpoint}",
+                        params={"date_filter": "upcoming", "limit": PAGE_LIMIT,
+                                "page": page, "sort_by": "commence_time", "sort_dir": "asc"},
+                        headers=_headers(None),
+                        timeout=30,
+                    )
+                    if r2.status_code == 200:
+                        r = r2
+                    else:
+                        log(f"  {endpoint}: anonymous retry also failed ({r2.status_code})")
+                        return None
+                except Exception as e:
+                    log(f"  {endpoint}: anonymous retry error — {e}")
+                    return None
+            else:
+                log(f"  {endpoint}: HTTP 401 anonymous — endpoint now requires auth")
+                return None
         if r.status_code == 404:
             return None  # let the caller try the next candidate path
         if r.status_code != 200:
@@ -264,14 +285,29 @@ def push_files(files_payload: dict) -> int:
     return 0
 
 
+def _fetch_models(jwt: str | None) -> list | None:
+    """Confirmed live 2026-08-02: /models returns all AI models with real
+    accuracy/ROI stats, no auth required."""
+    try:
+        r = requests.get(f"{BASE_URL}/models", headers=_headers(jwt), timeout=30)
+        if r.status_code == 401 and jwt:
+            r = requests.get(f"{BASE_URL}/models", headers=_headers(None), timeout=30)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        return data.get("data", {}).get("items", [])
+    except Exception as e:
+        log(f"  /models: error — {e}")
+        return None
+
+
 def main() -> int:
     if not os.environ.get("GITHUB_TOKEN"):
         log("FATAL: GITHUB_TOKEN not set")
         return 1
-    jwt = os.environ.get("SIGNAL_ODDS_JWT")
-    if not jwt:
-        log("FATAL: SIGNAL_ODDS_JWT not set")
-        return 1
+    jwt = os.environ.get("SIGNAL_ODDS_JWT") or None
+    auth_mode = "jwt" if jwt else "anonymous"
+    log(f"Running in {auth_mode} mode" + (" (no SIGNAL_ODDS_JWT set)" if not jwt else ""))
 
     now_iso = datetime.now(timezone.utc).isoformat()
     dry_run = "--dry-run" in sys.argv
@@ -297,6 +333,10 @@ def main() -> int:
             })
         return 1
 
+    log("Fetching models...")
+    raw_models = _fetch_models(jwt)
+    log(f"Models: {len(raw_models) if raw_models else 0}")
+
     predictions = [_normalize_prediction(r) for r in (raw_predictions or [])]
     opportunities = [_normalize_opportunity(r) for r in (raw_opportunities or [])]
 
@@ -311,13 +351,15 @@ def main() -> int:
 
     files_payload = {
         "betcouncil_signalodds_predictions.json": {
-            "content": json.dumps({"source": "signalodds", "captured_at": now_iso, "predictions": predictions})
+            "content": json.dumps({"source": "signalodds", "captured_at": now_iso, "auth": auth_mode,
+                                    "predictions": predictions, "models": raw_models or []})
         },
         "betcouncil_signalodds_opportunities.json": {
-            "content": json.dumps({"source": "signalodds", "captured_at": now_iso, "opportunities": opportunities})
+            "content": json.dumps({"source": "signalodds", "captured_at": now_iso, "auth": auth_mode,
+                                    "opportunities": opportunities})
         },
         "betcouncil_signalodds_debug.json": {
-            "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:20]}, indent=2)
+            "content": json.dumps({"captured_at": now_iso, "auth": auth_mode, "requests": DEBUG_LOG[:20]}, indent=2)
         },
     }
     pushed = push_files(files_payload)
