@@ -8813,11 +8813,19 @@ with tabs[8]:
                             pick_count=int(_pk_picks), bet_type="prop",
                             source=_pk_source, bet_date=_pk_date_str,
                             tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals,
+                            defer_gist_flush=True,
                         )
                         _logged_pk += 1
                     except (ValueError, TypeError, ZeroDivisionError) as _e:
                         st.caption(f"⚠️ {_pkl['player']}: {str(_e)[:50]}")
                 if _logged_pk:
+                    _flush_batch_gist(st.session_state.get("gist_dirty", {}))
+                    _n_resolved_pk = sum(1 for h in st.session_state.get("history", [])
+                                          if h.get("outcome") in ("WIN","LOSS"))
+                    _opt_key_pk = f"_opt_last_run_{_pk_sport}"
+                    if _n_resolved_pk != st.session_state.get(_opt_key_pk, -1) and _n_resolved_pk >= WEIGHT_OPTIMIZER_MIN_BETS:
+                        compute_optimized_weights(_pk_sport)
+                        st.session_state[_opt_key_pk] = _n_resolved_pk
                     st.success(f"✅ Logged {_logged_pk}-pick parlay (${_pk_stake:.2f} stake) → {_pk_outcome}")
                     st.rerun()
             else:
@@ -9020,12 +9028,19 @@ with tabs[8]:
                             bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str,
                             _snapshots_cache=_snap_cache
                         )
-                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals)
+                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals, defer_gist_flush=True)
                         submitted += 1
                     except (ValueError, TypeError) as _sbe:
                         _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
                         continue
                 if submitted > 0:
+                    _flush_batch_gist(st.session_state.get("gist_dirty", {}))
+                    _n_resolved_final = sum(1 for h in st.session_state.get("history", [])
+                                             if h.get("outcome") in ("WIN","LOSS"))
+                    _opt_key_final = f"_opt_last_run_{bet.get('sport','NBA')}"
+                    if _n_resolved_final != st.session_state.get(_opt_key_final, -1) and _n_resolved_final >= WEIGHT_OPTIMIZER_MIN_BETS:
+                        compute_optimized_weights(bet.get("sport","NBA"))
+                        st.session_state[_opt_key_final] = _n_resolved_final
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
                     st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}")
                     st.session_state["parsed_bets"] = []
