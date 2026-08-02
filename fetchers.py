@@ -5374,6 +5374,44 @@ def fetch_bobbys_bets_best_prices(sport: str = "mlb") -> dict:
         return {}
 
 
+def fetch_tennis_player_stats(player_name, tour="atp"):
+    """
+    Real Sackmann ATP/WTA serve/return stats, from scripts/
+    sackmann_tennis_refresh.py (betcouncil_tennis_sackmann_{TOUR}.json).
+    Confirmed this function was called from 7+ sites in app.py/app_core.py
+    but had no definition anywhere in the repo -- a silent NameError on
+    every single tennis prop, masked by broad except blocks. Only ATP
+    data is confirmed live; WTA has no verified source (matches the
+    already-documented pattern for fetch_ufc_fighter_stats below).
+    """
+    if not player_name:
+        return {}
+    tour_upper = "WTA" if str(tour).lower() == "wta" else "ATP"
+    if tour_upper == "WTA":
+        return {}
+    data = _read_gist_file(f"betcouncil_tennis_sackmann_{tour_upper}.json", cache_minutes=180)
+    if not data:
+        return {}
+    players = data.get("players", {})
+    target = normalize_name(player_name)
+    for name, stats in players.items():
+        if normalize_name(name) == target:
+            return stats
+    return {}
+
+
+def fetch_ufc_fighter_stats(fighter_name):
+    """
+    No verified UFC fighter-stats data source exists in this codebase.
+    Confirmed this function was called from 2+ sites but had no
+    definition anywhere -- a silent NameError on every UFC prop, masked
+    by broad except blocks. Returns {} deliberately rather than
+    fabricate an unverified source; callers already handle {} safely
+    (fall back to flat baseline scoring).
+    """
+    return {}
+
+
 def fetch_bettingpros_hitrate(player_name, sport="MLB"):
     """
     Prop-level hit-rate/streak trend data (last 1/5/10/15/20 games,
