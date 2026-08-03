@@ -12593,7 +12593,7 @@ with tabs[2]:
         unsafe_allow_html=True
     )
 
-    _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC"], key="pred_sport_filter")
+    _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC", "TENNIS"], key="pred_sport_filter")
 
     def _pred_sport_match(s):
         return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
