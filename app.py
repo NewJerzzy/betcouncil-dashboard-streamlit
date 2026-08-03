@@ -130,6 +130,38 @@ with tabs[0]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
     # ═══════════════════════════════════════════════════════
+    with st.expander("🧭 Quick Navigation — what's where", expanded=False):
+        st.markdown(
+            "**📊 Analysis** — Full Board, Game Lines, Predictions, Line Shop, Market Scanner\n\n"
+            "**🎯 Betting Tools** — Pick For You, Slip Analyzer, Player Lookup, Log Bet\n\n"
+            "**📈 Tracking** — Locks & Ledger, History, SharpTrack, Preview\n\n"
+            "**⚙️ Admin** — System"
+        )
+    # ── Stale/dead feed banner — previously the only signal for a dead
+    # sharp reference feed was buried in System tab's Harvester Health
+    # Monitor. Surfaces here too so it's seen immediately, not just by
+    # someone who thinks to check System. Reuses get_harvester_alerts'
+    # existing change-detection (only newly-dead + sharp-tier sources,
+    # not every source that's been dead for weeks).
+    try:
+        _hb_alerts = []
+        for _hb_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA"):
+            _hb_alerts.extend(get_harvester_alerts(_hb_sport, persist=True))
+        if _hb_alerts:
+            _hb_names = ", ".join(sorted(set(a["name"] for a in _hb_alerts))[:6])
+            st.markdown(
+                f'<div style="background:#e0404022;border-left:3px solid #e04040;'
+                f'border-radius:4px;padding:10px 14px;margin-bottom:12px;">'
+                f'<div style="font-size:0.9rem;font-weight:700;color:#e04040;">'
+                f'🔴 {len(_hb_alerts)} feed{"s" if len(_hb_alerts) != 1 else ""} just went dead: {_hb_names}</div>'
+                f'<div style="font-size:0.78rem;color:var(--bc-dim);margin-top:2px;">'
+                f'Check System → Harvester Health Monitor for details.</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+    except Exception:
+        pass
+
     _bb_briefing = st.session_state.get("bobbys_bets_briefing", {})
     if _bb_briefing.get("headline"):
         st.markdown(
@@ -3415,6 +3447,20 @@ with tabs[3]:
             # external sources (BetQL/Pickswise/WiseGuyTeam/SignalOdds
             # predictions/SignalOdds arbitrage).
             _gl_verdict_html = ""
+            _gl_age_html = ""
+            try:
+                _gl_betql_wrapper = _read_gist_file(f"betcouncil_betql_{_gsport}.json", cache_minutes=5)
+                _gl_age_min = _gist_data_age_minutes(_gl_betql_wrapper)
+                if _gl_age_min is not None:
+                    _gl_age_str = f"{int(_gl_age_min)}m ago" if _gl_age_min < 60 else f"{_gl_age_min/60:.1f}h ago"
+                    _gl_age_color = "#22c55e" if _gl_age_min < 30 else ("#e8a020" if _gl_age_min < 90 else "#e04040")
+                    _gl_age_html = (
+                        f'<span title="How fresh the underlying multi-book data is" '
+                        f'style="font-size:10px;color:{_gl_age_color};margin-left:6px;">'
+                        f'🕐 {_gl_age_str}</span>'
+                    )
+            except Exception:
+                _gl_age_html = ""
             try:
                 def _gl_norm_team(s):
                     s = re.sub(r"[+-]?\d+\.?\d*", "", str(s or ""))
@@ -3549,7 +3595,7 @@ with tabs[3]:
                 + _gl_logos_html +
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_row_ring_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_age_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
