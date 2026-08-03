@@ -3728,6 +3728,76 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
 # Tier 4 injury source + depth chart movement for NFL/NBA/MLB.
 # ═══════════════════════════════════════════════════════════════
 
+def fetch_mlb_player_season_avg(player_name: str) -> dict:
+    """
+    Real per-game season averages from statsapi.mlb.com (same API already
+    used elsewhere in this codebase for probable pitchers/lineups).
+    Covers both hitters and pitchers, since the same player-lookup call
+    site serves both. Returns per-GAME averages (not season totals) for
+    the counting stats consumed by fetch_prop_data_avg's stat_map: H, HR,
+    RBI, R, SO, TB (hitting), ER, SO, Outs (pitching), plus n_games and
+    the two "FS" (fantasy-score-style) combo stats already expected
+    downstream. Cached 6h locally -- season stats don't move fast enough
+    to justify per-request live calls.
+    """
+    if not player_name:
+        return {}
+    cp = os.path.join(CACHE_DIR, f"mlb_season_avg_{normalize_name(player_name)}.pkl")
+    if os.path.exists(cp) and (time.time() - os.path.getmtime(cp)) / 60 < 360:
+        c = _safe_load_pkl(cp)
+        if c is not None:
+            return c
+    try:
+        r = requests.get("https://statsapi.mlb.com/api/v1/people/search",
+                          params={"names": player_name}, timeout=10)
+        if r.status_code != 200:
+            return {}
+        people = r.json().get("people", [])
+        match = next((p for p in people if normalize_name(p.get("fullName", "")) == normalize_name(player_name)), None)
+        if not match and people:
+            match = people[0]
+        if not match:
+            return {}
+        pid = match["id"]
+        is_pitcher = match.get("primaryPosition", {}).get("abbreviation") == "P"
+        group = "pitching" if is_pitcher else "hitting"
+
+        r2 = requests.get(f"https://statsapi.mlb.com/api/v1/people/{pid}/stats",
+                           params={"stats": "season", "group": group, "season": datetime.now().year}, timeout=10)
+        if r2.status_code != 200:
+            return {}
+        splits = r2.json().get("stats", [{}])[0].get("splits", [])
+        if not splits:
+            return {}
+        stat = splits[0].get("stat", {})
+        games = stat.get("gamesPlayed", 0)
+        if not games:
+            return {}
+
+        result = {"n_games": games}
+        if is_pitcher:
+            innings_str = str(stat.get("inningsPitched", "0.0"))
+            whole, _, frac = innings_str.partition(".")
+            outs_total = int(whole or 0) * 3 + int(frac or 0)
+            result["ER"] = round(stat.get("earnedRuns", 0) / games, 2)
+            result["SO"] = round(stat.get("strikeOuts", 0) / games, 2)
+            result["Outs"] = round(outs_total / games, 2)
+            result["Pitcher FS"] = round(result["SO"] * 3 - result["ER"] * 2, 2)
+        else:
+            result["H"] = round(stat.get("hits", 0) / games, 2)
+            result["HR"] = round(stat.get("homeRuns", 0) / games, 2)
+            result["RBI"] = round(stat.get("rbi", 0) / games, 2)
+            result["R"] = round(stat.get("runs", 0) / games, 2)
+            result["TB"] = round(stat.get("totalBases", 0) / games, 2)
+            result["H+R+RBI"] = round(result["H"] + result["R"] + result["RBI"], 2)
+            result["Hitter FS"] = round(result["H"] * 3 + result["R"] * 2 + result["RBI"] * 2 + result["HR"] * 2, 2)
+
+        _safe_save_pkl(cp, result)
+        return result
+    except Exception:
+        return {}
+
+
 def fetch_mlb_probable_pitchers():
     cache_path = os.path.join(CACHE_DIR, "mlb_pitchers.pkl")
     if os.path.exists(cache_path):
