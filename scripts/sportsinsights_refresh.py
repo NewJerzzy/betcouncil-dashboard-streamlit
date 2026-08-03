@@ -89,35 +89,58 @@ def fetch_sport_trends(sport: str, sport_id: int) -> list:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
+    """
+    Confirmed real bug (2026-08-03): standalone betcouncil_sportsinsights_*.json filenames
+    were confirmed to never once land on this Gist (same proven-
+    unreliable new-file-creation pattern already fixed for Underdog/
+    WiseGuyTeam/Unabated/VSIN/Sackmann Tennis this session). Merges into
+    the already-reliable, actively-updating betcouncil_evbets_combined.json
+    under a "sportsinsights" key instead.
+    """
+    SHARED_FILE = "betcouncil_evbets_combined.json"
+    merged = {}
+    for fname, fbody in files_payload.items():
+        key = fname.replace("betcouncil_sportsinsights_", "").replace(".json", "")
+        try:
+            merged[key] = json.loads(fbody["content"])
+        except Exception:
+            merged[key] = fbody["content"]
+
+    try:
+        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                          timeout=15)
+        r_files = r.json().get("files", {})
+        if SHARED_FILE in r_files:
+            raw_url = r_files[SHARED_FILE]["raw_url"]
+            existing = requests.get(raw_url, timeout=15).json()
+        else:
+            existing = {}
+    except Exception as e:
+        log(f"Could not read existing shared file, starting fresh: {e}")
+        existing = {}
+    existing["sportsinsights"] = merged
+    shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+
     for attempt in range(5):
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": files_payload}, timeout=30,
+            json={"files": shared_payload}, timeout=30,
         )
         if resp.status_code in (200, 201):
             returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
+            if SHARED_FILE in returned_files:
+                return len(files_payload)
+            if attempt < 4:
                 wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                log(f"Push returned 200 but {SHARED_FILE} missing from response -- retrying in {wait}s")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
+            log(f"Push returned 200 but {SHARED_FILE} still missing after retries -- treating as failed")
+            return 0
         if resp.status_code in (403, 429, 409) and attempt < 4:
-            # 403/429 = secondary rate limit (many workflows sharing one
-            # GITHUB_TOKEN can burst-trigger this when GitHub bunches
-            # scheduled cron runs near the top of the hour). 409 = another
-            # workflow wrote to this same shared Gist at the same instant
-            # (confirmed real: multiple unrelated scripts on tight cron
-            # schedules collide on this exact shared resource). True
-            # exponential backoff + random jitter -- without jitter, every
-            # script that collided at T+0 would all retry at the identical
-            # T+10 and just collide again.
-            base_wait = min(10 * (2 ** attempt), 90)  # 10, 20
+            base_wait = min(10 * (2 ** attempt), 90)
             wait = base_wait + random.uniform(0, base_wait * 0.4)
             log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
             time.sleep(wait)
