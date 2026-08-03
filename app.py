@@ -12477,26 +12477,29 @@ with tabs[14]:
     # ══════════════════════════════════════════════════════════════════
     _pred_gl_items = []
 
-    try:
-        for p in st.session_state.get("betslib_predictions", []):
-            if not _pred_sport_match(p.get("sport")):
-                continue
-            _pick = p.get("pick", "")
-            if _pick and _pick in (p.get("home", ""), p.get("away", "")):
-                _pred_gl_items.append({
-                    "sport": p.get("sport", ""), "away": p.get("away", ""), "home": p.get("home", ""),
-                    "source": "Signal Odds",
-                    "text": f"{_pick} · {p.get('confidence', 0):.0%} conf, EV {p.get('ev', 0):+.1%}"
-                })
-    except Exception:
-        pass
+    for _pred_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER"):
+        if not _pred_sport_match(_pred_sport):
+            continue
+        try:
+            for p in fetch_betslib_predictions(_pred_sport):
+                _pick = p.get("pick", "")
+                if _pick and _pick in (p.get("home", ""), p.get("away", "")):
+                    _pred_gl_items.append({
+                        "sport": _pred_sport, "away": p.get("away", ""), "home": p.get("home", ""),
+                        "source": "Signal Odds",
+                        "text": f"{_pick} · {p.get('confidence', 0):.0%} conf, EV {p.get('ev', 0):+.1%}"
+                    })
+        except Exception:
+            pass
 
     try:
-        for a in st.session_state.get("signalodds_arbitrage", []):
+        for a in fetch_signalodds_arbitrage_from_gist():
             if a.get("locked"):
                 continue
+            if not _pred_sport_match(a.get("sport", "")):
+                continue
             _pred_gl_items.append({
-                "sport": "", "away": a.get("away_team", ""), "home": a.get("home_team", ""),
+                "sport": a.get("sport", ""), "away": a.get("away_team", ""), "home": a.get("home_team", ""),
                 "source": "Signal Odds", "text": f"Arbitrage · {a.get('margin_percent', 0)}% margin"
             })
     except Exception:
@@ -12602,42 +12605,48 @@ with tabs[14]:
     # ══════════════════════════════════════════════════════════════════
     _pred_pp_items = []
 
-    try:
-        for p in st.session_state.get("gamblingforecast_props", []):
-            _league = str(p.get("league", "")).upper()
-            if not _pred_sport_match(_league):
-                continue
-            _pred_pp_items.append({
-                "sport": _league, "player": p.get("name", ""), "prop": p.get("prop", ""),
-                "pick": p.get("overUnder", ""), "source": "GamblingForecast", "note": f"diff {p.get('projDiff','')}"
-            })
-    except Exception:
-        pass
+    for _pred_sport in ("MLB", "NBA", "NFL"):  # GamblingForecast's real coverage
+        if not _pred_sport_match(_pred_sport):
+            continue
+        try:
+            for p in fetch_gamblingforecast_props(_pred_sport):
+                _pred_pp_items.append({
+                    "sport": _pred_sport, "player": p.get("name", ""), "prop": p.get("prop", ""),
+                    "pick": p.get("overUnder", ""), "source": "GamblingForecast", "note": f"diff {p.get('projDiff','')}"
+                })
+        except Exception:
+            pass
 
-    try:
-        for p in (st.session_state.get("bettingpros_props", []) or []):
-            _proj = p.get("projection", {}) or {}
-            if not _proj.get("recommended_side"):
-                continue
-            _bp_player = (p.get("participant", {}) or {}).get("player", {}) or {}
-            _name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
-            _call = str(_proj.get("recommended_side", "")).upper()
-            _stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
-            _pred_pp_items.append({
-                "sport": "", "player": _name, "prop": _stat, "pick": _call,
-                "source": "BettingPros", "note": f"proj {_proj.get('value','?')}"
-            })
-    except Exception:
-        pass
+    for _pred_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA"):
+        if not _pred_sport_match(_pred_sport):
+            continue
+        try:
+            for p in fetch_bettingpros_props(_pred_sport):
+                _proj = p.get("projection", {}) or {}
+                if not _proj.get("recommended_side"):
+                    continue
+                _bp_player = (p.get("participant", {}) or {}).get("player", {}) or {}
+                _name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
+                _call = str(_proj.get("recommended_side", "")).upper()
+                _stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                _pred_pp_items.append({
+                    "sport": _pred_sport, "player": _name, "prop": _stat, "pick": _call,
+                    "source": "BettingPros", "note": f"proj {_proj.get('value','?')}"
+                })
+        except Exception:
+            pass
 
-    try:
-        for p in st.session_state.get("bobbys_bets_picks", []):
-            _pred_pp_items.append({
-                "sport": "", "player": p.get("player_name", ""), "prop": p.get("stat_category", ""),
-                "pick": p.get("label", ""), "source": "Bobby's Bets", "note": f"grade {p.get('grade','?')}"
-            })
-    except Exception:
-        pass
+    for _pred_sport in ("mlb", "nba", "wnba", "nfl", "nhl"):  # Bobby's Bets' real coverage (lowercase slugs)
+        if not _pred_sport_match(_pred_sport.upper()):
+            continue
+        try:
+            for p in fetch_bobbys_bets_picks(_pred_sport):
+                _pred_pp_items.append({
+                    "sport": _pred_sport.upper(), "player": p.get("player_name", ""), "prop": p.get("stat_category", ""),
+                    "pick": p.get("label", ""), "source": "Bobby's Bets", "note": f"grade {p.get('grade','?')}"
+                })
+        except Exception:
+            pass
 
     for _pred_sport in ("MLB", "NBA", "NFL", "NHL"):
         if not _pred_sport_match(_pred_sport):
