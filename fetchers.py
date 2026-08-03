@@ -16608,7 +16608,8 @@ def fetch_wagerbird_from_gist(max_age_minutes: int = 30) -> list:
         {sport, matchup, game_time, pick_text, odds, tier, confidence_score,
          rationale, result, pick_date, prediction_url}
     """
-    data = _read_gist_file("betcouncil_wagerbird_picks.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("wagerbird", {}).get("picks", {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("picks", [])
         if isinstance(raw, list):
@@ -16918,7 +16919,8 @@ def fetch_sportsinsights_trends_from_gist(sport: str, max_age_minutes: int = 60)
     Returns [] if no fresh data — treat as "no data," not "confirmed
     absent."
     """
-    data = _read_gist_file(f"betcouncil_sportsinsights_{sport.upper()}.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("sportsinsights", {}).get(sport.upper(), {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("games", [])
         if isinstance(raw, list):
