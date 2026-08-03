@@ -5475,7 +5475,10 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
     directly under competitions[] like team-sport scoreboards), since
     a tournament runs many simultaneous matches. Returns
     {normalized_player_name: {"opponent": str, "tournament": str,
-    "completed": bool}}.
+    "completed": bool, "status": str, "round": str, "sets": [(my_score,
+    opp_score), ...]}}. (status/round/sets added after a deep audit found
+    the real caller expected them but the original implementation never
+    extracted them.)
     """
     try:
         data = _espn_get(
@@ -5488,18 +5491,25 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
         for event in data.get("events", []):
             tournament = event.get("name", "")
             for grouping in event.get("groupings", []):
+                round_name = grouping.get("grouping", "")
                 for comp in grouping.get("competitions", []):
                     competitors = comp.get("competitors", [])
                     if len(competitors) != 2:
                         continue
                     names = [c.get("athlete", {}).get("displayName", "") for c in competitors]
-                    completed = comp.get("status", {}).get("type", {}).get("completed", False)
+                    status_type = comp.get("status", {}).get("type", {})
+                    completed = status_type.get("completed", False)
+                    status_desc = status_type.get("description", "")
                     for i, name in enumerate(names):
                         if not name:
                             continue
                         opponent = names[1 - i]
+                        my_sets = [ls.get("value") for ls in competitors[i].get("linescores", [])]
+                        opp_sets = [ls.get("value") for ls in competitors[1 - i].get("linescores", [])]
                         out[normalize_name(name)] = {
                             "opponent": opponent, "tournament": tournament, "completed": completed,
+                            "status": status_desc, "round": round_name,
+                            "sets": list(zip(my_sets, opp_sets)) if my_sets else [],
                         }
         return out
     except Exception:
