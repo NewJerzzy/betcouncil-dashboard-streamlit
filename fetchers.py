@@ -16847,6 +16847,51 @@ def fetch_wiseguyteam_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     return games if isinstance(games, list) else []
 
 
+ESPN_LOGO_SPORT_PATHS = {
+    "MLB": "baseball/mlb", "NBA": "basketball/nba", "NFL": "football/nfl",
+    "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+}
+
+
+def fetch_espn_team_logos(sport: str) -> dict:
+    """
+    Real team logo URLs from ESPN's own public teams API -- confirmed
+    live 2026-08-03, no auth. Keyed by every name variant ESPN itself
+    provides (displayName, shortDisplayName, name, location, abbreviation)
+    so callers can match against whatever team-name format they have on
+    hand without guessing abbreviations. Cached 7 days locally -- team
+    logos/rosters don't change intra-season.
+    """
+    path = ESPN_LOGO_SPORT_PATHS.get(sport.upper())
+    if not path:
+        return {}
+    cp = os.path.join(CACHE_DIR, f"espn_logos_{sport.lower()}.pkl")
+    if os.path.exists(cp) and (time.time() - os.path.getmtime(cp)) / 60 < 10080:
+        c = _safe_load_pkl(cp)
+        if c is not None:
+            return c
+    try:
+        r = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{path}/teams", timeout=15)
+        if r.status_code != 200:
+            return {}
+        teams = r.json().get("sports", [{}])[0].get("leagues", [{}])[0].get("teams", [])
+        logos = {}
+        for t in teams:
+            team = t.get("team", {})
+            logo_url = (team.get("logos") or [{}])[0].get("href", "")
+            if not logo_url:
+                continue
+            for key in (team.get("displayName"), team.get("shortDisplayName"),
+                        team.get("name"), team.get("location"), team.get("abbreviation")):
+                if key:
+                    logos[key] = logo_url
+        if logos:
+            _safe_save_pkl(cp, logos)
+        return logos
+    except Exception:
+        return {}
+
+
 def fetch_betql_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     """
     BetQL's public GraphQL events query (multi-book lines, and — rare
