@@ -3515,6 +3515,17 @@ with tabs[3]:
                         f'background:{_v_color}22;color:{_v_color};border:0.5px solid {_v_color}44;margin-left:6px;">'
                         f'{_v_icon} {_agree}/{_checked} sources agree</span>'
                     )
+                    try:
+                        _verdict_dir = "agree" if _agree > _disagree else ("disagree" if _disagree > _agree else "split")
+                        _gl_game_date = str(_g.get("GameTime", "") or _g.get("game_time", ""))[:10] or date.today().strftime("%Y-%m-%d")
+                        log_verdict_prediction(
+                            _matchup, _g.get("home", ""), _g.get("away", ""), _gsport,
+                            _gl_row_best.get("type", _gl_row_best.get("label", "")),
+                            _gl_row_best.get("pick", ""), _gl_row_best.get("line", 0),
+                            _gl_game_date, _verdict_dir, _agree, _checked
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 _gl_verdict_html = ""
             _gl_logos_html = ""
