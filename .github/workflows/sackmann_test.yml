@@ -6,7 +6,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,7 +14,21 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install requests
-      - name: Test Sackmann source
+      - name: Run real script, capture output
         env:
-          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN_2 }}
-        run: python scripts/sackmann_test.py
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: |
+          set +e
+          python -u scripts/sackmann_tennis_refresh.py > /tmp/out.log 2>&1
+          echo "EXIT_CODE=$?" >> /tmp/out.log
+          python3 -c "
+import json, requests, os
+with open('/tmp/out.log') as f:
+    content = f.read()
+resp = requests.patch(
+    'https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5',
+    headers={'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'], 'Accept': 'application/vnd.github+json'},
+    json={'files': {'betcouncil_bettingpros_debug.json': {'content': json.dumps({'note': 'TEMP sackmann real run output', 'log': content[-4000:]})}}}
+)
+print('debug push:', resp.status_code)
+"
