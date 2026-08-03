@@ -5519,7 +5519,12 @@ def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
 def fetch_tennis_player_stats(player_name, tour="atp"):
     """
     Real Sackmann ATP/WTA serve/return stats, from scripts/
-    sackmann_tennis_refresh.py (betcouncil_tennis_sackmann_{TOUR}.json).
+    sackmann_tennis_refresh.py, merged into betcouncil_evbets_combined.json
+    under a "sackmann_tennis" key (the standalone betcouncil_tennis_
+    sackmann_{TOUR}.json filename was confirmed 2026-08-03 to have never
+    once landed on this Gist despite the aggregation itself always
+    working correctly -- same proven-unreliable new-file-creation
+    pattern as Underdog/WiseGuyTeam/Unabated/VSIN, fixed the same way).
     Confirmed this function was called from 7+ sites in app.py/app_core.py
     but had no definition anywhere in the repo -- a silent NameError on
     every single tennis prop, masked by broad except blocks. Only ATP
@@ -5531,7 +5536,8 @@ def fetch_tennis_player_stats(player_name, tour="atp"):
     tour_upper = "WTA" if str(tour).lower() == "wta" else "ATP"
     if tour_upper == "WTA":
         return {}
-    data = _read_gist_file(f"betcouncil_tennis_sackmann_{tour_upper}.json", cache_minutes=180)
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=180)
+    data = (combined or {}).get("sackmann_tennis", {}).get(tour_upper)
     if not data:
         return {}
     players = data.get("players", {})
