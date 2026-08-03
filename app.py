@@ -3517,9 +3517,25 @@ with tabs[3]:
                     )
             except Exception:
                 _gl_verdict_html = ""
+            _gl_logos_html = ""
+            try:
+                def _gl_logo_match(a, b):
+                    na = re.sub(r"[^a-z0-9]", "", str(a or "").lower())
+                    nb = re.sub(r"[^a-z0-9]", "", str(b or "").lower())
+                    return bool(na and nb and (na in nb or nb in na))
+                _gl_logo_map = fetch_espn_team_logos(_gsport)
+                _gl_away_logo = next((url for name, url in _gl_logo_map.items() if _gl_logo_match(name, _g.get("away", ""))), "")
+                _gl_home_logo = next((url for name, url in _gl_logo_map.items() if _gl_logo_match(name, _g.get("home", ""))), "")
+                if _gl_away_logo:
+                    _gl_logos_html += f'<img src="{_gl_away_logo}" style="width:24px;height:24px;object-fit:contain;" />'
+                if _gl_home_logo:
+                    _gl_logos_html += f'<span style="color:var(--bc-dim);margin:0 2px;">@</span><img src="{_gl_home_logo}" style="width:24px;height:24px;object-fit:contain;" />'
+            except Exception:
+                _gl_logos_html = ""
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:19px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
+                + _gl_logos_html +
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
                 + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_row_ring_html +
