@@ -18133,7 +18133,24 @@ with st.sidebar:
     _brier_life   = (_brier_data.get("lifetime") or {})
     _bs_val       = _brier_life.get("brier_score", 0.25)
     _bs_n         = _brier_life.get("n", 0)
-    _integrity    = max(0, min(100, int((1 - (_bs_val / 0.25)) * 100)))
+    # Display-scale rescale (Aug 2026): the raw (1 - bs/0.25)*100 formula
+    # anchored "0" at the coin-flip baseline, which compressed the ENTIRE
+    # FAIR band into 0-12/100 -- a new user sees "7/100" next to "FAIR"
+    # and reasonably assumes the system is broken, since a single-digit
+    # score reads as failing on any normal 0-100 scale regardless of the
+    # label next to it. This piecewise-linear rescale maps the exact same
+    # brier_score to a number that agrees with its own grade label at
+    # every boundary (ELITE>=85, GOOD>=75, FAIR>=60, NEEDS WORK<60) --
+    # purely a display change. brier_score/grade/bet-sizing untouched.
+    if _bs_val <= 0.20:
+        _integrity = 100 - (_bs_val / 0.20) * 15
+    elif _bs_val <= 0.22:
+        _integrity = 85 - ((_bs_val - 0.20) / 0.02) * 10
+    elif _bs_val <= 0.25:
+        _integrity = 75 - ((_bs_val - 0.22) / 0.03) * 15
+    else:
+        _integrity = 60 - ((_bs_val - 0.25) / 0.08) * 60
+    _integrity = max(0, min(100, int(round(_integrity))))
     _thin_sample  = _bs_n < 20
     # Grade uses the SAME thresholds as the History tab's Brier cards
     # (ELITE<0.20, GOOD<0.22, FAIR<0.25, else NEEDS WORK) so the sidebar
