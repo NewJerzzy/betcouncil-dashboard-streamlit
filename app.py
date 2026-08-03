@@ -3408,12 +3408,90 @@ with tabs[3]:
                 f'<div style="font-size:0.4rem;color:var(--bc-dim);text-transform:uppercase;">edge</div>'
                 f'</div></div>'
             )
+            # ── Verdict badge: how many independent external sources agree
+            # with OUR OWN model's top pick for this game. Combines the
+            # rich internal edge/tier analysis above with the newer
+            # external sources (BetQL/WiseGuyTeam/Pickswise/SignalOdds)
+            # that previously sat unconnected to it.
+            _gl_verdict_html = ""
+            try:
+                def _gl_norm_team(s):
+                    s = re.sub(r"[+-]?\d+\.?\d*", "", str(s or ""))
+                    return re.sub(r"[^a-z0-9]", "", s.lower())
+                def _gl_teams_match(a, b):
+                    na, nb = _gl_norm_team(a), _gl_norm_team(b)
+                    return bool(na and nb and (na in nb or nb in na))
+                _our_pick_text = str(_gl_row_best.get("pick", ""))
+                _our_side_team = next(
+                    (t for t in (_g.get("home", ""), _g.get("away", "")) if t and t in _our_pick_text),
+                    None
+                )
+                _our_is_over = "OVER" in _our_pick_text.upper()
+                _our_is_under = "UNDER" in _our_pick_text.upper()
+                _agree, _disagree, _checked = 0, 0, 0
+
+                for _g2 in fetch_betql_from_gist(_gsport):
+                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
+                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
+                        continue
+                    _ml2 = next((c for c in _g2.get("community", []) if c.get("bet_type") == "moneyline"), None)
+                    if _ml2 and _our_side_team:
+                        _lean_home = _ml2.get("home_count", 0) > _ml2.get("away_count", 0)
+                        _lean_team = _g2.get("home_team") if _lean_home else _g2.get("away_team")
+                        _checked += 1
+                        if _gl_teams_match(_lean_team, _our_side_team):
+                            _agree += 1
+                        else:
+                            _disagree += 1
+                    break
+
+                for _g2 in fetch_pickswise_picks_from_gist(_gsport):
+                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
+                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
+                        continue
+                    if _g2.get("pick_side"):
+                        _checked += 1
+                        if _gl_teams_match(_g2["pick_side"], _our_pick_text) or (_our_side_team and _gl_teams_match(_g2["pick_side"], _our_side_team)):
+                            _agree += 1
+                        else:
+                            _disagree += 1
+                    break
+
+                for _g2 in fetch_wiseguyteam_from_gist(_gsport):
+                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
+                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
+                        continue
+                    if _g2.get("has_sharp") and "ml_side2" in _g2.get("sharp_flags", []) and _our_side_team:
+                        _checked += 1
+                        if _gl_teams_match(_g2.get("home_team",""), _our_side_team):
+                            _agree += 1
+                        else:
+                            _disagree += 1
+                    elif _g2.get("has_sharp") and "ml_side1" in _g2.get("sharp_flags", []) and _our_side_team:
+                        _checked += 1
+                        if _gl_teams_match(_g2.get("away_team",""), _our_side_team):
+                            _agree += 1
+                        else:
+                            _disagree += 1
+                    break
+
+                if _checked > 0:
+                    _v_color = "#22c55e" if _agree > _disagree else ("#e04040" if _disagree > _agree else "#e8a020")
+                    _v_icon = "✅" if _agree > _disagree else ("❌" if _disagree > _agree else "➖")
+                    _gl_verdict_html = (
+                        f'<span title="External sources checked against our own top pick ({_our_pick_text})" '
+                        f'style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;'
+                        f'background:{_v_color}22;color:{_v_color};border:0.5px solid {_v_color}44;margin-left:6px;">'
+                        f'{_v_icon} {_agree}/{_checked} sources agree</span>'
+                    )
+            except Exception:
+                _gl_verdict_html = ""
             st.markdown(
                 f'<div style="background:var(--bc-bg-card);border-radius:6px 6px 0 0;border:0.5px solid #1e2d3d;border-bottom:none;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-top:12px;">'
                 f'<span style="font-size:19px;font-weight:700;letter-spacing:0.8px;color:var(--bc-blue);">{_gsport}</span>'
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_row_ring_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
