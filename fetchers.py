@@ -16818,6 +16818,23 @@ def get_actionnetwork_match(matchup: str, sport: str) -> dict:
     return {}
 
 
+def fetch_wiseguyteam_from_gist(sport: str, max_age_minutes: int = 60) -> list:
+    """
+    WiseGuyTeam sharp report -- sharp_flags/has_sharp on each game are
+    free and real (which side sharp/big money is leaning); the actual
+    named "play" (wgt_play) is member-only and its side is hidden.
+    Stored merged into betcouncil_evbets_combined.json under a
+    "wiseguyteam" key (standalone per-sport files confirmed to never
+    successfully land on this Gist -- see scripts/wiseguyteam_refresh.py).
+    """
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=10)
+    data = (combined or {}).get("wiseguyteam", {}).get(sport.upper())
+    if not data or not isinstance(data, dict):
+        return []
+    games = data.get("games", [])
+    return games if isinstance(games, list) else []
+
+
 def fetch_betql_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     """
     BetQL's public GraphQL events query (multi-book lines, and — rare
