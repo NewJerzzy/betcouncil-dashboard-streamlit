@@ -13811,7 +13811,8 @@ def load_sport_data(sport):
         # sportsbook feed rather than a third-party relay. Currently
         # MLB-only (that's what's confirmed); other sports fall through.
         try:
-            _oddsapi_mb_data = _read_gist_file(f"betcouncil_theoddsapi_mybookie_{sport.upper()}.json", cache_minutes=180)
+            _oddsapi_mb_combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=180)
+            _oddsapi_mb_data = (_oddsapi_mb_combined or {}).get("theoddsapi_mybookie", {}).get(sport.upper())
         except Exception:
             _oddsapi_mb_data = None
         if _oddsapi_mb_data and _oddsapi_mb_data.get("games"):
