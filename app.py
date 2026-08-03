@@ -12610,9 +12610,12 @@ with tabs[14]:
             continue
         try:
             for p in fetch_gamblingforecast_props(_pred_sport):
+                # "prop" already includes the line, e.g. "14.5 OUTS" -- no
+                # separate line field to add here.
                 _pred_pp_items.append({
-                    "sport": _pred_sport, "player": p.get("name", ""), "prop": p.get("prop", ""),
-                    "pick": p.get("overUnder", ""), "source": "GamblingForecast", "note": f"diff {p.get('projDiff','')}"
+                    "sport": _pred_sport, "player": p.get("name", ""), "line": "", "prop": p.get("prop", ""),
+                    "pick": p.get("overUnder", ""), "source": "GamblingForecast", "note": f"diff {p.get('projDiff','')}",
+                    "image": "", "team": "", "position": ""
                 })
         except Exception:
             pass
@@ -12629,9 +12632,17 @@ with tabs[14]:
                 _name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
                 _call = str(_proj.get("recommended_side", "")).upper()
                 _stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+                # The actual bet line lives under the over/under side dict
+                # matching the recommended call -- was never being pulled
+                # in before, which is why every entry showed a pick with
+                # no number attached.
+                _side_data = p.get(_call.lower(), {}) or {}
+                _line = _side_data.get("line", "")
                 _pred_pp_items.append({
-                    "sport": _pred_sport, "player": _name, "prop": _stat, "pick": _call,
-                    "source": "BettingPros", "note": f"proj {_proj.get('value','?')}"
+                    "sport": _pred_sport, "player": _name, "line": _line, "prop": _stat, "pick": _call,
+                    "source": "BettingPros", "note": f"proj {_proj.get('value','?')}",
+                    "image": _bp_player.get("image", ""), "team": _bp_player.get("team", ""),
+                    "position": _bp_player.get("position", "")
                 })
         except Exception:
             pass
@@ -12642,8 +12653,10 @@ with tabs[14]:
         try:
             for p in fetch_bobbys_bets_picks(_pred_sport):
                 _pred_pp_items.append({
-                    "sport": _pred_sport.upper(), "player": p.get("player_name", ""), "prop": p.get("stat_category", ""),
-                    "pick": p.get("label", ""), "source": "Bobby's Bets", "note": f"grade {p.get('grade','?')}"
+                    "sport": _pred_sport.upper(), "player": p.get("player_name", ""),
+                    "line": p.get("line", ""), "prop": p.get("stat_category", ""),
+                    "pick": p.get("label", ""), "source": "Bobby's Bets", "note": f"grade {p.get('grade','?')}",
+                    "image": "", "team": "", "position": ""
                 })
         except Exception:
             pass
@@ -12656,25 +12669,44 @@ with tabs[14]:
                 for pp in g.get("player_props", []):
                     _direction = "Over" if (pp.get("direction") or 0) > 0 else "Under"
                     _pred_pp_items.append({
-                        "sport": _pred_sport, "player": pp.get("player", ""), "prop": pp.get("prop", ""),
-                        "pick": _direction, "source": "BetQL", "note": f"proj {pp.get('projection','?')}"
+                        "sport": _pred_sport, "player": pp.get("player", ""),
+                        "line": pp.get("line", ""), "prop": pp.get("prop", ""),
+                        "pick": _direction, "source": "BetQL", "note": f"proj {pp.get('projection','?')}",
+                        "image": "", "team": "", "position": ""
                     })
         except Exception:
             pass
 
-    # ── GROUP by player ──────────────────────────────────────────────
+    # ── GROUP by player -- keep the first real headshot/team/position seen
+    # (only BettingPros provides these) so the card has something to show
+    # even though most sources don't carry player metadata. ──────────────
     _pred_pp_by_player = {}
     for _it in _pred_pp_items:
         _key = normalize_name(_it["player"])
         if not _key:
             continue
-        _pred_pp_by_player.setdefault(_key, {"player": _it["player"], "sport": _it["sport"], "props": []})
-        _pred_pp_by_player[_key]["props"].append(_it)
+        _grp = _pred_pp_by_player.setdefault(_key, {
+            "player": _it["player"], "sport": _it["sport"], "props": [],
+            "image": "", "team": "", "position": ""
+        })
+        _grp["props"].append(_it)
+        if _it.get("image") and not _grp["image"]:
+            _grp["image"] = _it["image"]
+            _grp["team"] = _it.get("team", "")
+            _grp["position"] = _it.get("position", "")
+
+    def _pred_pick_line(it):
+        """Builds 'UNDER 29.5 Points' -- falls back gracefully when a
+        source's prop string already has the number baked in (Gambling-
+        Forecast) or a line genuinely isn't available."""
+        if it.get("line") not in (None, ""):
+            return f'{it["pick"]} {it["line"]} {it["prop"]}'
+        return f'{it["pick"]} {it["prop"]}'
 
     # ══════════════════════════════════════════════════════════════════
-    # RENDER — Player Props: a "Top Picks" card strip (highest-signal
-    # single prop per player, first 6), then a compact list grouped by
-    # player showing every source's prop for them.
+    # RENDER — Player Props as cards (BettingPros-app style): headshot
+    # circle, team/position, name, the pick's own biggest signal as the
+    # large stat line, other sources listed underneath.
     # ══════════════════════════════════════════════════════════════════
     st.markdown(
         '<div style="display:flex;align-items:center;gap:0.75rem;margin:1.2rem 0 0.8rem;">'
@@ -12685,25 +12717,44 @@ with tabs[14]:
     )
     _pred_pp_groups = list(_pred_pp_by_player.values())
     if _pred_pp_groups:
-        _pred_top = _pred_pp_groups[:6]
-        _tp_cols = st.columns(len(_pred_top))
-        for _ti, _grp in enumerate(_pred_top):
-            with _tp_cols[_ti]:
-                _p0 = _grp["props"][0]
-                st.markdown(
-                    f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:10px;'
-                    f'padding:10px;text-align:center;min-height:90px;">'
-                    f'<div style="font-weight:700;font-size:12px;color:var(--bc-text);">{_grp["player"]}</div>'
-                    f'<div style="font-size:11.5px;color:var(--bc-dim);margin-top:4px;">{_p0["pick"]} {_p0["prop"]}</div>'
-                    f'<div style="font-size:10px;color:var(--bc-dim);margin-top:4px;">{_p0["source"]}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-        st.markdown("**All player props**")
-        for _grp in _pred_pp_groups:
-            _props_str = " · ".join(
-                f'{it["source"]}: {it["pick"]} {it["prop"]} ({it["note"]})' for it in _grp["props"]
-            )
-            st.markdown(f"**{_grp['player']}** — {_props_str}")
+        _pp_per_row = 3
+        for _pi in range(0, len(_pred_pp_groups), _pp_per_row):
+            _pp_cols = st.columns(_pp_per_row)
+            for _pj, _grp in enumerate(_pred_pp_groups[_pi:_pi + _pp_per_row]):
+                with _pp_cols[_pj]:
+                    _p0 = _grp["props"][0]
+                    _headline = _pred_pick_line(_p0)
+                    _sub_sources = _grp["props"][1:4]
+                    _sub_html = "".join(
+                        f'<div style="font-size:11px;color:var(--bc-dim);margin-top:3px;">'
+                        f'{it["source"]}: {_pred_pick_line(it)}</div>'
+                        for it in _sub_sources
+                    )
+                    _more_count = len(_grp["props"]) - 1 - len(_sub_sources)
+                    _more_html = (
+                        f'<div style="font-size:10.5px;color:var(--bc-dim);margin-top:4px;">+{_more_count} more</div>'
+                        if _more_count > 0 else ""
+                    )
+                    _avatar_html = (
+                        f'<img src="{_grp["image"]}" style="width:64px;height:64px;border-radius:50%;'
+                        f'object-fit:cover;border:2px solid var(--bc-bg2);" />'
+                        if _grp["image"] else
+                        f'<div style="width:64px;height:64px;border-radius:50%;background:var(--bc-bg2);'
+                        f'display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;'
+                        f'color:var(--bc-dim);">{"".join(w[0] for w in _grp["player"].split()[:2]).upper()}</div>'
+                    )
+                    _team_pos = f'{_grp["team"]} · {_grp["position"]}' if _grp["team"] else _grp["sport"]
+                    st.markdown(
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:12px;'
+                        f'padding:14px;margin-bottom:14px;text-align:center;">'
+                        f'<div style="display:flex;justify-content:center;">{_avatar_html}</div>'
+                        f'<div style="font-size:11px;color:var(--bc-dim);margin-top:8px;">{_team_pos}</div>'
+                        f'<div style="font-weight:700;font-size:15px;color:var(--bc-text);margin-top:2px;">{_grp["player"]}</div>'
+                        f'<div style="font-size:16px;font-weight:800;color:var(--bc-text);margin-top:8px;">{_headline}</div>'
+                        f'<div style="font-size:10.5px;color:var(--bc-dim);margin-top:2px;">{_p0["source"]}</div>'
+                        f'{_sub_html}{_more_html}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
     else:
         st.caption("No player props loaded for this sport right now.")
