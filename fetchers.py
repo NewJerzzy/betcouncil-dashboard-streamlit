@@ -4402,6 +4402,15 @@ def fetch_wnba_rolling_averages():
             pickle.dump(rolling, f)
     return rolling
 
+_NHL_TEAM_ABBREVS = [
+    "ANA", "BOS", "BUF", "CGY", "CAR", "CHI", "COL", "CBJ", "DAL", "DET",
+    "EDM", "FLA", "LAK", "MIN", "MTL", "NSH", "NJD", "NYI", "NYR", "OTT",
+    "PHI", "PIT", "SJS", "SEA", "STL", "TBL", "TOR", "UTA", "VAN", "VGK",
+    "WSH", "WPG",
+]  # confirmed live against api-web.nhle.com/v1/roster/{abbr}/current 2026-08-03;
+   # UTA (not ARI -- Arizona relocated) confirmed working, ARI confirmed 404
+
+
 def fetch_nhl_full_roster_ids(force_refresh=False):
     """
     Fetch NHL player IDs for ALL active players across all 32 teams via
@@ -5452,6 +5461,47 @@ def fetch_bobbys_bets_best_prices(sport: str = "mlb") -> dict:
         if r.status_code != 200:
             return {}
         return r.json().get("best", {})
+    except Exception:
+        return {}
+
+
+def fetch_tennis_scoreboard(tour: str = "atp") -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at 2 call
+    sites -- used to check which tour (atp/wta) a given player belongs
+    to. Real ESPN endpoint, same one fetch_tennis_tournament_context
+    already uses successfully. Confirmed live 2026-08-03: tennis
+    scoreboards nest matches under groupings[].competitions[] (NOT
+    directly under competitions[] like team-sport scoreboards), since
+    a tournament runs many simultaneous matches. Returns
+    {normalized_player_name: {"opponent": str, "tournament": str,
+    "completed": bool}}.
+    """
+    try:
+        data = _espn_get(
+            f"https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard",
+            f"tennis_{tour}_scoreboard_players", ttl_hours=1,
+        )
+        if not data:
+            return {}
+        out = {}
+        for event in data.get("events", []):
+            tournament = event.get("name", "")
+            for grouping in event.get("groupings", []):
+                for comp in grouping.get("competitions", []):
+                    competitors = comp.get("competitors", [])
+                    if len(competitors) != 2:
+                        continue
+                    names = [c.get("athlete", {}).get("displayName", "") for c in competitors]
+                    completed = comp.get("status", {}).get("type", {}).get("completed", False)
+                    for i, name in enumerate(names):
+                        if not name:
+                            continue
+                        opponent = names[1 - i]
+                        out[normalize_name(name)] = {
+                            "opponent": opponent, "tournament": tournament, "completed": completed,
+                        }
+        return out
     except Exception:
         return {}
 
@@ -13730,6 +13780,7 @@ def fetch_mlb_live_stats() -> dict:
     total_rs = 0
     total_g = 0
     team_ratings: dict = {}
+    team_run_stats: dict = {}
 
     for record in data.get("records", []):
         for tr in record.get("teamRecords", []):
@@ -13746,6 +13797,8 @@ def fetch_mlb_live_stats() -> dict:
                 # +1 RD/G ≈ +7 rating points). Capped to prevent outliers.
                 rating = round(max(88.0, min(118.0, 100.0 + rd_pg * 7.0)), 1)
                 team_ratings[name] = rating
+                ra = rs - rd  # runs allowed = runs scored - run differential
+                team_run_stats[name] = {"RS": round(rs / g, 3), "RA": round(ra / g, 3)}
 
     if len(team_ratings) < 25 or total_g == 0:
         print(f"[WARN] fetch_mlb_live_stats: only got {len(team_ratings)} teams — discarding")
@@ -13756,10 +13809,23 @@ def fetch_mlb_live_stats() -> dict:
         "base_total": round(avg_rs_pg * 2, 2),
         "league_avg_rs": round(avg_rs_pg, 3),
         "team_ratings": team_ratings,
+        "team_run_stats": team_run_stats,
     }
     _safe_save_pkl(cache_path, result)
     return result
 
+
+def fetch_mlb_team_run_stats() -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at its one
+    call site in analyze_game_edge's James matchup formula. Thin wrapper
+    around fetch_mlb_live_stats' real per-team RS/RA (runs scored/
+    allowed per game) -- same live statsapi.mlb.com standings call
+    already made for base_total/team_ratings, just also keeping the
+    per-team runs breakdown instead of discarding it. No new API call.
+    """
+    live = fetch_mlb_live_stats()
+    return live.get("team_run_stats", {})
 
 
 def fetch_wnba_live_stats() -> dict:
