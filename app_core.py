@@ -11388,12 +11388,12 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
             elif sport in ("Tennis",):
                 _live = fetch_tennis_player_stats(player)
                 if _live:
-                    data_source_label = f"🎾 Tennis ESPN ({_live.get('_tour','ATP/WTA')})"
-                    confidence_label = f"{_live.get('n_games','?')} matches"
+                    data_source_label = "🎾 Tennis ESPN (ATP)"  # only ATP is ever populated; WTA has no verified source
+                    confidence_label = f"{_live.get('matches','?')} matches"
                     # Merge in this-match live context (opponent, set scores,
                     # status) without touching the existing season-avg keys.
                     try:
-                        _tour_lower = str(_live.get("_tour", "atp")).lower()
+                        _tour_lower = "atp"  # only ATP is ever populated; WTA has no verified source
                         _t_board = fetch_tennis_scoreboard(_tour_lower)
                         _t_match = _t_board.get(normalize_name(player)) if _t_board else None
                         if _t_match:
