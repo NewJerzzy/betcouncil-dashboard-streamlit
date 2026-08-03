@@ -12893,6 +12893,98 @@ def store_closing_lines(game_analysis, sport):
         pass
 
 
+def log_verdict_prediction(matchup, home, away, sport, market, pick, line, game_date, verdict_direction, agree, checked):
+    """
+    Logs one Game Lines Verdict badge render for later accuracy grading.
+    Accumulates into st.session_state and flushes via the existing
+    batched Gist-save path (force_flush=False) rather than one real
+    network write per game rendered -- a Game Lines board can show many
+    games at once, and per-item immediate flushing was the exact root
+    cause of the Log Bet hang fixed earlier this session.
+    """
+    try:
+        key = f"{game_date}_{matchup}_{market}"
+        log = st.session_state.setdefault("_verdict_log_pending", {})
+        if key in log:
+            return  # already logged this game+market this session
+        log[key] = {
+            "matchup": matchup, "home": home, "away": away, "sport": sport,
+            "market": market, "pick": pick, "line": line, "game_date": game_date,
+            "verdict_direction": verdict_direction, "agree": agree, "checked": checked,
+            "logged_at": datetime.now().strftime("%Y-%m-%d %H:%M"), "graded": False,
+        }
+        existing = load_from_gist("verdict_log", None) or {}
+        existing.update(log)
+        save_to_gist("verdict_log", existing, force_flush=False)
+    except Exception:
+        pass
+
+
+def grade_verdict_log(max_to_grade=30) -> dict:
+    """
+    Grades pending Verdict badge entries against real final scores, using
+    the same proven resolve_actual_game_result_for_grading already used
+    for board-snapshot grading. Only grades entries whose game_date has
+    passed (today's games aren't final yet). Caps how many it checks per
+    call since each is a real ESPN API call.
+
+    Returns a summary dict: {total_graded, verdict_correct, accuracy_pct}
+    computed from ALL previously-graded entries (not just this call's
+    batch), so the caller gets a running accuracy figure either way.
+    """
+    from fetchers import resolve_actual_game_result_for_grading
+    try:
+        log = load_from_gist("verdict_log", None) or {}
+    except Exception:
+        log = {}
+    if not log:
+        return {"total_graded": 0, "verdict_correct": 0, "accuracy_pct": None}
+
+    today_str = date.today().strftime("%Y-%m-%d")
+    ungraded = [k for k, v in log.items() if not v.get("graded") and v.get("game_date", "") < today_str]
+    changed = False
+    for key in ungraded[:max_to_grade]:
+        v = log[key]
+        try:
+            outcome, home_score, away_score = resolve_actual_game_result_for_grading(
+                v["matchup"], v["home"], v["away"], v["sport"],
+                v["market"], v["pick"], v.get("line", 0), v["game_date"]
+            )
+        except Exception:
+            outcome = None
+        if outcome is None:
+            continue  # game not final yet or ungradable -- leave pending
+        v["graded"] = True
+        v["outcome"] = outcome
+        # verdict_direction "agree" means the majority of external sources
+        # sided with our pick -- verdict was "correct" if our pick actually
+        # won (or pushed). A "disagree" verdict was "correct" if our pick
+        # actually lost (the external consensus was right to doubt it).
+        if outcome == "PUSH":
+            v["verdict_correct"] = None
+        elif v.get("verdict_direction") == "agree":
+            v["verdict_correct"] = (outcome == "WIN")
+        elif v.get("verdict_direction") == "disagree":
+            v["verdict_correct"] = (outcome == "LOSS")
+        else:
+            v["verdict_correct"] = None
+        changed = True
+
+    if changed:
+        try:
+            save_to_gist("verdict_log", log, force_flush=False)
+        except Exception:
+            pass
+
+    graded = [v for v in log.values() if v.get("graded") and v.get("verdict_correct") is not None]
+    correct = sum(1 for v in graded if v.get("verdict_correct"))
+    return {
+        "total_graded": len(graded),
+        "verdict_correct": correct,
+        "accuracy_pct": (correct / len(graded)) if graded else None,
+    }
+
+
 def get_line_movement_summary(matchup, sport, current_game):
     """
     Compare current line vs opening line for a game.
@@ -18241,6 +18333,32 @@ with st.sidebar:
                 f'↗ GAME LINE CALIBRATION</div>'
                 f'<div style="font-size:20px;font-weight:800;color:{_gl_cal_color};">{_gl_integrity}'
                 f'<span style="font-size:12px;color:#4a6a8a;font-weight:400;"> /100 (n={_gl_bs_n}) · {_gl_cal_grade}</span></div>'
+                f'</div>', unsafe_allow_html=True
+            )
+    except Exception:
+        pass
+
+    # Verdict badge accuracy -- grades pending logged verdicts against
+    # real final scores (real ESPN calls, so cached hourly rather than
+    # run on every render) and shows whether "sources agree" has
+    # actually been predictive so far.
+    try:
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _cached_verdict_grading():
+            return grade_verdict_log(max_to_grade=30)
+        _vg = _cached_verdict_grading()
+        if _vg.get("total_graded", 0) >= 5:
+            _vg_pct = _vg["accuracy_pct"]
+            _vg_color = "#22c55e" if _vg_pct >= 0.55 else ("#e8a020" if _vg_pct >= 0.45 else "#e04040")
+            st.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;'
+                f'padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
+                f'title="How often the Game Lines Verdict badge (external-source agreement) has actually matched '
+                f'the real outcome, graded against final scores.">'
+                f'↗ VERDICT BADGE ACCURACY</div>'
+                f'<div style="font-size:20px;font-weight:800;color:{_vg_color};">{_vg_pct:.0%}'
+                f'<span style="font-size:12px;color:#4a6a8a;font-weight:400;"> ({_vg["verdict_correct"]}/{_vg["total_graded"]} graded)</span></div>'
                 f'</div>', unsafe_allow_html=True
             )
     except Exception:
