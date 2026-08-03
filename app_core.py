@@ -7557,17 +7557,21 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         _logger.debug("Silent except at line 5909")
                         pass
                     # ── 5. Defensive unit adjustment ──────────────────────
-                    # If the favored team faces an elite pass defense (top
-                    # quartile: <200 pass yds/g allowed), compress edge by 10%.
-                    # If they face a bottom quartile defense (>260), expand 10%.
+                    # If the favored team faces an elite defense (top
+                    # quartile: <19 pts/g allowed), compress edge by 10%.
+                    # If they face a bottom quartile defense (>26), expand 10%.
+                    # (Points allowed, not pass yards allowed -- no free
+                    # source exists for the latter; points allowed is a
+                    # legitimate defensive-quality proxy, just a different
+                    # stat than originally intended here.)
                     try:
                         _def_ratings = fetch_nfl_defensive_ratings()
                         _opp_team = away_team if favored_team == home_team else home_team
                         _opp_def = _def_ratings.get(_opp_team, {})
-                        _pass_allowed = _opp_def.get("pass_yds_allowed_pg", 230.0)
-                        if _pass_allowed < 200:       # elite pass D
+                        _pts_allowed = _opp_def.get("pts_against_pg", 22.0)
+                        if _pts_allowed < 19:       # elite defense
                             spread_edge_pct *= 0.90
-                        elif _pass_allowed > 260:     # poor pass D
+                        elif _pts_allowed > 26:     # poor defense
                             spread_edge_pct *= 1.10
                     except Exception:
                         _logger.debug("Silent except at line 5924")
