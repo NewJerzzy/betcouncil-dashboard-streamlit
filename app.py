@@ -33,6 +33,56 @@ del _name_copy_guard
 # (each tab depends on variables computed by the ones before it in the same
 # script run) and wasn't safe to split blind in the same pass.
 
+# ══════════════════════════════════════════════════════════════════
+# PERSISTENT SIDEBAR — visible across every tab, unlike anything inside
+# st.tabs() itself. Three pieces: a quick sport-context selector (sets
+# the same last_sport default Full Board's own selector already reads,
+# doesn't duplicate its Load Board action), a steam-move indicator
+# (reads whatever's already in session_state -- steam detection only
+# actually runs during Full Board's own load flow via a local pkl
+# cache, so this surfaces what's there rather than forcing a redundant
+# reload from every single page view), and a Most Bet Tonight quick-
+# glance using BetQL's community data (independently callable, doesn't
+# depend on any other tab having loaded first).
+with st.sidebar:
+    st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">Sport Focus</div>', unsafe_allow_html=True)
+    _sb_sports = ["MLB", "NBA", "NFL", "NHL", "WNBA", "Soccer", "UFC", "Golf", "Tennis"]
+    _sb_current = st.session_state.get("last_sport", "MLB")
+    _sb_sel = st.selectbox("", _sb_sports, index=_sb_sports.index(_sb_current) if _sb_current in _sb_sports else 0, key="sidebar_sport_focus", label_visibility="collapsed")
+    if _sb_sel != _sb_current:
+        st.session_state["last_sport"] = _sb_sel
+
+    st.markdown("---")
+    st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">🔥 Steam Moves</div>', unsafe_allow_html=True)
+    _sb_steam = st.session_state.get("steam_moves", [])
+    if _sb_steam:
+        for _sm in _sb_steam[:4]:
+            st.caption(f"⚡ {_sm.get('matchup','')} — {_sm.get('signal','line moved')}")
+    else:
+        st.caption("None detected yet this session — load Full Board to check.")
+
+    st.markdown("---")
+    st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">📊 Most Bet Tonight</div>', unsafe_allow_html=True)
+    try:
+        _sb_betql_sport = _sb_sel.upper() if _sb_sel.upper() in ("MLB", "NBA", "NFL", "NHL") else "MLB"
+        _sb_games = fetch_betql_from_gist(_sb_betql_sport)
+        _sb_ranked = []
+        for _sg in _sb_games:
+            _sc = _sg.get("community", [])
+            _sml = next((c for c in _sc if c.get("bet_type") == "moneyline"), None)
+            if _sml:
+                _stot = _sml.get("home_count", 0) + _sml.get("away_count", 0)
+                if _stot:
+                    _sb_ranked.append((_stot, _sg.get("away_team",""), _sg.get("home_team","")))
+        _sb_ranked.sort(reverse=True)
+        if _sb_ranked:
+            for _stot, _saway, _shome in _sb_ranked[:4]:
+                st.caption(f"🎯 {_saway} @ {_shome} — {_stot} picks")
+        else:
+            st.caption("No community data loaded for this sport right now.")
+    except Exception:
+        st.caption("Unavailable right now.")
+
 tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "🔮 Predictions", "🏟️ Game Lines", "📊 Full Board", "🛒 Line Shop", "🔭 Market Scanner", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🔒 Locks & Ledger", "🦈 SharpTrack", "📅 Preview", "📈 History", "⚙️ System"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
