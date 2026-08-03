@@ -5889,7 +5889,9 @@ with tabs[13]:
 
     **CLV:** Closing Line Value — positive CLV means you got a better price than the market closed at.
                 """)
-            if st.button("Clear History"):
+            st.warning("⚠️ This permanently deletes all logged bets and cannot be undone.")
+            _confirm_history_clear_ht = st.checkbox("I understand this cannot be undone", key="confirm_history_clear_ht")
+            if st.button("Clear History", disabled=not _confirm_history_clear_ht):
                 st.session_state.history = []
                 save_json_data(HISTORY_PATH, [])
                 save_to_gist("history", st.session_state.get("history", []))
@@ -7606,7 +7608,7 @@ with tabs[7]:
                         st.error("OCR_SPACE_API_KEY not set in secrets — screenshot parsing disabled.")
                     else:
                         st.error("Could not read screenshot. Check OCR Debug below, or paste the slip manually.")
-        with st.expander("🔍 OCR Debug — what was extracted", expanded=True):
+        with st.expander("🔍 OCR Debug — what was extracted", expanded=False):
             raw = st.session_state.get("ocr_raw_text", "")
             if raw:
                 st.markdown(f'<pre style="color:#e0e0e0;background:#1a1a2e;padding:10px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">{raw[:800]}</pre>', unsafe_allow_html=True)
@@ -12102,7 +12104,8 @@ with tabs[14]:
                         else:
                             st.write(f"Kalshi via ScrapeOps: {r3.status_code}")
                     except (requests.RequestException, KeyError, ValueError) as e:
-                        st.error(f"Error: {str(e)[:100]}")
+                        st.error("Data unavailable — Kalshi/ScrapeOps request failed.")
+                        st.caption(f"Detail: {str(e)[:100]}")
 
         if st.button("Test ESPN + NBA APIs", key="test_boxscore_apis"):
             test_urls = [
@@ -12118,7 +12121,8 @@ with tabs[14]:
                     else:
                         st.error(f"❌ {name}: {r.status_code}")
                 except (requests.RequestException, KeyError, ValueError) as e:
-                    st.error(f"❌ {name}: {str(e)[:50]}")
+                    st.error(f"Data unavailable — {name} request failed.")
+                    st.caption(f"Detail: {str(e)[:50]}")
 
     st.markdown("---")
     st.markdown("#### 🗑️ Reset Bet History")
