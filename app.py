@@ -3409,10 +3409,11 @@ with tabs[3]:
                 f'</div></div>'
             )
             # ── Verdict badge: how many independent external sources agree
-            # with OUR OWN model's top pick for this game. Combines the
-            # rich internal edge/tier analysis above with the newer
-            # external sources (BetQL/WiseGuyTeam/Pickswise/SignalOdds)
-            # that previously sat unconnected to it.
+            # with OUR OWN model's picks across ALL markets (spread/total/
+            # ML), not just the single best-edge one. Combines the rich
+            # internal edge/tier analysis above with all 5 relevant
+            # external sources (BetQL/Pickswise/WiseGuyTeam/SignalOdds
+            # predictions/SignalOdds arbitrage).
             _gl_verdict_html = ""
             try:
                 def _gl_norm_team(s):
@@ -3421,65 +3422,95 @@ with tabs[3]:
                 def _gl_teams_match(a, b):
                     na, nb = _gl_norm_team(a), _gl_norm_team(b)
                     return bool(na and nb and (na in nb or nb in na))
-                _our_pick_text = str(_gl_row_best.get("pick", ""))
-                _our_side_team = next(
-                    (t for t in (_g.get("home", ""), _g.get("away", "")) if t and t in _our_pick_text),
-                    None
-                )
-                _our_is_over = "OVER" in _our_pick_text.upper()
-                _our_is_under = "UNDER" in _our_pick_text.upper()
+
+                # Every market of ours with a real pick (tier != "—"),
+                # not just the single highest-edge one.
+                _our_market_picks = [
+                    p for p in _picks
+                    if p.get("tier") not in (None, "—") and p.get("pick") not in (None, "", "—", "No Market", "No Edge")
+                ]
+
+                # Fetch each external source once per game (not per market)
+                _ext_betql = next((g2 for g2 in fetch_betql_from_gist(_gsport)
+                                    if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
+                                       _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
+                _ext_pickswise = next((g2 for g2 in fetch_pickswise_picks_from_gist(_gsport)
+                                        if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
+                                           _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
+                _ext_wgt = next((g2 for g2 in fetch_wiseguyteam_from_gist(_gsport)
+                                  if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
+                                     _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
+                _ext_so_preds = [p2 for p2 in fetch_betslib_predictions(_gsport)
+                                  if _gl_teams_match(p2.get("home",""), _g.get("home","")) and
+                                     _gl_teams_match(p2.get("away",""), _g.get("away",""))]
+                _ext_so_arb = [a2 for a2 in fetch_signalodds_arbitrage_from_gist()
+                               if not a2.get("locked") and
+                                  _gl_teams_match(a2.get("home_team",""), _g.get("home","")) and
+                                  _gl_teams_match(a2.get("away_team",""), _g.get("away",""))]
+
                 _agree, _disagree, _checked = 0, 0, 0
+                for _mp in _our_market_picks:
+                    _our_pick_text = str(_mp.get("pick", ""))
+                    _our_side_team = next(
+                        (t for t in (_g.get("home", ""), _g.get("away", "")) if t and t in _our_pick_text),
+                        None
+                    )
+                    _our_is_over = "OVER" in _our_pick_text.upper()
+                    _our_is_under = "UNDER" in _our_pick_text.upper()
 
-                for _g2 in fetch_betql_from_gist(_gsport):
-                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
-                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
-                        continue
-                    _ml2 = next((c for c in _g2.get("community", []) if c.get("bet_type") == "moneyline"), None)
-                    if _ml2 and _our_side_team:
-                        _lean_home = _ml2.get("home_count", 0) > _ml2.get("away_count", 0)
-                        _lean_team = _g2.get("home_team") if _lean_home else _g2.get("away_team")
-                        _checked += 1
-                        if _gl_teams_match(_lean_team, _our_side_team):
-                            _agree += 1
-                        else:
-                            _disagree += 1
-                    break
+                    if _ext_betql and _our_side_team:
+                        _ml2 = next((c for c in _ext_betql.get("community", []) if c.get("bet_type") == "moneyline"), None)
+                        if _ml2:
+                            _lean_home = _ml2.get("home_count", 0) > _ml2.get("away_count", 0)
+                            _lean_team = _ext_betql.get("home_team") if _lean_home else _ext_betql.get("away_team")
+                            _checked += 1
+                            if _gl_teams_match(_lean_team, _our_side_team):
+                                _agree += 1
+                            else:
+                                _disagree += 1
 
-                for _g2 in fetch_pickswise_picks_from_gist(_gsport):
-                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
-                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
-                        continue
-                    if _g2.get("pick_side"):
+                    if _ext_pickswise and _ext_pickswise.get("pick_side") and _our_side_team:
                         _checked += 1
-                        if _gl_teams_match(_g2["pick_side"], _our_pick_text) or (_our_side_team and _gl_teams_match(_g2["pick_side"], _our_side_team)):
+                        if _gl_teams_match(_ext_pickswise["pick_side"], _our_pick_text) or _gl_teams_match(_ext_pickswise["pick_side"], _our_side_team):
                             _agree += 1
                         else:
                             _disagree += 1
-                    break
 
-                for _g2 in fetch_wiseguyteam_from_gist(_gsport):
-                    if not (_gl_teams_match(_g2.get("home_team",""), _g.get("home","")) and
-                            _gl_teams_match(_g2.get("away_team",""), _g.get("away",""))):
-                        continue
-                    if _g2.get("has_sharp") and "ml_side2" in _g2.get("sharp_flags", []) and _our_side_team:
-                        _checked += 1
-                        if _gl_teams_match(_g2.get("home_team",""), _our_side_team):
-                            _agree += 1
-                        else:
-                            _disagree += 1
-                    elif _g2.get("has_sharp") and "ml_side1" in _g2.get("sharp_flags", []) and _our_side_team:
-                        _checked += 1
-                        if _gl_teams_match(_g2.get("away_team",""), _our_side_team):
-                            _agree += 1
-                        else:
-                            _disagree += 1
-                    break
+                    if _ext_wgt and _ext_wgt.get("has_sharp") and _our_side_team:
+                        _flags = _ext_wgt.get("sharp_flags", [])
+                        if "ml_side2" in _flags:
+                            _checked += 1
+                            if _gl_teams_match(_ext_wgt.get("home_team",""), _our_side_team):
+                                _agree += 1
+                            else:
+                                _disagree += 1
+                        elif "ml_side1" in _flags:
+                            _checked += 1
+                            if _gl_teams_match(_ext_wgt.get("away_team",""), _our_side_team):
+                                _agree += 1
+                            else:
+                                _disagree += 1
+
+                    for _sop in _ext_so_preds:
+                        _sop_pick = _sop.get("pick", "")
+                        if _sop_pick and _sop_pick in (_sop.get("home",""), _sop.get("away","")) and _our_side_team:
+                            _checked += 1
+                            if _gl_teams_match(_sop_pick, _our_side_team):
+                                _agree += 1
+                            else:
+                                _disagree += 1
+                            break
+
+                    # Arbitrage doesn't imply a directional lean the way a
+                    # pick does -- both sides of an arb are simultaneously
+                    # "correct" by construction, so presence alone isn't
+                    # agree/disagree signal. Not counted in the tally.
 
                 if _checked > 0:
                     _v_color = "#22c55e" if _agree > _disagree else ("#e04040" if _disagree > _agree else "#e8a020")
                     _v_icon = "✅" if _agree > _disagree else ("❌" if _disagree > _agree else "➖")
                     _gl_verdict_html = (
-                        f'<span title="External sources checked against our own top pick ({_our_pick_text})" '
+                        f'<span title="External sources checked across all our graded markets for this game" '
                         f'style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;'
                         f'background:{_v_color}22;color:{_v_color};border:0.5px solid {_v_color}44;margin-left:6px;">'
                         f'{_v_icon} {_agree}/{_checked} sources agree</span>'
