@@ -15090,6 +15090,7 @@ BETSLIB_BASE     = "https://api.betslib.com"
 BETSLIB_SPORT_MAP = {
     "MLB":"baseball","NBA":"basketball","NFL":"american-football",
     "NHL":"hockey","WNBA":"basketball","UFC":"mma","SOCCER":"soccer",
+    "TENNIS":"tennis",
 }
 
 def _betslib_jwt():
@@ -15133,6 +15134,10 @@ def fetch_betslib_predictions(sport: str, limit: int = 20) -> list:
             print(f"[WARN] betslib HTTP {r.status_code}"); return []
         raw  = r.json()
         preds = raw if isinstance(raw,list) else raw.get("data", raw.get("predictions", raw.get("results",[])))
+        if isinstance(preds, dict):
+            preds = preds.get("items", preds.get("predictions", preds.get("results", [])))
+        if not isinstance(preds, list):
+            preds = []
         results = []
         for p in preds:
             ev_obj  = p.get("event", p.get("match", p.get("game",{})))
