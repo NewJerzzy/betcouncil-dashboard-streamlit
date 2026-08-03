@@ -11,15 +11,18 @@ def main():
         events = data.get("events", [])
         result["num_events"] = len(events)
         if events:
-            comps = events[0].get("competitions", [{}])[0].get("competitors", [])
-            result["sample_competitors"] = comps
+            result["event0_keys"] = list(events[0].keys())
+            result["event0_name"] = events[0].get("name")
+            comp0 = events[0].get("competitions", [{}])[0]
+            result["comp0_keys"] = list(comp0.keys())
+            result["comp0_full"] = comp0
     except Exception as e:
         result["error"] = str(e)[:400]
 
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP tennis competitor test", "result": result}, default=str)}}},
+        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP tennis full comp test", "result": result}, default=str)}}},
     )
     print("push:", resp.status_code)
     return 0
