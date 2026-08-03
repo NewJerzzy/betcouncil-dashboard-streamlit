@@ -5266,7 +5266,16 @@ def fetch_bobbys_bets_picks(sport: str = "mlb") -> list:
     Each pick includes: player_name, stat_category, line, label (Over/
     Under), odds, hit_rate_l5/l10/l15/l20/home/away/all, current_streak,
     last5/10/20_values, dk_event_id/dk_outcome_id (deep-link IDs).
+
+    Cached 15 min (added when this became a direct Predictions-tab
+    dependency, no longer gated behind a sport board load first -- this
+    was the only source feeding that tab with zero caching at all).
     """
+    cp = os.path.join(CACHE_DIR, f"bobbysbets_picks_{sport.lower()}.pkl")
+    if os.path.exists(cp) and (time.time() - os.path.getmtime(cp)) / 60 < 15:
+        c = _safe_load_pkl(cp)
+        if c is not None:
+            return c
     try:
         r = requests.get(f"https://app.bobbysbets.com/api/{sport.lower()}/picks",
                           headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -5275,7 +5284,10 @@ def fetch_bobbys_bets_picks(sport: str = "mlb") -> list:
                           timeout=15)
         if r.status_code != 200:
             return []
-        return r.json().get("picks", [])
+        picks = r.json().get("picks", [])
+        if picks:
+            _safe_save_pkl(cp, picks)
+        return picks
     except Exception:
         return []
 
