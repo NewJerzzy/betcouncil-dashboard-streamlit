@@ -33,7 +33,7 @@ del _name_copy_guard
 # (each tab depends on variables computed by the ones before it in the same
 # script run) and wasn't safe to split blind in the same pass.
 
-tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "📊 Full Board", "🏟️ Game Lines", "🔒 Locks & Ledger", "📈 History", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🛒 Line Shop", "📅 Preview", "⚙️ System", "🦈 SharpTrack", "🔭 Market Scanner", "🔮 Predictions"])
+tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "🔮 Predictions", "🏟️ Game Lines", "📊 Full Board", "🛒 Line Shop", "🔭 Market Scanner", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🔒 Locks & Ledger", "🦈 SharpTrack", "📅 Preview", "📈 History", "⚙️ System"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -1721,7 +1721,7 @@ with tabs[0]:
 
 
 # ----- TAB 1: EV OPTIMIZER (DFF-style) -----
-with tabs[2]:
+with tabs[4]:
     _board  = st.session_state.board_data or []
     _sport  = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     _kalshi = st.session_state.get("kalshi_markets", [])
@@ -4511,7 +4511,7 @@ with tabs[3]:
                     unsafe_allow_html=True)
 
 # ----- TAB 3: LOCKS & LEDGER -----
-with tabs[4]:
+with tabs[10]:
     st.markdown('<div class="bc-section-header">🔒 Active Locks</div>', unsafe_allow_html=True)
 
     # Streak indicator: real consecutive win/loss count from the most
@@ -5331,7 +5331,7 @@ with tabs[4]:
                 st.markdown("".join(_sport_roi_html), unsafe_allow_html=True)
 
 # ----- TAB 4: HISTORY -----
-with tabs[5]:
+with tabs[13]:
     st.markdown('<div class="bc-section-header">📈 Full Bet History</div>', unsafe_allow_html=True)
 
     st.caption("Daily = today's essentials. Weekly = signal/model audits. Seasonal = deep reference data (Bankroll Intelligence, Season Regime, full Calibration Dashboard).")
@@ -7359,7 +7359,7 @@ with tabs[5]:
     # ----- TAB 5: LOG BET -----
 
     # ----- TAB 5: SLIP ANALYZER -----
-with tabs[6]:
+with tabs[7]:
     st.markdown('<div class="bc-section-header">🔍 Slip Analyzer</div>', unsafe_allow_html=True)
     st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
 
@@ -8157,7 +8157,7 @@ def get_goalie_for_team(team_abbr, goalies=None):
     return name, confirmed
 
 
-with tabs[7]:
+with tabs[8]:
     st.markdown('<div class="bc-section-header">🔎 Player Lookup</div>', unsafe_allow_html=True)
     st.caption("Deep dive on any player — game log, hit rates, H2H vs tonight's opponent, home/away splits. Powered by BallsDontLie.")
 
@@ -8859,7 +8859,7 @@ with tabs[7]:
                 _rg_cols[3].metric("Proj DFS Pts", _rg_row.get("pfpts", "—"))
 
 
-with tabs[8]:
+with tabs[9]:
     st.markdown('<div class="bc-section-header">📝 Log A Bet</div>', unsafe_allow_html=True)
 
     st.caption("Log any bet placed outside of BetCouncil \u2014 from PrizePicks app, Bovada, MyBookie, or anywhere. Feeds into all tracking systems.")
@@ -9180,7 +9180,7 @@ with tabs[8]:
 
 
 
-with tabs[9]:
+with tabs[5]:
     st.markdown('<div class="bc-section-header">🛒 Line Shopping</div>', unsafe_allow_html=True)
     st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
     board_ls = st.session_state.board_data
@@ -9727,7 +9727,7 @@ with tabs[9]:
                             st.markdown(f"[🎰 Bet Hard Rock]({_link})")
 
 # ----- TAB 7: SYSTEM -----
-with tabs[10]:
+with tabs[12]:
     # PREVIEW BOARD (2026-07): raw next-day game lines only. No tier
     # classification, no Kelly staking — starters/injuries aren't locked
     # this far out, so nothing here should be treated as a recommendation.
@@ -9753,7 +9753,7 @@ with tabs[10]:
                      "Click Load Preview above. If it's still empty afterward, tomorrow's lines may not be posted yet for this sport."),
                      unsafe_allow_html=True)
 
-with tabs[11]:
+with tabs[14]:
     st.markdown('<div class="bc-section-header">⚙️ System Info</div>', unsafe_allow_html=True)
 
     # ── System Health Gauge (top fold) ──────────────────────────────────
@@ -11989,7 +11989,7 @@ with tabs[11]:
 
 
 
-with tabs[12]:
+with tabs[11]:
     try:
         render_sharptrack_tab()
     except Exception as _sharptrack_render_err:
@@ -12210,7 +12210,7 @@ with tabs[1]:
         st.caption("Click the button above to scan today's boards and check them against the public sources.")
 
 
-with tabs[13]:
+with tabs[6]:
     # ── Market Scanner ──────────────────────────────────────────────
     # Cross-sport view: merges TODAY's latest board_snapshot per sport
     # (the same real data source Spotlight History and the signal-
@@ -12444,7 +12444,7 @@ with tabs[13]:
             st.markdown('</div>', unsafe_allow_html=True)
 
 
-with tabs[14]:
+with tabs[2]:
     st.markdown(
         '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
         'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
