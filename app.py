@@ -12566,4 +12566,51 @@ with tabs[14]:
         if not _pred_bq_any:
             st.caption("No BetQL community picks or player props loaded for this sport right now.")
 
+    # ── Pickswise (expert picks + reasoning) ────────────────────────────
+    with st.expander("✍️ Pickswise", expanded=False):
+        _pred_pw_games = []
+        for _pw_sport in ("MLB", "NBA", "NFL", "NHL"):
+            if _pred_sport_match(_pw_sport):
+                try:
+                    _pred_pw_games.extend(fetch_pickswise_picks_from_gist(_pw_sport))
+                except Exception:
+                    pass
+        _pred_pw_any = False
+        for g in _pred_pw_games[:20]:
+            if not g.get("pick_side"):
+                continue  # no published pick yet for this game
+            _pred_pw_any = True
+            st.markdown(f"**{g.get('away_team','')} @ {g.get('home_team','')}** — **{g.get('pick_side','')}** "
+                        f"({g.get('pick_bet','')}) · rating {g.get('pick_rating','?')} · by {g.get('pick_author','')}")
+            if g.get("pick_reasoning"):
+                st.caption(g.get("pick_reasoning"))
+        if not _pred_pw_any:
+            st.caption("No Pickswise expert picks published for this sport right now.")
+
+    # ── WiseGuyTeam (sharp-money-side flags) ────────────────────────────
+    with st.expander("🦈 WiseGuyTeam", expanded=False):
+        _pred_wgt_games = []
+        for _wgt_sport in ("MLB", "NBA", "NFL", "NHL"):
+            if _pred_sport_match(_wgt_sport):
+                try:
+                    _pred_wgt_games.extend(fetch_wiseguyteam_from_gist(_wgt_sport))
+                except Exception:
+                    pass
+        _pred_wgt_any = False
+        for g in _pred_wgt_games[:20]:
+            if not g.get("has_sharp"):
+                continue
+            _pred_wgt_any = True
+            _away, _home = g.get("away_team", ""), g.get("home_team", "")
+            _flag_labels = {
+                "ml_side1": f"ML {_away}", "ml_side2": f"ML {_home}",
+                "sp_side1": f"Spread {_away}", "sp_side2": f"Spread {_home}",
+                "tot_side1": "Total Over", "tot_side2": "Total Under",
+            }
+            _flags = ", ".join(_flag_labels.get(f, f) for f in g.get("sharp_flags", []))
+            st.markdown(f"**{_away} @ {_home}** — sharp money: {_flags}")
+        if not _pred_wgt_any:
+            st.caption("No WiseGuyTeam sharp-money flags for this sport right now. "
+                       "(Their actual named play is a paid feature — this shows only the free directional flag.)")
+
 
