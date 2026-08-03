@@ -14086,6 +14086,110 @@ def fetch_nfl_team_scoring_stats() -> dict:
     return live.get("scoring_stats", {})
 
 
+def fetch_atsstats_nba_matchups() -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught). Expected to
+    return {team_name: {"l10_ou": (overs, unders)}} -- last-10-games
+    over/under record per team. A real implementation needs either a
+    full computation pipeline (real final scores cross-referenced
+    against real closing totals, 10 games back per team) or a verified
+    scrape of a real ATS source (covers.com confirmed reachable with
+    real ATS content present, but safely parsing its actual page
+    structure needs dedicated verification, not a guess, given this
+    feeds a live betting-edge nudge). Clean stub -- the nudge this fed
+    was already silently zero before (undefined function crashed
+    into except), so this changes nothing functionally, just removes
+    the crash risk.
+    """
+    return {}
+
+
+def fetch_atsstats_mlb_matchups() -> dict:
+    """See fetch_atsstats_nba_matchups -- same situation, same stub reasoning."""
+    return {}
+
+
+def fetch_atsstats_nhl_matchups() -> dict:
+    """See fetch_atsstats_nba_matchups -- same situation, same stub reasoning."""
+    return {}
+
+
+def fetch_atsstats_nfl_matchups() -> dict:
+    """See fetch_atsstats_nba_matchups -- same situation, same stub reasoning."""
+    return {}
+
+
+def fetch_nfl_practice_participation() -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at one call
+    site (already safely guarded with `if "fetch_x" in globals()`, so
+    this fixes a real no-op, not a crash). No confirmed free source
+    found for weekly practice-participation reports specifically --
+    these are a separate feed from injury/inactive reports (which
+    fetch_nfl_inactives now covers via nflverse) and weren't found in
+    sportsdataverse's NFL wrapper. Clean stub rather than a guess.
+    """
+    return {}
+
+
+def fetch_nfl_inactives() -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at 2 call
+    sites -- one already guarded (`if "fetch_nfl_inactives" in globals()`),
+    one not (the QB-injury check inside analyze_game_edge). Real source:
+    sdv_nfl_injuries() (sdv_source.py, wraps nflverse's load_nfl_injuries,
+    a real deployed dependency confirmed in requirements.txt).
+
+    NOTE: built defensively against common nflverse injury-report field
+    names (team/recent_team, full_name/player_name, report_status) since
+    the underlying sportsdataverse package is a heavy dependency that
+    can't be easily test-run from a lightweight verification script --
+    unlike this session's other fixes, the exact field names here were
+    not confirmed against a live response. Worth a real check once NFL
+    injury reports are actually populated in-season (preseason right now).
+    Returns {team_name: [player_description, ...]} for players with an
+    "Out" report status.
+    """
+    try:
+        from sdv_source import sdv_nfl_injuries
+        records = sdv_nfl_injuries(datetime.now().year)
+    except Exception:
+        return {}
+    if not records:
+        return {}
+    out = {}
+    for r in records:
+        status = str(r.get("report_status", r.get("status", ""))).lower()
+        if "out" not in status:
+            continue
+        team = r.get("team", r.get("recent_team", r.get("club_code", "")))
+        name = r.get("full_name", r.get("player_name", r.get("name", "")))
+        pos = r.get("position", r.get("pos", ""))
+        if not team or not name:
+            continue
+        out.setdefault(team, []).append(f"{name} ({pos})" if pos else name)
+    return out
+
+
+def fetch_nfl_defensive_ratings() -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at its call
+    site in app_core.py, which wanted pass_yds_allowed_pg specifically --
+    no free source for that exact stat was found after checking ESPN's
+    team-statistics endpoint exhaustively (11 categories, confirmed it
+    only exposes each team's own offense and defensive event counts,
+    never yards allowed). Real, already-working alternative: this reuses
+    fetch_nfl_team_scoring_stats' real pts_against_pg (points allowed
+    per game) as the defensive-quality proxy instead -- points allowed
+    is a legitimate, commonly-used defensive indicator, just a different
+    stat than the caller originally wanted. The caller was updated to
+    match (see analyze_game_edge's defensive-unit-adjustment block).
+    """
+    scoring = fetch_nfl_team_scoring_stats()
+    return {team: {"pts_against_pg": stats.get("pts_against_pg")}
+            for team, stats in scoring.items() if stats.get("pts_against_pg") is not None}
+
+
 def fetch_pinnacle_game_lines(sport: str) -> list:
     """
     Pinnacle game lines via arcadia guest API (no auth).
@@ -17862,6 +17966,21 @@ def fetch_mybookie_from_gist(sport: str) -> tuple:
     # and handles all cases where Gist is empty. Calling Playwright here
     # caused "playwright not installed" errors on Streamlit Cloud.
     return {}, "unavailable"
+
+
+def fetch_parlaysavant_props(sport: str, position: str, prop: str) -> dict:
+    """
+    Confirmed undefined (real NameError, silently caught) at its one call
+    site in app_core.py. Direct scrape of parlaysavant.com confirmed
+    Cloudflare-blocked (real 403 "Just a moment..." challenge on every
+    URL pattern tried, 2026-08-03). The browser-harvester alternative
+    (fetch_parlaysavant_from_gist) was already confirmed in an earlier
+    audit this session to carry zero real data at the source -- so
+    redirecting here would swap one silent no-op for another, not
+    restore real functionality. Clean stub until a real access path
+    exists, matching the SharpAPI/Heritage Sports removal pattern.
+    """
+    return {}
 
 
 def fetch_parlaysavant_from_gist(sport: str) -> tuple:
