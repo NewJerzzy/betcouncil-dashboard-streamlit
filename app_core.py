@@ -123,6 +123,7 @@ from contextlib import contextmanager as _ctx
 from fetchers import *  # extracted fetch_/compute_ functions
 from fetchers import _fetch_wnba_roster_via_teams  # leading underscore -> not covered by the star import above
 from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscore-prefixed names
+from fetchers import _gist_data_age_minutes  # wildcard import excludes underscore-prefixed names
 from prop_market_intelligence import record_prop_snapshot, get_odds_type_flips
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
 
