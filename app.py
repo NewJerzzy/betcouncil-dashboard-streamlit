@@ -12462,155 +12462,239 @@ with tabs[14]:
     def _pred_sport_match(s):
         return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
 
-    # ── SignalOdds (predictions + game-line arbitrage) ──────────────────
-    with st.expander("📡 Signal Odds", expanded=True):
-        _pred_so = st.session_state.get("betslib_predictions", [])
-        _pred_so = [p for p in _pred_so if _pred_sport_match(p.get("sport"))]
-        if _pred_so:
-            for p in _pred_so[:25]:
-                _conf = p.get("confidence", 0)
-                _ev = p.get("ev", 0)
+    def _pred_norm_team(s):
+        return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+    def _pred_teams_match(a, b):
+        na, nb = _pred_norm_team(a), _pred_norm_team(b)
+        if not na or not nb:
+            return False
+        return na in nb or nb in na
+
+    # ══════════════════════════════════════════════════════════════════
+    # COLLECT — every source's game-line pick into one flat list, tagged
+    # with source name and a short human-readable pick summary.
+    # ══════════════════════════════════════════════════════════════════
+    _pred_gl_items = []
+
+    try:
+        for p in st.session_state.get("betslib_predictions", []):
+            if not _pred_sport_match(p.get("sport")):
+                continue
+            _pick = p.get("pick", "")
+            if _pick and _pick in (p.get("home", ""), p.get("away", "")):
+                _pred_gl_items.append({
+                    "sport": p.get("sport", ""), "away": p.get("away", ""), "home": p.get("home", ""),
+                    "source": "Signal Odds",
+                    "text": f"{_pick} · {p.get('confidence', 0):.0%} conf, EV {p.get('ev', 0):+.1%}"
+                })
+    except Exception:
+        pass
+
+    try:
+        for a in st.session_state.get("signalodds_arbitrage", []):
+            if a.get("locked"):
+                continue
+            _pred_gl_items.append({
+                "sport": "", "away": a.get("away_team", ""), "home": a.get("home_team", ""),
+                "source": "Signal Odds", "text": f"Arbitrage · {a.get('margin_percent', 0)}% margin"
+            })
+    except Exception:
+        pass
+
+    for _pred_sport in ("MLB", "NBA", "NFL", "NHL"):
+        if not _pred_sport_match(_pred_sport):
+            continue
+        try:
+            for g in fetch_betql_from_gist(_pred_sport):
+                _comm = g.get("community", [])
+                _ml = next((c for c in _comm if c.get("bet_type") == "moneyline"), None)
+                if _ml:
+                    _tot = _ml.get("home_count", 0) + _ml.get("away_count", 0)
+                    if _tot:
+                        _lean = g.get("home_team", "") if _ml.get("home_count", 0) > _ml.get("away_count", 0) else g.get("away_team", "")
+                        _pct = max(_ml.get("home_count", 0), _ml.get("away_count", 0)) / _tot
+                        _pred_gl_items.append({
+                            "sport": _pred_sport, "away": g.get("away_team", ""), "home": g.get("home_team", ""),
+                            "source": "BetQL", "text": f"Community leans {_lean} ({_pct:.0%} of {_tot})"
+                        })
+        except Exception:
+            pass
+
+        try:
+            for g in fetch_pickswise_picks_from_gist(_pred_sport):
+                if g.get("pick_side"):
+                    _pred_gl_items.append({
+                        "sport": _pred_sport, "away": g.get("away_team", ""), "home": g.get("home_team", ""),
+                        "source": "Pickswise",
+                        "text": f"{g.get('pick_side','')} ({g.get('pick_bet','')}) · rating {g.get('pick_rating','?')}"
+                    })
+        except Exception:
+            pass
+
+        try:
+            for g in fetch_wiseguyteam_from_gist(_pred_sport):
+                if g.get("has_sharp"):
+                    _away, _home = g.get("away_team", ""), g.get("home_team", "")
+                    _flag_labels = {
+                        "ml_side1": f"ML {_away}", "ml_side2": f"ML {_home}",
+                        "sp_side1": f"Spread {_away}", "sp_side2": f"Spread {_home}",
+                        "tot_side1": "Total Over", "tot_side2": "Total Under",
+                    }
+                    _flags = ", ".join(_flag_labels.get(f, f) for f in g.get("sharp_flags", []))
+                    _pred_gl_items.append({
+                        "sport": _pred_sport, "away": _away, "home": _home,
+                        "source": "WiseGuyTeam", "text": f"Sharp money: {_flags}"
+                    })
+        except Exception:
+            pass
+
+    # ── GROUP game-line items by matchup (fuzzy team-name match across
+    # sources' differing formats: abbreviations, full names, partials) ──
+    _pred_gl_groups = []
+    for _item in _pred_gl_items:
+        _placed = False
+        for _grp in _pred_gl_groups:
+            if _pred_teams_match(_item["away"], _grp["away"]) and _pred_teams_match(_item["home"], _grp["home"]):
+                _grp["items"].append(_item)
+                _placed = True
+                break
+        if not _placed:
+            _pred_gl_groups.append({"away": _item["away"], "home": _item["home"], "sport": _item["sport"], "items": [_item]})
+
+    # ══════════════════════════════════════════════════════════════════
+    # RENDER — Game Lines: one card per matchup, each source's pick as a
+    # row inside, consensus line when 2+ sources agree.
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0.8rem;">'
+        '<div style="flex:1;height:1px;background:var(--bc-bg2);"></div>'
+        '<span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🏟️ Game Lines</span>'
+        '<div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>',
+        unsafe_allow_html=True
+    )
+    if _pred_gl_groups:
+        _pred_gl_per_row = 2
+        for _gi in range(0, len(_pred_gl_groups), _pred_gl_per_row):
+            _gl_cols = st.columns(_pred_gl_per_row)
+            for _gj, _grp in enumerate(_pred_gl_groups[_gi:_gi + _pred_gl_per_row]):
+                with _gl_cols[_gj]:
+                    _rows_html = "".join(
+                        f'<div style="padding:5px 0;border-top:1px solid var(--bc-bg2);font-size:12.5px;color:var(--bc-text);">'
+                        f'<b>{it["source"]}</b>: {it["text"]}</div>'
+                        for it in _grp["items"]
+                    )
+                    _n_sources = len(set(it["source"] for it in _grp["items"]))
+                    st.markdown(
+                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:10px;'
+                        f'padding:12px 14px;margin-bottom:12px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-weight:700;font-size:14.5px;color:var(--bc-text);">{_grp["away"]} @ {_grp["home"]}</span>'
+                        f'<span style="color:var(--bc-dim);font-size:11px;">{_n_sources} source{"s" if _n_sources != 1 else ""}</span>'
+                        f'</div>{_rows_html}</div>',
+                        unsafe_allow_html=True
+                    )
+    else:
+        st.caption("No game-line picks loaded for this sport right now.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # COLLECT — player props from every source into one flat list.
+    # ══════════════════════════════════════════════════════════════════
+    _pred_pp_items = []
+
+    try:
+        for p in st.session_state.get("gamblingforecast_props", []):
+            _league = str(p.get("league", "")).upper()
+            if not _pred_sport_match(_league):
+                continue
+            _pred_pp_items.append({
+                "sport": _league, "player": p.get("name", ""), "prop": p.get("prop", ""),
+                "pick": p.get("overUnder", ""), "source": "GamblingForecast", "note": f"diff {p.get('projDiff','')}"
+            })
+    except Exception:
+        pass
+
+    try:
+        for p in (st.session_state.get("bettingpros_props", []) or []):
+            _proj = p.get("projection", {}) or {}
+            if not _proj.get("recommended_side"):
+                continue
+            _bp_player = (p.get("participant", {}) or {}).get("player", {}) or {}
+            _name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
+            _call = str(_proj.get("recommended_side", "")).upper()
+            _stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
+            _pred_pp_items.append({
+                "sport": "", "player": _name, "prop": _stat, "pick": _call,
+                "source": "BettingPros", "note": f"proj {_proj.get('value','?')}"
+            })
+    except Exception:
+        pass
+
+    try:
+        for p in st.session_state.get("bobbys_bets_picks", []):
+            _pred_pp_items.append({
+                "sport": "", "player": p.get("player_name", ""), "prop": p.get("stat_category", ""),
+                "pick": p.get("label", ""), "source": "Bobby's Bets", "note": f"grade {p.get('grade','?')}"
+            })
+    except Exception:
+        pass
+
+    for _pred_sport in ("MLB", "NBA", "NFL", "NHL"):
+        if not _pred_sport_match(_pred_sport):
+            continue
+        try:
+            for g in fetch_betql_from_gist(_pred_sport):
+                for pp in g.get("player_props", []):
+                    _direction = "Over" if (pp.get("direction") or 0) > 0 else "Under"
+                    _pred_pp_items.append({
+                        "sport": _pred_sport, "player": pp.get("player", ""), "prop": pp.get("prop", ""),
+                        "pick": _direction, "source": "BetQL", "note": f"proj {pp.get('projection','?')}"
+                    })
+        except Exception:
+            pass
+
+    # ── GROUP by player ──────────────────────────────────────────────
+    _pred_pp_by_player = {}
+    for _it in _pred_pp_items:
+        _key = normalize_name(_it["player"])
+        if not _key:
+            continue
+        _pred_pp_by_player.setdefault(_key, {"player": _it["player"], "sport": _it["sport"], "props": []})
+        _pred_pp_by_player[_key]["props"].append(_it)
+
+    # ══════════════════════════════════════════════════════════════════
+    # RENDER — Player Props: a "Top Picks" card strip (highest-signal
+    # single prop per player, first 6), then a compact list grouped by
+    # player showing every source's prop for them.
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:0.75rem;margin:1.2rem 0 0.8rem;">'
+        '<div style="flex:1;height:1px;background:var(--bc-bg2);"></div>'
+        '<span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">🎯 Player Props</span>'
+        '<div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>',
+        unsafe_allow_html=True
+    )
+    _pred_pp_groups = list(_pred_pp_by_player.values())
+    if _pred_pp_groups:
+        _pred_top = _pred_pp_groups[:6]
+        _tp_cols = st.columns(len(_pred_top))
+        for _ti, _grp in enumerate(_pred_top):
+            with _tp_cols[_ti]:
+                _p0 = _grp["props"][0]
                 st.markdown(
-                    f"**{p.get('away','')} @ {p.get('home','')}** ({p.get('sport','')}) — "
-                    f"**{p.get('pick','')}** via {p.get('market','h2h')} "
-                    f"· {_conf:.0%} confidence · EV {_ev:+.1%} · {p.get('bookmaker','')} {p.get('odds','')}"
+                    f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:10px;'
+                    f'padding:10px;text-align:center;min-height:90px;">'
+                    f'<div style="font-weight:700;font-size:12px;color:var(--bc-text);">{_grp["player"]}</div>'
+                    f'<div style="font-size:11.5px;color:var(--bc-dim);margin-top:4px;">{_p0["pick"]} {_p0["prop"]}</div>'
+                    f'<div style="font-size:10px;color:var(--bc-dim);margin-top:4px;">{_p0["source"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
-        else:
-            st.caption("No Signal Odds predictions loaded for this sport right now.")
-        _pred_so_arb = [a for a in st.session_state.get("signalodds_arbitrage", []) if not a.get("locked")]
-        if _pred_so_arb:
-            st.markdown("**Game-line arbitrage (free rows):**")
-            for a in _pred_so_arb[:10]:
-                st.caption(f"{a.get('away_team','')} @ {a.get('home_team','')} — {a.get('margin_percent',0)}% margin, {a.get('market','')}")
-
-    # ── GamblingForecast ──────────────────────────────────────────────
-    with st.expander("📈 GamblingForecast", expanded=False):
-        _pred_gf_all = []
-        for _gf_sport in ("MLB", "NBA", "NFL"):
-            if _pred_sport_match(_gf_sport):
-                _pred_gf_all.extend(
-                    {**p, "_sport": _gf_sport} for p in (st.session_state.get("gamblingforecast_props", []) or [])
-                    if str(p.get("league", "")).upper() == _gf_sport
-                )
-        if _pred_gf_all:
-            for p in _pred_gf_all[:25]:
-                st.markdown(f"**{p.get('name','')}** ({p.get('_sport','')}) — **{p.get('overUnder','')}** {p.get('prop','')} · diff {p.get('projDiff','')}")
-        else:
-            st.caption("No GamblingForecast projections loaded for this sport right now.")
-
-    # ── BettingPros ──────────────────────────────────────────────────
-    with st.expander("🎯 BettingPros", expanded=False):
-        _pred_bp = [p for p in (st.session_state.get("bettingpros_props", []) or [])
-                    if (p.get("projection", {}) or {}).get("recommended_side")]
-        if _pred_bp:
-            for p in _pred_bp[:25]:
-                _bp_player = (p.get("participant", {}) or {}).get("player", {}) or {}
-                _bp_name = _bp_player.get("short_name") or f"{_bp_player.get('first_name','')} {_bp_player.get('last_name','')}".strip()
-                _bp_proj = p.get("projection", {}) or {}
-                _bp_call = str(_bp_proj.get("recommended_side", "")).upper()
-                _bp_side = (p.get(_bp_call.lower(), {}) or {}) if _bp_call else {}
-                _bp_stat = p.get("links", {}).get("odds", "").rstrip("/").rsplit("/", 1)[-1].replace("-", " ").title()
-                st.markdown(f"**{_bp_name}** — **{_bp_call}** {_bp_side.get('line','?')} {_bp_stat} · "
-                            f"proj {_bp_proj.get('value','?')} (diff {_bp_proj.get('diff',0):+})")
-        else:
-            st.caption("No BettingPros model picks loaded right now.")
-
-    # ── Bobby's Bets ───────────────────────────────────────────────────
-    with st.expander("📊 Bobby's Bets", expanded=False):
-        _pred_bb = st.session_state.get("bobbys_bets_picks", [])
-        if _pred_bb:
-            for p in _pred_bb[:25]:
-                st.markdown(f"**{p.get('player_name','')}** — **{p.get('label','')}** {p.get('line','?')} {p.get('stat_category','')} "
-                            f"· grade {p.get('grade','?')} · EV {p.get('ev','?')}")
-        else:
-            st.caption("No Bobby's Bets picks loaded right now.")
-
-    # ── EVBets ─────────────────────────────────────────────────────────
-    with st.expander("💰 EVBets", expanded=False):
-        _pred_evb = st.session_state.get("evbets_ev_picks", [])
-        if _pred_evb:
-            for p in _pred_evb[:25]:
-                st.markdown(f"**{p.get('event', p.get('matchup',''))}** — **{p.get('outcome', p.get('side',''))}** "
-                            f"via {p.get('bookmaker', p.get('book',''))} · EV {p.get('ev_pct', p.get('ev',0))}")
-        else:
-            st.caption("No EVBets value picks loaded right now.")
-
-    # ── BetQL (community consensus + player props) ─────────────────────
-    with st.expander("👥 BetQL", expanded=False):
-        _pred_bq_games = []
-        for _bq_sport in ("MLB", "NBA", "NFL", "NHL"):
-            if _pred_sport_match(_bq_sport):
-                try:
-                    _pred_bq_games.extend(fetch_betql_from_gist(_bq_sport))
-                except Exception:
-                    pass
-        _pred_bq_any = False
-        for g in _pred_bq_games[:20]:
-            _bq_comm = g.get("community", [])
-            _bq_ml = next((c for c in _bq_comm if c.get("bet_type") == "moneyline"), None)
-            _bq_props = g.get("player_props", [])
-            if not _bq_ml and not _bq_props:
-                continue
-            _pred_bq_any = True
-            _line = f"**{g.get('away_team','')} @ {g.get('home_team','')}** ({g.get('sport','')})"
-            if _bq_ml:
-                _tot = _bq_ml.get("home_count", 0) + _bq_ml.get("away_count", 0)
-                if _tot:
-                    _line += f" — community: {g.get('away_team','')} {_bq_ml.get('away_count',0)/_tot:.0%} / {g.get('home_team','')} {_bq_ml.get('home_count',0)/_tot:.0%}"
-            st.markdown(_line)
-            for pp in _bq_props[:5]:
-                _dir = "Over" if (pp.get("direction") or 0) > 0 else "Under"
-                _stars = "⭐" * int(pp.get("stars") or 0)
-                st.caption(f"　{pp.get('player','')} — {_dir} {pp.get('line','?')} {pp.get('prop','')} "
-                           f"(proj {pp.get('projection','?')}) {_stars} · {pp.get('book','')}")
-        if not _pred_bq_any:
-            st.caption("No BetQL community picks or player props loaded for this sport right now.")
-
-    # ── Pickswise (expert picks + reasoning) ────────────────────────────
-    with st.expander("✍️ Pickswise", expanded=False):
-        _pred_pw_games = []
-        for _pw_sport in ("MLB", "NBA", "NFL", "NHL"):
-            if _pred_sport_match(_pw_sport):
-                try:
-                    _pred_pw_games.extend(fetch_pickswise_picks_from_gist(_pw_sport))
-                except Exception:
-                    pass
-        _pred_pw_any = False
-        for g in _pred_pw_games[:20]:
-            if not g.get("pick_side"):
-                continue  # no published pick yet for this game
-            _pred_pw_any = True
-            st.markdown(f"**{g.get('away_team','')} @ {g.get('home_team','')}** — **{g.get('pick_side','')}** "
-                        f"({g.get('pick_bet','')}) · rating {g.get('pick_rating','?')} · by {g.get('pick_author','')}")
-            if g.get("pick_reasoning"):
-                st.caption(g.get("pick_reasoning"))
-        if not _pred_pw_any:
-            st.caption("No Pickswise expert picks published for this sport right now.")
-
-    # ── WiseGuyTeam (sharp-money-side flags) ────────────────────────────
-    with st.expander("🦈 WiseGuyTeam", expanded=False):
-        _pred_wgt_games = []
-        for _wgt_sport in ("MLB", "NBA", "NFL", "NHL"):
-            if _pred_sport_match(_wgt_sport):
-                try:
-                    _pred_wgt_games.extend(fetch_wiseguyteam_from_gist(_wgt_sport))
-                except Exception:
-                    pass
-        _pred_wgt_any = False
-        for g in _pred_wgt_games[:20]:
-            if not g.get("has_sharp"):
-                continue
-            _pred_wgt_any = True
-            _away, _home = g.get("away_team", ""), g.get("home_team", "")
-            _flag_labels = {
-                "ml_side1": f"ML {_away}", "ml_side2": f"ML {_home}",
-                "sp_side1": f"Spread {_away}", "sp_side2": f"Spread {_home}",
-                "tot_side1": "Total Over", "tot_side2": "Total Under",
-            }
-            _flags = ", ".join(_flag_labels.get(f, f) for f in g.get("sharp_flags", []))
-            st.markdown(f"**{_away} @ {_home}** — sharp money: {_flags}")
-        if not _pred_wgt_any:
-            st.caption("No WiseGuyTeam sharp-money flags for this sport right now. "
-                       "(Their actual named play is a paid feature — this shows only the free directional flag.)")
-
-
+        st.markdown("**All player props**")
+        for _grp in _pred_pp_groups:
+            _props_str = " · ".join(
+                f'{it["source"]}: {it["pick"]} {it["prop"]} ({it["note"]})' for it in _grp["props"]
+            )
+            st.markdown(f"**{_grp['player']}** — {_props_str}")
+    else:
+        st.caption("No player props loaded for this sport right now.")
