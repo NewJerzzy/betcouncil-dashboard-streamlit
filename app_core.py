@@ -18209,6 +18209,43 @@ with st.sidebar:
     if _cal_badges_html:
         st.markdown(f'<div style="margin-top:2px;">{_cal_badges_html}</div>', unsafe_allow_html=True)
     st.caption(_cal_note)
+
+    # Game-line-specific calibration -- previously only an overall/props-
+    # blended score existed, with no way to see whether game-line picks
+    # specifically are well-calibrated versus props dragging the number
+    # up or down. Same Brier math, same rescale, filtered to bet_type=="game".
+    try:
+        _gl_history = [h for h in st.session_state.get("history", []) if h.get("bet_type") == "game"]
+        _gl_brier_data = compute_brier_score(_gl_history)
+        _gl_brier_life = (_gl_brier_data.get("lifetime") or {})
+        _gl_bs_val = _gl_brier_life.get("brier_score", 0.25)
+        _gl_bs_n = _gl_brier_life.get("n", 0)
+        if _gl_bs_n >= 20:
+            if _gl_bs_val <= 0.20:
+                _gl_integrity = 100 - (_gl_bs_val / 0.20) * 15
+            elif _gl_bs_val <= 0.22:
+                _gl_integrity = 85 - ((_gl_bs_val - 0.20) / 0.02) * 10
+            elif _gl_bs_val <= 0.25:
+                _gl_integrity = 75 - ((_gl_bs_val - 0.22) / 0.03) * 15
+            else:
+                _gl_integrity = 60 - ((_gl_bs_val - 0.25) / 0.08) * 60
+            _gl_integrity = max(0, min(100, int(round(_gl_integrity))))
+            _gl_cal_grade = "ELITE" if _gl_bs_val < 0.20 else "GOOD" if _gl_bs_val < 0.22 else "FAIR" if _gl_bs_val < 0.25 else "NEEDS WORK"
+            _gl_cal_color = "#22c55e" if _gl_cal_grade in ("ELITE", "GOOD") else ("#e8a020" if _gl_cal_grade == "FAIR" else "#e04040")
+            st.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;'
+                f'padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
+                f'title="Same calibration measure as above, filtered to game-line bets only (spread/total/moneyline), '
+                f'so you can see whether game lines specifically are well-calibrated separate from props.">'
+                f'↗ GAME LINE CALIBRATION</div>'
+                f'<div style="font-size:20px;font-weight:800;color:{_gl_cal_color};">{_gl_integrity}'
+                f'<span style="font-size:12px;color:#4a6a8a;font-weight:400;"> /100 (n={_gl_bs_n}) · {_gl_cal_grade}</span></div>'
+                f'</div>', unsafe_allow_html=True
+            )
+    except Exception:
+        pass
+
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
         f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
