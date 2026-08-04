@@ -17183,6 +17183,31 @@ def fetch_espn_team_logos(sport: str) -> dict:
         return {}
 
 
+def fetch_gamelinepicks_from_gist(sport: str = None, max_age_minutes: int = 60) -> list:
+    """
+    GameLinePicks.com +EV moneyline picks -- confirmed live 2026-08-04,
+    real no-auth endpoint (gamelinepicks.com/api/picks/today). Deliberately
+    does NOT include arbitrage data -- that endpoint is a $9.99/mo PRO
+    feature confirmed via a "limited":true,"trialActive":true flag on the
+    unauthenticated response, not a stable free source.
+
+    Returns a list of {game, sport, bet_type, pick, odds, confidence (1-5),
+    ev, reasoning, commence_time, bookmaker, result, profit_units, clv,
+    home_team, away_team, home_score, away_score}. Filter by sport
+    (e.g. "MLB") or pass None for all sports.
+    """
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("gamelinepicks", {})
+    if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
+        return []
+    picks = data.get("picks", [])
+    if not isinstance(picks, list):
+        return []
+    if sport:
+        return [p for p in picks if p.get("sport", "").upper() == sport.upper()]
+    return picks
+
+
 def fetch_betql_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     """
     BetQL's public GraphQL events query (multi-book lines, and — rare
