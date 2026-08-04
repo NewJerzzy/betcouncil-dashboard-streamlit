@@ -38,7 +38,7 @@ import requests
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 API_URL = "https://theoddsgap.com/api/dfs-edges"
-SHARED_FILE = "betcouncil_evbets_combined.json"
+SHARED_FILE = "betcouncil_market_feeds.json"
 MERGE_KEY = "theoddsgap_edges"
 
 HEADERS = {
