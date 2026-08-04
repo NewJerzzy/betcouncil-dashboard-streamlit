@@ -35,6 +35,9 @@ import sys
 from datetime import datetime, timezone
 
 import requests
+import sys, os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 import time
 import random
 
@@ -213,6 +216,13 @@ def main() -> int:
     if not github_token:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
+
+    import atexit
+    _lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="sportsinsights")
+    if not _lock_token:
+        log("Could not acquire market_feeds lock after retries -- skipping this run to avoid a collision")
+        return 1
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "market_feeds", _lock_token))
 
     if not _rate_limit_ok(github_token):
         return 0
