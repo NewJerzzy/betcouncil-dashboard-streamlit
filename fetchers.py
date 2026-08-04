@@ -15918,17 +15918,20 @@ HARVESTER_REGISTRY = {
     "action_network":  ("betcouncil_actionnetwork_{sport}.json",     40, "signal"),
     "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
     "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
-    # NOTE: unabated/underdog/sportsinsights were redirected to merge into
-    # betcouncil_evbets_combined.json earlier this session (their own
-    # standalone files were confirmed to never reliably land) -- handled
-    # as a special case in check_harvester_health below via
+    # NOTE: unabated/underdog/sportsinsights/wiseguyteam/vsin_lines/
+    # vsin_splits/gamelinepicks/theoddsgap_lines/theoddsgap_edges are
+    # all merged sources, split across betcouncil_sharp_feeds.json
+    # (sub-20-min cadence) and betcouncil_market_feeds.json (30-min
+    # cadence) as of 2026-08-04 -- too many independent writers on one
+    # shared file was causing real, live collision-driven data loss.
+    # Handled as a special case in check_harvester_health below via
     # MERGED_SOURCE_KEYS, not via a real fname_tmpl here. Kept as inert
     # placeholders so the tier/expected_minutes metadata isn't lost.
-    "unabated":        ("betcouncil_evbets_combined.json",           30, "sharp"),
+    "unabated":        ("betcouncil_sharp_feeds.json",                30, "sharp"),
     "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
-    "underdog":        ("betcouncil_evbets_combined.json",           20, "props"),
+    "underdog":        ("betcouncil_sharp_feeds.json",                20, "props"),
     "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
     "polymarket":      ("betcouncil_sharptrack_live.json",           30, "signal"),
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
@@ -15939,7 +15942,7 @@ HARVESTER_REGISTRY = {
     "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
     "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
     "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
-    "sportsinsights":  ("betcouncil_evbets_combined.json",           15, "signal"),
+    "sportsinsights":  ("betcouncil_market_feeds.json",              15, "signal"),
     "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
@@ -16000,24 +16003,30 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     🔴 dead (>3x expected), or ⚫ never-seen (no captured_at data at all).
     Does not raise — a source that can't be checked is reported ⚫, not skipped.
     """
-    # Sources merged into the shared evbets_combined.json (their own
-    # standalone files were confirmed to never reliably land) -- each
-    # has its own nested captured_at per sport sub-key, not one
-    # meaningful top-level timestamp for the whole shared file.
-    MERGED_SOURCE_KEYS = {"unabated": "unabated", "underdog": "underdog", "sportsinsights": "sportsinsights"}
+    # Sources merged into a shared file (their own standalone files were
+    # confirmed to never reliably land) -- each has its own nested
+    # captured_at per sport sub-key, not one meaningful top-level
+    # timestamp for the whole shared file. Split across 3 files as of
+    # 2026-08-04 to reduce concurrent-writer collisions.
+    MERGED_SOURCE_KEYS = {
+        "unabated":       ("unabated", "betcouncil_sharp_feeds.json"),
+        "underdog":       ("underdog", "betcouncil_sharp_feeds.json"),
+        "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
+    }
 
     results = []
-    _combined_cache = None
+    _merged_file_cache = {}
     for name, (fname_tmpl, expected_min, tier) in HARVESTER_REGISTRY.items():
         if tier not in tiers:
             continue
         if name in MERGED_SOURCE_KEYS:
-            if _combined_cache is None:
+            merge_key, merged_fname = MERGED_SOURCE_KEYS[name]
+            if merged_fname not in _merged_file_cache:
                 try:
-                    _combined_cache = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5) or {}
+                    _merged_file_cache[merged_fname] = _read_gist_file(merged_fname, cache_minutes=5) or {}
                 except Exception:
-                    _combined_cache = {}
-            source_data = _combined_cache.get(MERGED_SOURCE_KEYS[name], {})
+                    _merged_file_cache[merged_fname] = {}
+            source_data = _merged_file_cache[merged_fname].get(merge_key, {})
             ages = []
             if isinstance(source_data, dict):
                 for sub in source_data.values():
@@ -16947,7 +16956,7 @@ def fetch_sportsinsights_trends_from_gist(sport: str, max_age_minutes: int = 60)
     Returns [] if no fresh data — treat as "no data," not "confirmed
     absent."
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
     data = (combined or {}).get("sportsinsights", {}).get(sport.upper(), {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("games", [])
@@ -17130,7 +17139,7 @@ def fetch_wiseguyteam_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     "wiseguyteam" key (standalone per-sport files confirmed to never
     successfully land on this Gist -- see scripts/wiseguyteam_refresh.py).
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=10)
     data = (combined or {}).get("wiseguyteam", {}).get(sport.upper())
     if not data or not isinstance(data, dict):
         return []
@@ -17197,7 +17206,7 @@ def fetch_theoddsgap_lines_from_gist(sport: str = None, max_age_minutes: int = 6
     the real best-book/best-odds structure (see normalize_game in
     scripts/theoddsgap_widget_refresh.py for the exact shape).
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
     data = (combined or {}).get("theoddsgap_lines", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17221,7 +17230,7 @@ def fetch_theoddsgap_edges_from_gist(sport: str = None, max_age_minutes: int = 6
     commence_time, link, mult?, mult_under?}. Filter by sport
     (e.g. "MLB") or pass None for all sports.
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
     data = (combined or {}).get("theoddsgap_edges", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17246,7 +17255,7 @@ def fetch_gamelinepicks_from_gist(sport: str = None, max_age_minutes: int = 60) 
     home_team, away_team, home_score, away_score}. Filter by sport
     (e.g. "MLB") or pass None for all sports.
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
     data = (combined or {}).get("gamelinepicks", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17756,7 +17765,7 @@ def fetch_underdog_from_gist(sport: str) -> tuple:
     (per-sport standalone files confirmed to never successfully land on
     this Gist -- see push_sport_files in underdog_ssr_scraper.py).
     SECONDARY: scraper."""
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=5)
     data = (combined or {}).get("underdog", {}).get(sport)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
@@ -19964,7 +19973,7 @@ def fetch_vsin_from_gist(sport: str = "MLB", max_age_minutes: int = 45) -> tuple
         {time, away_team, home_team, open: {spread,ml,total},
          books: {book_name: {spread, ml, total, spread_odds, ...}}}
     """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=10)
     data = (combined or {}).get("vsin_lines", {}).get(sport.upper()) if combined else None
     if not data or not isinstance(data, dict):
         return [], "unavailable"
@@ -20342,7 +20351,7 @@ def fetch_vsin_splits_from_gist(sport: str = "MLB", max_age_minutes: int = 35) -
     Returns [] on parse error or stale/missing file (not an error — caller handles
     empty gracefully). Sport filter is exact-match on the "sport" field.
     """
-    data = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=max_age_minutes)
+    data = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=max_age_minutes)
     if not data:
         return []
     data = data.get("vsin_splits", {})
