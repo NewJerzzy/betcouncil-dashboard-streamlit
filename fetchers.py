@@ -15918,11 +15918,17 @@ HARVESTER_REGISTRY = {
     "action_network":  ("betcouncil_actionnetwork_{sport}.json",     40, "signal"),
     "covers":          ("betcouncil_covers_{sport}.json",            20, "signal"),
     "dk_props":        ("betcouncil_dk_props_{sport}.json",          20, "props"),
-    "unabated":        ("betcouncil_unabated_{sport}.json",          30, "sharp"),
+    # NOTE: unabated/underdog/sportsinsights were redirected to merge into
+    # betcouncil_evbets_combined.json earlier this session (their own
+    # standalone files were confirmed to never reliably land) -- handled
+    # as a special case in check_harvester_health below via
+    # MERGED_SOURCE_KEYS, not via a real fname_tmpl here. Kept as inert
+    # placeholders so the tier/expected_minutes metadata isn't lost.
+    "unabated":        ("betcouncil_evbets_combined.json",           30, "sharp"),
     "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
-    "underdog":        ("betcouncil_underdog_{sport}.json",          20, "props"),
+    "underdog":        ("betcouncil_evbets_combined.json",           20, "props"),
     "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
     "polymarket":      ("betcouncil_sharptrack_live.json",           30, "signal"),
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
@@ -15933,7 +15939,7 @@ HARVESTER_REGISTRY = {
     "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
     "sleeper":         ("betcouncil_sleeper_{sport}.json",           30, "signal"),
     "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
-    "sportsinsights":  ("betcouncil_sportsinsights_{sport}.json",    15, "signal"),
+    "sportsinsights":  ("betcouncil_evbets_combined.json",           15, "signal"),
     "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
@@ -15943,7 +15949,6 @@ HARVESTER_REGISTRY = {
     "oddsportal":      ("betcouncil_oddsportal_{sport}.json",        300, "signal"),  # now ESPN opening-lines capture, once/day
     "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
     "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
-    "pickwise":        ("betcouncil_pickwise_{sport}.json",          20, "signal"),
     "scoresandodds":   ("betcouncil_scoresandodds_{sport}.json",     15, "signal"),
     "kalshi":          ("betcouncil_kalshi_{sport}.json",            30, "signal"),
     "pickswise":       ("betcouncil_pickswise_{sport}.json",         30, "signal"),
@@ -15995,16 +16000,39 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     🔴 dead (>3x expected), or ⚫ never-seen (no captured_at data at all).
     Does not raise — a source that can't be checked is reported ⚫, not skipped.
     """
+    # Sources merged into the shared evbets_combined.json (their own
+    # standalone files were confirmed to never reliably land) -- each
+    # has its own nested captured_at per sport sub-key, not one
+    # meaningful top-level timestamp for the whole shared file.
+    MERGED_SOURCE_KEYS = {"unabated": "unabated", "underdog": "underdog", "sportsinsights": "sportsinsights"}
+
     results = []
+    _combined_cache = None
     for name, (fname_tmpl, expected_min, tier) in HARVESTER_REGISTRY.items():
         if tier not in tiers:
             continue
-        fname = fname_tmpl.format(sport=sport) if "{sport}" in fname_tmpl else fname_tmpl
-        try:
-            data = _read_gist_file(fname, cache_minutes=5)
-        except Exception:
-            data = {}
-        age = _gist_data_age_minutes(data)
+        if name in MERGED_SOURCE_KEYS:
+            if _combined_cache is None:
+                try:
+                    _combined_cache = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5) or {}
+                except Exception:
+                    _combined_cache = {}
+            source_data = _combined_cache.get(MERGED_SOURCE_KEYS[name], {})
+            ages = []
+            if isinstance(source_data, dict):
+                for sub in source_data.values():
+                    if isinstance(sub, dict) and sub.get("captured_at"):
+                        a = _gist_data_age_minutes(sub)
+                        if a is not None:
+                            ages.append(a)
+            age = min(ages) if ages else None
+        else:
+            fname = fname_tmpl.format(sport=sport) if "{sport}" in fname_tmpl else fname_tmpl
+            try:
+                data = _read_gist_file(fname, cache_minutes=5)
+            except Exception:
+                data = {}
+            age = _gist_data_age_minutes(data)
         if age is None:
             status = "⚫"
         elif age <= expected_min:
