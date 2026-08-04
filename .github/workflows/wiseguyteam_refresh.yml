@@ -2,7 +2,7 @@ name: WiseGuyTeam Sharp Report Refresh
 
 on:
   schedule:
-    - cron: "13,33,53 * * * *"   # offset from :00/:20/:40 -- confirmed contended slot, likely cause of this script's persistent push failures
+    - cron: "14,34,54 * * * *"   # shifted off :33 -- was colliding with underdog's schedule (3,18,33,48) on the shared sharp_feeds.json file
   workflow_dispatch: {}
 
 jobs:
