@@ -380,7 +380,7 @@ def main() -> int:
     # all session. Rather than fight for a new slot, merge into the
     # shared_combined file (shared with evbets_refresh.py, which already
     # writes there successfully) as a sibling top-level key.
-    SHARED_FILE = "betcouncil_evbets_combined.json"
+    SHARED_FILE = "betcouncil_sharp_feeds.json"
     log(f"Merging into shared file '{SHARED_FILE}' (new-file creation confirmed unreliable on this gist)")
     try:
         r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
