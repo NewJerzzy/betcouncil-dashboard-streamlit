@@ -127,10 +127,10 @@ def global_css() -> str:
     .bc-card:hover {
         border-color: var(--bc-blue) !important;
     }
-    div[style*="border-radius:8px"] {
+    div[style*="border-radius:8px"], div[style*="border-radius:10px"], div[style*="border-radius:12px"] {
         transition: border-color 200ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms cubic-bezier(0.4,0,0.2,1);
     }
-    div[style*="border-radius:8px"]:hover {
+    div[style*="border-radius:8px"]:hover, div[style*="border-radius:10px"]:hover, div[style*="border-radius:12px"]:hover {
         border-color: var(--bc-blue) !important;
         box-shadow: 0 0 10px rgba(30,144,255,0.15);
     }
