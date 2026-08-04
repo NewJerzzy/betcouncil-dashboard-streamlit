@@ -90,12 +90,19 @@ def fetch_sport_trends(sport: str, sport_id: int) -> list:
 
 def push_files(files_payload: dict, github_token: str) -> int:
     """
-    Confirmed real bug (2026-08-03): standalone betcouncil_sportsinsights_*.json filenames
-    were confirmed to never once land on this Gist (same proven-
-    unreliable new-file-creation pattern already fixed for Underdog/
-    WiseGuyTeam/Unabated/VSIN/Sackmann Tennis this session). Merges into
-    the already-reliable, actively-updating betcouncil_evbets_combined.json
-    under a "sportsinsights" key instead.
+    Merges into the shared evbets_combined.json.
+
+    UPDATED (2026-08-03): confirmed a real, live production data-loss
+    race -- multiple scripts merge into the same shared file on
+    independent cron schedules, and a full read-modify-write cycle
+    means one script's write can silently clobber another's just-
+    written key if their timing overlaps (confirmed happening for
+    real: wagerbird/sportsinsights/unabated all independently observed
+    missing after other scripts' writes landed in between). Added an
+    outer retry: after a successful write, re-read and verify no
+    previously-present key vanished (not just that OUR key landed) --
+    if one did, redo the entire read-modify-write cycle from a fresh
+    read, up to 3 times total.
     """
     SHARED_FILE = "betcouncil_evbets_combined.json"
     merged = {}
@@ -106,47 +113,74 @@ def push_files(files_payload: dict, github_token: str) -> int:
         except Exception:
             merged[key] = fbody["content"]
 
-    try:
-        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
-                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-                          timeout=15)
-        r_files = r.json().get("files", {})
-        if SHARED_FILE in r_files:
-            raw_url = r_files[SHARED_FILE]["raw_url"]
-            existing = requests.get(raw_url, timeout=15).json()
-        else:
+    for outer_attempt in range(3):
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
             existing = {}
-    except Exception as e:
-        log(f"Could not read existing shared file, starting fresh: {e}")
-        existing = {}
-    existing["sportsinsights"] = merged
-    shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+        pre_write_keys = set(existing.keys())
+        existing["sportsinsights"] = merged
+        shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
 
-    for attempt in range(5):
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": shared_payload}, timeout=30,
-        )
-        if resp.status_code in (200, 201):
-            returned_files = resp.json().get("files", {}) or {}
-            if SHARED_FILE in returned_files:
-                return len(files_payload)
-            if attempt < 4:
-                wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {SHARED_FILE} missing from response -- retrying in {wait}s")
+        write_ok = False
+        for attempt in range(5):
+            resp = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": shared_payload}, timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                returned_files = resp.json().get("files", {}) or {}
+                if SHARED_FILE in returned_files:
+                    write_ok = True
+                    break
+                if attempt < 4:
+                    wait = min((attempt + 1) * 5, 30)
+                    log(f"Push returned 200 but {SHARED_FILE} missing from response -- retrying in {wait}s")
+                    time.sleep(wait)
+                    continue
+                log(f"Push returned 200 but {SHARED_FILE} still missing after retries -- treating as failed")
+                return 0
+            if resp.status_code in (403, 429, 409) and attempt < 4:
+                base_wait = min(10 * (2 ** attempt), 90)
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
                 time.sleep(wait)
                 continue
-            log(f"Push returned 200 but {SHARED_FILE} still missing after retries -- treating as failed")
+            log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
             return 0
-        if resp.status_code in (403, 429, 409) and attempt < 4:
-            base_wait = min(10 * (2 ** attempt), 90)
-            wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
-            time.sleep(wait)
-            continue
-        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
-        return 0
+
+        if not write_ok:
+            return 0
+
+        # Verify no previously-present key vanished (a concurrent writer's
+        # stale read clobbering our just-written state).
+        try:
+            time.sleep(2)
+            r2 = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                               headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                               timeout=15)
+            raw_url2 = r2.json().get("files", {}).get(SHARED_FILE, {}).get("raw_url")
+            post_write = requests.get(raw_url2, timeout=15).json() if raw_url2 else {}
+            post_write_keys = set(post_write.keys())
+            lost_keys = pre_write_keys - post_write_keys - {"sportsinsights"}
+            if "sportsinsights" in post_write_keys and not lost_keys:
+                return len(files_payload)
+            log(f"Post-write verification found lost keys {lost_keys} or missing own key -- retrying full cycle (outer attempt {outer_attempt+1}/3)")
+        except Exception as e:
+            log(f"Post-write verification failed to check: {e} -- treating write as successful anyway")
+            return len(files_payload)
+
+    log("Gave up after 3 full read-modify-write cycles -- concurrent writers kept colliding")
     return 0
 
 
