@@ -122,59 +122,92 @@ def push_sport_files(by_sport: dict) -> int:
     # WiseGuyTeam, Unabated, VSIN). Merging into the already-existing,
     # actively-written betcouncil_evbets_combined.json instead, under an
     # "underdog" key -- the same fix that already worked for VSIN splits.
+    #
+    # UPDATED (2026-08-03): confirmed a real, live production data-loss
+    # race -- multiple scripts merge into this same shared file on
+    # independent cron schedules, and one script's write can silently
+    # clobber another's just-written key if their timing overlaps.
+    # Added an outer retry: after a successful write, verify no
+    # previously-present key vanished, and redo the whole cycle from a
+    # fresh read if one did, up to 3 times total.
     SHARED_FILE = "betcouncil_evbets_combined.json"
     merged_payload = {sport_key: {
         "sport": sport_key, "captured_at": now_iso, "data": body,
         "source": "github_actions_public_api",
     } for sport_key, body in by_sport.items()}
 
-    try:
-        r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
-                          headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-                          timeout=15)
-        r_files = r.json().get("files", {})
-        if SHARED_FILE in r_files:
-            raw_url = r_files[SHARED_FILE]["raw_url"]
-            existing = requests.get(raw_url, timeout=15).json()
-        else:
+    for outer_attempt in range(3):
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
             existing = {}
-    except Exception as e:
-        log(f"Could not read existing shared file, starting fresh: {e}")
-        existing = {}
-    existing["underdog"] = merged_payload
-    content = json.dumps(existing)
-    files_payload = {SHARED_FILE: {"content": content}}
+        pre_write_keys = set(existing.keys())
+        existing["underdog"] = merged_payload
+        content = json.dumps(existing)
+        files_payload = {SHARED_FILE: {"content": content}}
 
-    for attempt in range(4):
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={
-                "Authorization": f"Bearer {github_token}",
-                "Accept": "application/vnd.github+json",
-            },
-            json={"files": files_payload},
-            timeout=30,
-        )
-        if resp.status_code in (200, 201):
-            returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
-                wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+        write_ok = False
+        for attempt in range(4):
+            resp = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={"files": files_payload},
+                timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                returned_files = resp.json().get("files", {}) or {}
+                missing = [fn for fn in files_payload if fn not in returned_files]
+                if missing and attempt < 4:
+                    wait = min((attempt + 1) * 5, 30)
+                    log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+                    time.sleep(wait)
+                    continue
+                if missing:
+                    log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
+                    return 0
+                write_ok = True
+                break
+            if resp.status_code in (409, 403, 429) and attempt < 3:
+                base_wait = (attempt + 1) * 8
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return 0
+            log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            return 0
+
+        if not write_ok:
+            return 0
+
+        try:
+            time.sleep(2)
+            r2 = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                               headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                               timeout=15)
+            raw_url2 = r2.json().get("files", {}).get(SHARED_FILE, {}).get("raw_url")
+            post_write = requests.get(raw_url2, timeout=15).json() if raw_url2 else {}
+            post_write_keys = set(post_write.keys())
+            lost_keys = pre_write_keys - post_write_keys - {"underdog"}
+            if "underdog" in post_write_keys and not lost_keys:
+                return len(by_sport)
+            log(f"Post-write verification found lost keys {lost_keys} or missing own key -- retrying full cycle (outer attempt {outer_attempt+1}/3)")
+        except Exception as e:
+            log(f"Post-write verification failed to check: {e} -- treating write as successful anyway")
             return len(by_sport)
-        if resp.status_code in (409, 403, 429) and attempt < 3:
-            base_wait = (attempt + 1) * 8
-            wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist {resp.status_code} (conflict or rate limit) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
-            time.sleep(wait)
-            continue
-        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
-        return 0
+
+    log("Gave up after 3 full read-modify-write cycles -- concurrent writers kept colliding")
     return 0
 
 
