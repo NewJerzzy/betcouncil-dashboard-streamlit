@@ -12788,8 +12788,37 @@ with tabs[2]:
     def _pred_sport_match(s):
         return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
 
+    # Abbreviation -> full team name, so substring matching works no matter
+    # which name format a given source uses (bare mascot like "Phillies",
+    # city-only, or full name) -- the full name contains all of them as
+    # substrings. Confirmed real bug: the existing TEAM_ABBREV_TO_FRAGMENT
+    # only disambiguates city vs city (built for a different matching
+    # scenario), so e.g. "PHI"->"Philadelphia" never matched WiseGuyTeam's
+    # bare "Phillies" and silently broke grouping for most MLB games.
+    _PRED_MLB_FULL_NAMES = {
+        "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
+        "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CWS": "Chicago White Sox",
+        "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
+        "DET": "Detroit Tigers", "HOU": "Houston Astros", "KC": "Kansas City Royals",
+        "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers", "MIA": "Miami Marlins",
+        "MIL": "Milwaukee Brewers", "MIN": "Minnesota Twins", "NYM": "New York Mets",
+        "NYY": "New York Yankees", "OAK": "Athletics", "ATH": "Athletics",
+        "PHI": "Philadelphia Phillies", "PIT": "Pittsburgh Pirates", "SD": "San Diego Padres",
+        "SEA": "Seattle Mariners", "SF": "San Francisco Giants", "STL": "St. Louis Cardinals",
+        "TB": "Tampa Bay Rays", "TEX": "Texas Rangers", "TOR": "Toronto Blue Jays",
+        "WSH": "Washington Nationals",
+    }
+
     def _pred_norm_team(s):
-        return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+        raw = str(s or "").strip()
+        if 2 <= len(raw) <= 3 and raw.isupper() and raw in _PRED_MLB_FULL_NAMES:
+            raw = _PRED_MLB_FULL_NAMES[raw]
+        elif 2 <= len(raw) <= 4 and raw.isupper():
+            for _sport_map in TEAM_ABBREV_TO_FRAGMENT.values():
+                if raw in _sport_map:
+                    raw = _sport_map[raw]
+                    break
+        return re.sub(r"[^a-z0-9]", "", raw.lower())
 
     def _pred_teams_match(a, b):
         na, nb = _pred_norm_team(a), _pred_norm_team(b)
@@ -13044,10 +13073,12 @@ with tabs[2]:
     def _pred_pick_line(it):
         """Builds 'UNDER 29.5 Points' -- falls back gracefully when a
         source's prop string already has the number baked in (Gambling-
-        Forecast) or a line genuinely isn't available."""
-        if it.get("line") not in (None, ""):
-            return f'{it["pick"]} {it["line"]} {it["prop"]}'
-        return f'{it["pick"]} {it["prop"]}'
+        Forecast) or a line genuinely isn't available. Appends the
+        source's own real signal (projDiff/projection/grade) when
+        present -- previously captured into "note" but never displayed."""
+        base = f'{it["pick"]} {it["line"]} {it["prop"]}' if it.get("line") not in (None, "") else f'{it["pick"]} {it["prop"]}'
+        _note = it.get("note", "")
+        return f"{base} ({_note})" if _note else base
 
     # ══════════════════════════════════════════════════════════════════
     # RENDER — Player Props as cards (BettingPros-app style): headshot
