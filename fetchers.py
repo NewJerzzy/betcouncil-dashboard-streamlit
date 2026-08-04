@@ -17183,6 +17183,56 @@ def fetch_espn_team_logos(sport: str) -> dict:
         return {}
 
 
+def fetch_theoddsgap_lines_from_gist(sport: str = None, max_age_minutes: int = 60) -> list:
+    """
+    theoddsgap.com best-book-per-market game lines (ML/spread/total),
+    19 books including Kalshi/Polymarket/ProphetX. Confirmed live
+    2026-08-04, real no-auth endpoint. Confirmed real bug in the
+    original spec: the API's own ?sport= and &limit= query params are
+    silently ignored -- the scraper fetches everything and this
+    function filters by sport client-side instead.
+
+    Returns a list of {away, home, sport, time_display, commence_time,
+    ml, spread, total} where ml/spread/total are None or a dict with
+    the real best-book/best-odds structure (see normalize_game in
+    scripts/theoddsgap_widget_refresh.py for the exact shape).
+    """
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("theoddsgap_lines", {})
+    if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
+        return []
+    games = data.get("games", [])
+    if not isinstance(games, list):
+        return []
+    if sport:
+        return [g for g in games if g.get("sport", "").upper() == sport.upper()]
+    return games
+
+
+def fetch_theoddsgap_edges_from_gist(sport: str = None, max_age_minutes: int = 60) -> list:
+    """
+    theoddsgap.com DFS edges -- PrizePicks/Underdog/DK Pick6/Betr
+    pick'em lines graded against real sportsbook market lines, with an
+    estimated win% per pick. Confirmed live 2026-08-04 via GH Actions
+    (generated_at matched real request time), real no-auth endpoint.
+
+    Returns a list of {app, app_key, app_line, market_line, market,
+    market_label, player, side, kind, win_pct, event, sport,
+    commence_time, link, mult?, mult_under?}. Filter by sport
+    (e.g. "MLB") or pass None for all sports.
+    """
+    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
+    data = (combined or {}).get("theoddsgap_edges", {})
+    if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
+        return []
+    edges = data.get("edges", [])
+    if not isinstance(edges, list):
+        return []
+    if sport:
+        return [e for e in edges if e.get("sport", "").upper() == sport.upper()]
+    return edges
+
+
 def fetch_gamelinepicks_from_gist(sport: str = None, max_age_minutes: int = 60) -> list:
     """
     GameLinePicks.com +EV moneyline picks -- confirmed live 2026-08-04,
