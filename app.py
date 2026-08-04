@@ -195,7 +195,10 @@ with tabs[0]:
     # not every source that's been dead for weeks).
     try:
         _hb_alerts = []
-        for _hb_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA"):
+        _hb_sports = ["MLB", "NBA", "NFL", "WNBA"]
+        if datetime.now().month not in (7, 8, 9):  # NHL's real season runs Oct-June
+            _hb_sports.append("NHL")
+        for _hb_sport in _hb_sports:
             _hb_alerts.extend(get_harvester_alerts(_hb_sport, persist=True))
         if _hb_alerts:
             _hb_names = ", ".join(sorted(set(a["name"] for a in _hb_alerts))[:6])
