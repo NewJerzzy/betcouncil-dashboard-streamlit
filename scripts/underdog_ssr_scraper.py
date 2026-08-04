@@ -130,7 +130,7 @@ def push_sport_files(by_sport: dict) -> int:
     # Added an outer retry: after a successful write, verify no
     # previously-present key vanished, and redo the whole cycle from a
     # fresh read if one did, up to 3 times total.
-    SHARED_FILE = "betcouncil_evbets_combined.json"
+    SHARED_FILE = "betcouncil_sharp_feeds.json"
     merged_payload = {sport_key: {
         "sport": sport_key, "captured_at": now_iso, "data": body,
         "source": "github_actions_public_api",
