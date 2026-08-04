@@ -12788,6 +12788,26 @@ with tabs[2]:
         except Exception:
             pass
 
+    try:
+        for g in fetch_gamelinepicks_from_gist():
+            if not _pred_sport_match(g.get("sport", "")):
+                continue
+            _glp_conf = g.get("confidence")
+            _glp_conf_str = "⭐" * int(_glp_conf) if _glp_conf else ""
+            _glp_text = f"{g.get('pick','')} ({g.get('odds','')}) via {g.get('bookmaker','')} · EV {g.get('ev',0):+.1%} {_glp_conf_str}"
+            _glp_result = g.get("result")
+            if _glp_result and _glp_result not in ("expired",):
+                _glp_pu = g.get("profit_units")
+                if _glp_pu is not None:
+                    _glp_text += f" · {_glp_result.upper()} ({_glp_pu:+.1f}u)"
+            _pred_gl_items.append({
+                "sport": g.get("sport", ""), "away": g.get("away_team", "") or g.get("game", "").split(" @ ")[0],
+                "home": g.get("home_team", "") or (g.get("game", "").split(" @ ")[-1] if " @ " in g.get("game", "") else ""),
+                "source": "GameLinePicks", "text": _glp_text
+            })
+    except Exception:
+        pass
+
     # ── GROUP game-line items by matchup (fuzzy team-name match across
     # sources' differing formats: abbreviations, full names, partials) ──
     _pred_gl_groups = []
