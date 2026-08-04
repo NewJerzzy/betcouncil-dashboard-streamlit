@@ -7980,8 +7980,8 @@ with tabs[7]:
                     _tier_color = TIER_COLORS.get(_tier_val, "#6a7a8a")
                     _tier_badge = (
                         f'<span style="background:{_tier_color}22;color:{_tier_color};'
-                        f'border:1px solid {_tier_color};border-radius:4px;padding:1px 6px;'
-                        f'font-size:11px;font-weight:700;margin-right:6px;">{_tier_val}</span>'
+                        f'border:1px solid {_tier_color};border-radius:5px;padding:3px 9px;'
+                        f'font-size:13px;font-weight:700;margin-right:6px;">{_tier_val}</span>'
                     )
                     st.markdown(
                         f'<div style="padding:6px 0;">'
