@@ -29,6 +29,9 @@ import time
 from datetime import datetime, timezone
 
 import requests
+import sys, os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 API_URL = "https://gamelinepicks.com/api/picks/today"
@@ -167,6 +170,13 @@ def main() -> int:
     if not github_token:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
+
+    import atexit
+    _lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="gamelinepicks")
+    if not _lock_token:
+        log("Could not acquire market_feeds lock after retries -- skipping this run to avoid a collision")
+        return 1
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "market_feeds", _lock_token))
 
     try:
         raw_picks = fetch_picks()
