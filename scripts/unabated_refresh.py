@@ -256,7 +256,7 @@ def push_files(files_payload: dict, github_token: str) -> int:
     if one did, redo the entire read-modify-write cycle from a fresh
     read, up to 3 times total.
     """
-    SHARED_FILE = "betcouncil_evbets_combined.json"
+    SHARED_FILE = "betcouncil_sharp_feeds.json"
     merged = {}
     for fname, fbody in files_payload.items():
         key = fname.replace("betcouncil_unabated_", "").replace(".json", "")
