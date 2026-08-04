@@ -2411,6 +2411,15 @@ with tabs[4]:
         _html_rows = []
         _lock_buttons = []  # collect lock actions outside HTML
         _prev_tier_group = None
+        try:
+            _og_edges_table = fetch_theoddsgap_edges_from_gist()
+        except Exception:
+            _og_edges_table = []
+        def _og_table_match(player_name):
+            target = normalize_name(player_name)
+            if not target:
+                return None
+            return next((e for e in _og_edges_table if normalize_name(e.get("player","")) == target), None)
         for _r in (_rows if _view_mode != "Cards" else []):
             if _r.get("_tier") != _prev_tier_group:
                 _prev_tier_group = _r.get("_tier")
@@ -2520,12 +2529,26 @@ with tabs[4]:
                 _evs_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
                              f'background:{_evs_col};font-size:8px;font-weight:700;color:#ffffff;'
                              f'text-align:center;line-height:13px;margin-right:2px;" title="{_evs_title}">E</span>')
+            _og_match_row = _og_table_match(_r.get("_player", ""))
+            if _og_match_row is None:
+                _og_dot = ('<span style="display:inline-block;width:13px;height:13px;'
+                           'border-radius:50%;border:1.5px solid var(--bc-border);'
+                           'background:transparent;margin-right:2px;" '
+                           'title="O: no theoddsgap data for this player"></span>')
+            else:
+                _og_gap_row = (_og_match_row.get("market_line", 0) or 0) - (_og_match_row.get("app_line", 0) or 0)
+                _og_col = "#22c55e" if _og_gap_row > 0 else ("#e04040" if _og_gap_row < 0 else "var(--bc-border)")
+                _og_title = (f"O: {_og_match_row.get('app','')} {_og_match_row.get('app_line','')} vs mkt "
+                             f"{_og_match_row.get('market_line','')} (gap {_og_gap_row:+.1f}) · {_og_match_row.get('win_pct','?')}% win")
+                _og_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
+                           f'background:{_og_col};font-size:8px;font-weight:700;color:#ffffff;'
+                           f'text-align:center;line-height:13px;margin-right:2px;" title="{_og_title}">O</span>')
             _cons_bar = "".join([
                 f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
                 f'background:{col};font-size:8px;font-weight:700;color:#ffffff;'
                 f'text-align:center;line-height:13px;margin-right:2px;" title="{lbl}">{lbl[0]}</span>'
                 for lbl, col in _cons_sources
-            ]) + _unab_dot + _evs_dot + _lt_dot
+            ]) + _unab_dot + _evs_dot + _lt_dot + _og_dot
             # Filled bar count for % display
             _filled = sum(1 for _, c in _cons_sources if c != "var(--bc-border)")
             _cons_pct = int(_filled / len(_cons_sources) * 100)
@@ -8590,6 +8613,27 @@ with tabs[8]:
                             f"AVG: {_gf_matchup.get('avg','?')}  OBP: {_gf_matchup.get('obp','?')}  "
                             f"SLG: {_gf_matchup.get('slg','?')}  OPS: {_gf_matchup.get('ops','?')}"
                         )
+
+            # theoddsgap DFS Market Edge -- PrizePicks/Underdog/DK Pick6/Betr
+            # pick'em line graded against the real sportsbook market line for
+            # this exact player, if one exists. Not sport-restricted like the
+            # MLB-only sources above.
+            try:
+                _og_all_players = fetch_theoddsgap_edges_from_gist()
+                _og_pl_target = normalize_name(pl_name_d)
+                _og_pl_match = next((e for e in _og_all_players if normalize_name(e.get("player","")) == _og_pl_target), None)
+            except Exception:
+                _og_pl_match = None
+            if _og_pl_match:
+                _og_pl_gap = (_og_pl_match.get("market_line", 0) or 0) - (_og_pl_match.get("app_line", 0) or 0)
+                _og_pl_gob = "🎯 Goblin — " if _og_pl_match.get("kind") == "goblin" else ""
+                with st.expander(f"🔭 theoddsgap Market Edge ({_og_pl_match.get('app','')})", expanded=False):
+                    st.caption(
+                        f"{_og_pl_gob}{_og_pl_match.get('market_label','')}: app set {_og_pl_match.get('app_line','')} "
+                        f"{_og_pl_match.get('side','')}, market fair value {_og_pl_match.get('market_line','')} "
+                        f"(gap {_og_pl_gap:+.1f}) · estimated {_og_pl_match.get('win_pct','?')}% win"
+                    )
+                    st.caption(f"{_og_pl_match.get('event','')} · {_og_pl_match.get('commence_time','')[:16]}")
 
             # BettingPros hit-rate/streak trend data -- covers all 5
             # sports this source has (MLB/NBA/NHL/WNBA/NFL).
