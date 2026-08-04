@@ -263,7 +263,7 @@ def push_merged_to_gist(accumulated: dict) -> bool:
     if not GITHUB_TOKEN:
         log("ERROR: GITHUB_TOKEN not set")
         return False
-    SHARED_FILE = "betcouncil_evbets_combined.json"
+    SHARED_FILE = "betcouncil_sharp_feeds.json"
 
     for outer_attempt in range(3):
         try:
