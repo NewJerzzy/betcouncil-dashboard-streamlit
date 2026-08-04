@@ -22,6 +22,8 @@ import os
 import re
 import sys
 import urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 from datetime import datetime, timezone
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
@@ -439,4 +441,13 @@ def run():
 
 
 if __name__ == "__main__":
+    import atexit
+    if not GITHUB_TOKEN:
+        log("ERROR: GITHUB_TOKEN not set")
+        sys.exit(1)
+    _lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", holder="vsin_harvester")
+    if not _lock_token:
+        log("Could not acquire sharp_feeds lock after retries -- skipping this run to avoid a collision")
+        sys.exit(1)
+    atexit.register(lambda: release_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", _lock_token))
     run()
