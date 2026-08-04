@@ -2349,11 +2349,30 @@ with tabs[4]:
         if _view_mode == "Cards":
             _tier_badge_colors = {"SOVEREIGN": "#f5c518", "ELITE": "#1e90ff", "APPROVED": "#3ac47d", "LEAN": "#8ab4d4"}
             _cards_per_row = 3
+            try:
+                _og_edges_all = fetch_theoddsgap_edges_from_gist()
+            except Exception:
+                _og_edges_all = []
+            def _og_edge_match(player_name):
+                target = normalize_name(player_name)
+                if not target:
+                    return None
+                return next((e for e in _og_edges_all if normalize_name(e.get("player","")) == target), None)
             for _ci in range(0, len(_rows), _cards_per_row):
                 _card_cols = st.columns(_cards_per_row)
                 for _cj, _rc in enumerate(_rows[_ci:_ci + _cards_per_row]):
                     with _card_cols[_cj]:
                         _tbc = _tier_badge_colors.get(_rc.get("_tier", ""), "#6a7a8a")
+                        _og_match = _og_edge_match(_rc.get("_player", ""))
+                        _og_edge_html = ""
+                        if _og_match:
+                            _og_gap = (_og_match.get("market_line", 0) or 0) - (_og_match.get("app_line", 0) or 0)
+                            _og_gob = "🎯 " if _og_match.get("kind") == "goblin" else ""
+                            _og_edge_html = (
+                                f'<div style="color:var(--bc-dim);font-size:10.5px;margin-top:6px;border-top:1px solid var(--bc-bg2);padding-top:6px;">'
+                                f'{_og_gob}Market Edge ({_og_match.get("app","")}): {_og_match.get("app_line","")} vs mkt {_og_match.get("market_line","")} '
+                                f'(gap {_og_gap:+.1f}) · {_og_match.get("win_pct","?")}% win</div>'
+                            )
                         st.markdown(
                             f'<div style="background:var(--bc-bg-card);border:1px solid {_tbc}44;'
                             f'border-radius:10px;padding:12px 14px;margin-bottom:12px;min-height:190px;">'
@@ -2376,6 +2395,7 @@ with tabs[4]:
                             f'</div>'
                             f'<div style="color:var(--bc-dim);font-size:11px;margin-top:8px;">'
                             f'L5 {_rc.get("_l5","—")} · L10 {_rc.get("_l10","—")} · Szn {_rc.get("_szn","—")}</div>'
+                            + _og_edge_html +
                             f'</div>',
                             unsafe_allow_html=True
                         )
@@ -3649,6 +3669,29 @@ with tabs[3]:
                 f'</div>',
                 unsafe_allow_html=True
             )
+            try:
+                def _og_match(a, b):
+                    na = re.sub(r"[^a-z0-9]", "", str(a or "").lower())
+                    nb = re.sub(r"[^a-z0-9]", "", str(b or "").lower())
+                    return bool(na and nb and (na in nb or nb in na))
+                _og_game = next((g2 for g2 in fetch_theoddsgap_lines_from_gist(_gsport)
+                                  if _og_match(g2.get("home",""), _g.get("home","")) and
+                                     _og_match(g2.get("away",""), _g.get("away",""))), None)
+                if _og_game:
+                    _og_parts = []
+                    _og_ml = _og_game.get("ml")
+                    if _og_ml:
+                        _og_parts.append(f"ML: {_og_ml.get('away_best',{}).get('label','')} {_og_ml.get('away_best',{}).get('odds','')} / {_og_ml.get('home_best',{}).get('label','')} {_og_ml.get('home_best',{}).get('odds','')} ({_og_ml.get('n_books','?')} books)")
+                    _og_sp = _og_game.get("spread")
+                    if _og_sp:
+                        _og_parts.append(f"Spread {_og_sp.get('line','')}: {_og_sp.get('home_best',{}).get('label','')} {_og_sp.get('home_best',{}).get('odds','')}")
+                    _og_tot = _og_game.get("total")
+                    if _og_tot:
+                        _og_parts.append(f"O/U {_og_tot.get('line','')}: {_og_tot.get('over_best',{}).get('label','')} {_og_tot.get('over_best',{}).get('odds','')} / {_og_tot.get('under_best',{}).get('label','')} {_og_tot.get('under_best',{}).get('odds','')}")
+                    if _og_parts:
+                        st.caption("🔭 theoddsgap (19 books incl. Kalshi/Polymarket/ProphetX): " + " · ".join(_og_parts))
+            except Exception:
+                pass
             # 3-column picks
             _pc1, _pc2, _pc3, _pc4 = st.columns(4)
             for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3,_pc4], _picks)):
