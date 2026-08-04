@@ -251,59 +251,97 @@ def push_merged_to_gist(accumulated: dict) -> bool:
     symptom: this Gist reliably cannot create brand-new filenames.
     Merges into the already-existing, actively-written
     betcouncil_evbets_combined.json under a "vsin_lines" key instead.
+
+    UPDATED (2026-08-03): confirmed a real, live production data-loss
+    race -- multiple scripts merge into this same shared file on
+    independent cron schedules, and one script's write can silently
+    clobber another's just-written key if their timing overlaps.
+    Added an outer retry: after a successful write, verify no
+    previously-present key vanished, and redo the whole cycle from a
+    fresh read if one did, up to 3 times total.
     """
     if not GITHUB_TOKEN:
         log("ERROR: GITHUB_TOKEN not set")
         return False
     SHARED_FILE = "betcouncil_evbets_combined.json"
-    try:
-        req = urllib.request.Request(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            listing = json.loads(r.read())
-        r_files = listing.get("files", {})
-        if SHARED_FILE in r_files:
-            raw_url = r_files[SHARED_FILE]["raw_url"]
-            with urllib.request.urlopen(raw_url, timeout=15) as r2:
-                existing = json.loads(r2.read())
-        else:
-            existing = {}
-    except Exception as e:
-        log(f"Could not read existing shared file, starting fresh: {e}")
-        existing = {}
-    existing["vsin_lines"] = accumulated
-    body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing)}}}).encode()
 
-    for attempt in range(4):
-        req = urllib.request.Request(
-            f"https://api.github.com/gists/{GIST_ID}",
-            data=body,
-            method="PATCH",
-            headers={
-                "Authorization": f"token {GITHUB_TOKEN}",
-                "Accept":        "application/vnd.github.v3+json",
-                "Content-Type":  "application/json",
-            }
-        )
+    for outer_attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                if r.status != 200:
-                    return False
-                resp_body = json.loads(r.read())
-                if SHARED_FILE in (resp_body.get("files") or {}):
-                    return True
-                log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
-        except urllib.error.HTTPError as e:
-            if e.code not in (403, 429, 409) or attempt >= 3:
-                log(f"  Gist push failed: HTTP {e.code}")
-                return False
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                listing = json.loads(r.read())
+            r_files = listing.get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                with urllib.request.urlopen(raw_url, timeout=15) as r2:
+                    existing = json.loads(r2.read())
+            else:
+                existing = {}
         except Exception as e:
-            log(f"  Gist push failed: {e}")
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        pre_write_keys = set(existing.keys())
+        existing["vsin_lines"] = accumulated
+        body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing)}}}).encode()
+
+        write_ok = False
+        for attempt in range(4):
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}",
+                data=body,
+                method="PATCH",
+                headers={
+                    "Authorization": f"token {GITHUB_TOKEN}",
+                    "Accept":        "application/vnd.github.v3+json",
+                    "Content-Type":  "application/json",
+                }
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    if r.status != 200:
+                        return False
+                    resp_body = json.loads(r.read())
+                    if SHARED_FILE in (resp_body.get("files") or {}):
+                        write_ok = True
+                        break
+                    log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
+            except urllib.error.HTTPError as e:
+                if e.code not in (403, 429, 409) or attempt >= 3:
+                    log(f"  Gist push failed: HTTP {e.code}")
+                    return False
+            except Exception as e:
+                log(f"  Gist push failed: {e}")
+                return False
+            if attempt < 3:
+                import time as _t
+                _t.sleep(8 * (attempt + 1))
+
+        if not write_ok:
             return False
-        if attempt < 3:
+
+        try:
             import time as _t
-            _t.sleep(8 * (attempt + 1))
+            _t.sleep(2)
+            req3 = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req3, timeout=15) as r3:
+                listing2 = json.loads(r3.read())
+            raw_url2 = listing2.get("files", {}).get(SHARED_FILE, {}).get("raw_url")
+            with urllib.request.urlopen(raw_url2, timeout=15) as r4:
+                post_write = json.loads(r4.read())
+            post_write_keys = set(post_write.keys())
+            lost_keys = pre_write_keys - post_write_keys - {"vsin_lines"}
+            if "vsin_lines" in post_write_keys and not lost_keys:
+                return True
+            log(f"  Post-write verification found lost keys {lost_keys} or missing own key -- retrying full cycle (outer attempt {outer_attempt+1}/3)")
+        except Exception as e:
+            log(f"  Post-write verification failed to check: {e} -- treating write as successful anyway")
+            return True
+
+    log("  Gave up after 3 full read-modify-write cycles -- concurrent writers kept colliding")
     return False
 
 
