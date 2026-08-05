@@ -7,30 +7,30 @@ def main():
     result = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                "Referer": "https://umpscorecards.com/"}
-    try:
-        r = requests.get("https://umpscorecards.com/api/games", headers=headers, timeout=60)
-        result["status"] = r.status_code
-        result["len"] = len(r.text)
-        data = r.json()
-        rows = data.get("rows", data) if isinstance(data, dict) else data
-        result["is_dict"] = isinstance(data, dict)
-        result["top_level_keys"] = list(data.keys()) if isinstance(data, dict) else "N/A (list)"
-        result["num_rows"] = len(rows) if isinstance(rows, list) else "N/A"
-        if isinstance(rows, list) and rows:
-            result["sample_row_0"] = rows[0]
-            result["sample_row_keys"] = list(rows[0].keys())
-            # find a row for Mike Muchlinski specifically (the cited example)
-            muchlinski_rows = [row for row in rows if "muchlinski" in str(row.get("umpire","")).lower()]
-            result["muchlinski_sample_count"] = len(muchlinski_rows)
-            if muchlinski_rows:
-                result["muchlinski_sample"] = muchlinski_rows[:3]
-    except Exception as e:
-        result["error"] = str(e)[:500]
+    # Try common filter param names to get a smaller response
+    urls_to_try = [
+        "https://umpscorecards.com/api/games?team=NYY",
+        "https://umpscorecards.com/api/games?home_team=NYY",
+        "https://umpscorecards.com/api/games?limit=5",
+        "https://umpscorecards.com/api/games?page=1&per_page=5",
+    ]
+    for url in urls_to_try:
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            result[url] = {"status": r.status_code, "len": len(r.text)}
+            if len(r.text) < 500000:  # only try to parse if reasonably small
+                data = r.json()
+                rows = data.get("rows", data) if isinstance(data, dict) else data
+                if isinstance(rows, list) and rows:
+                    result[url]["num_rows"] = len(rows)
+                    result[url]["sample_row_0"] = rows[0]
+        except Exception as e:
+            result[url] = {"error": str(e)[:200]}
 
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_oddsapiio_bovada_props_debug.json": {"content": json.dumps({"note": "TEMP umpscorecards games structure", "result": result}, default=str)}}},
+        json={"files": {"betcouncil_oddsapiio_bovada_props_debug.json": {"content": json.dumps({"note": "TEMP ump games filtered test", "result": result}, default=str)}}},
     )
     print("push:", resp.status_code)
     return 0
