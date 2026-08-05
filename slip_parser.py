@@ -499,7 +499,7 @@ def parse_pp_board_paste(text: str) -> list:
         cleaned.append(l)
 
     _PLAYER_HEADER_RE = re.compile(r"^(.+?)\s*-\s*Player$", re.IGNORECASE)
-    _TEAM_HEADER_RE = re.compile(r"^([A-Z]{2,4})\s*-\s*([A-Z](?:-[A-Z])?)$")
+    _TEAM_HEADER_RE = re.compile(r"^([A-Z]{2,4})\s*-\s*([A-Z0-9]{1,3})$")
 
     props = []
     i = 0
