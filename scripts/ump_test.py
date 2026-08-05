@@ -30,7 +30,7 @@ def main():
     resp = requests.patch(
         f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP umpscorecards games structure", "result": result}, default=str)}}},
+        json={"files": {"betcouncil_oddsapiio_bovada_props_debug.json": {"content": json.dumps({"note": "TEMP umpscorecards games structure", "result": result}, default=str)}}},
     )
     print("push:", resp.status_code)
     return 0
