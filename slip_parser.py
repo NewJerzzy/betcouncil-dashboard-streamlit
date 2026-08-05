@@ -489,6 +489,14 @@ def parse_pp_board_paste(text: str) -> list:
     # would otherwise corrupt the captured player name.
     cleaned = []
     for l in lines:
+        # Normalize dash-like Unicode characters (en-dash, em-dash, non-
+        # breaking hyphen, minus sign) to a plain ASCII hyphen -- real
+        # copy-pastes from the actual rendered PrizePicks page use one of
+        # these instead of a keyboard hyphen, and every regex below only
+        # ever matched the ASCII version, silently rejecting the entire
+        # paste. Confirmed real: en-dash/em-dash/minus-sign all produced
+        # zero parsed props before this fix, only ASCII "-" worked.
+        l = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2212]", "-", l)
         l = re.sub(r"^[\*\-•]+\s*", "", l).strip()
         if not l:
             continue
