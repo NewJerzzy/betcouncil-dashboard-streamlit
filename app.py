@@ -215,6 +215,36 @@ with tabs[0]:
     except Exception:
         pass
 
+    try:
+        _glt_history = load_from_gist("game_board_grading_history", None) or {}
+        _glt_window = st.radio("Game Lines Track Record", ["Last 7d", "Last 30d", "All Time"], horizontal=True, key="_glt_window", label_visibility="collapsed")
+        _glt_cutoff = {
+            "Last 7d": (date.today() - timedelta(days=7)).strftime("%Y-%m-%d"),
+            "Last 30d": (date.today() - timedelta(days=30)).strftime("%Y-%m-%d"),
+            "All Time": "0000-00-00",
+        }[_glt_window]
+        _glt_recs = [r for d, recs in _glt_history.items() if d >= _glt_cutoff for r in recs if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
+        if len(_glt_recs) >= 10:
+            _glt_by_market = {}
+            for r in _glt_recs:
+                m = r.get("market", "?")
+                _glt_by_market.setdefault(m, {"W": 0, "L": 0, "P": 0})
+                _glt_by_market[m][{"WIN": "W", "LOSS": "L", "PUSH": "P"}[r["outcome"]]] += 1
+            _glt_cols = st.columns(len(_glt_by_market) + 1)
+            _glt_tot_w = sum(v["W"] for v in _glt_by_market.values())
+            _glt_tot_l = sum(v["L"] for v in _glt_by_market.values())
+            with _glt_cols[0]:
+                _glt_wr = _glt_tot_w / (_glt_tot_w + _glt_tot_l) * 100 if (_glt_tot_w + _glt_tot_l) else 0
+                st.metric("Overall", f"{_glt_wr:.1f}%", f"{_glt_tot_w}-{_glt_tot_l}")
+            for _i, (m, v) in enumerate(sorted(_glt_by_market.items())):
+                with _glt_cols[_i + 1]:
+                    _wl = v["W"] + v["L"]
+                    _wr = v["W"] / _wl * 100 if _wl else 0
+                    st.metric(m, f"{_wr:.1f}%", f"{v['W']}-{v['L']}" + (f"-{v['P']}P" if v["P"] else ""))
+            st.caption(f"Game Lines · {len(_glt_recs)} graded picks · {_glt_window.lower()}")
+    except Exception:
+        pass
+
     _bb_briefing = st.session_state.get("bobbys_bets_briefing", {})
     if _bb_briefing.get("headline"):
         st.markdown(
