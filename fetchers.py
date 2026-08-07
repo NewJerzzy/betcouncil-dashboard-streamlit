@@ -12182,6 +12182,40 @@ def fetch_ump_scorecards():
         return _safe_load_pkl(cache_path) or {}
 
 
+def fetch_leaguelogs_nfl_state() -> dict:
+    """{season, week, seasonType}. No auth. Cached 6h. Confirmed live."""
+    cache_path = os.path.join(CACHE_DIR, "leaguelogs_nfl_state.pkl")
+    if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) / 3600 < 6:
+        c = _safe_load_pkl(cache_path)
+        if c: return c
+    try:
+        r = requests.get("https://developer.leaguelogs.com/v1/nfl-state", headers=HEADERS, timeout=10)
+        if r.status_code != 200: return _safe_load_pkl(cache_path) or {}
+        d = r.json()
+        result = {"season": d.get("season"), "week": d.get("week"), "seasonType": d.get("seasonType")}
+        _safe_save_pkl(cache_path, result)
+        return result
+    except Exception:
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_leaguelogs_blurbs() -> list:
+    """List of {sleeperPlayerId, firstName, lastName, team, position, blurb, updatedAt}. No auth. Cached 24h."""
+    cache_path = os.path.join(CACHE_DIR, "leaguelogs_blurbs.pkl")
+    if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) / 3600 < 24:
+        c = _safe_load_pkl(cache_path)
+        if c is not None: return c
+    try:
+        r = requests.get("https://developer.leaguelogs.com/v1/blurbs", headers=HEADERS, timeout=15)
+        if r.status_code != 200: return _safe_load_pkl(cache_path) or []
+        d = r.json()
+        result = d if isinstance(d, list) else d.get("data", [])
+        _safe_save_pkl(cache_path, result)
+        return result
+    except Exception:
+        return _safe_load_pkl(cache_path) or []
+
+
 def fetch_ump_game_totals(year=None):
     """
     Per-umpire CURRENT-YEAR avg total runs/game and Over rate from
