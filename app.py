@@ -3787,6 +3787,19 @@ with tabs[3]:
                         st.caption(f"💰 Run Line value check: {_rlv_fav_team} ML {_rlv_fav_ml:+.0f} — favorite in ECU's run-line-value zone (check -1.5 RL price vs ML)")
                 except Exception:
                     pass
+                try:
+                    _drt_scoring = fetch_team_recent_scoring()
+                    for _drt_team in (_g.get("home", ""), _g.get("away", "")):
+                        _drt_key = next((k for k in _drt_scoring if _og_teams_match(k, _drt_team)), None)
+                        if not _drt_key:
+                            continue
+                        _drt_l4 = _drt_scoring[_drt_key][-4:]
+                        if len(_drt_l4) == 4:
+                            _drt_avg = sum(_drt_l4) / 4
+                            if _drt_avg < 3.0:
+                                st.markdown(f'<div style="font-size:0.8rem;color:#e04040;">🥶 {_drt_team}: {sum(_drt_l4)} runs in L4 ({_drt_avg:.1f} R/G) — drought fade candidate</div>', unsafe_allow_html=True)
+                except Exception:
+                    pass
             # 3-column picks
             _pc1, _pc2, _pc3, _pc4 = st.columns(4)
             for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3,_pc4], _picks)):
