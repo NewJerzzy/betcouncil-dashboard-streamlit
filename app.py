@@ -3718,6 +3718,23 @@ with tabs[3]:
                         st.caption("🔭 theoddsgap (19 books incl. Kalshi/Polymarket/ProphetX): " + " · ".join(_og_parts))
             except Exception:
                 pass
+            if _gsport == "MLB":
+                try:
+                    _ump_lineups = st.session_state.get("mlb_lineups", {})
+                    _ump_key = next((k for k in _ump_lineups if _og_teams_match(_ump_lineups[k].get("home_team",""), _g.get("home","")) and _og_teams_match(_ump_lineups[k].get("away_team",""), _g.get("away",""))), None) if _ump_lineups else None
+                    _ump_name = _ump_lineups.get(_ump_key, {}).get("hp_umpire", "") if _ump_key else ""
+                    if not _ump_name:
+                        _ump_name = next((v.get("hp_umpire","") for v in _ump_lineups.values() if _og_teams_match(v.get("home_team",""), _g.get("home","")) and _og_teams_match(v.get("away_team",""), _g.get("away",""))), "")
+                    if _ump_name:
+                        _ump_totals = fetch_ump_game_totals().get(_ump_name.strip().lower(), {})
+                        _ump_avg = _ump_totals.get("avg_total_runs")
+                        if _ump_avg is not None:
+                            _ump_over = _ump_totals.get("over_rate_vs_85", 0)
+                            _ump_n = _ump_totals.get("game_count", 0)
+                            _ump_color = "#e04040" if (_ump_avg > 9.2 or _ump_over > 0.58) else ("#1e90ff" if (_ump_avg < 8.0 or _ump_over < 0.44) else "#6a7a8a")
+                            st.markdown(f'<div style="font-size:0.8rem;color:{_ump_color};">⚾ HP Ump: {_ump_name} — {_ump_avg} R/G · {_ump_over:.0%} Over (n={_ump_n}, {datetime.now().year})</div>', unsafe_allow_html=True)
+                except Exception:
+                    pass
             # 3-column picks
             _pc1, _pc2, _pc3, _pc4 = st.columns(4)
             for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3,_pc4], _picks)):
