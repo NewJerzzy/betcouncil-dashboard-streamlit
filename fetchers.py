@@ -3728,6 +3728,69 @@ def scrapeops_get(url: str, headers: dict = None, timeout: int = 20):
 # Tier 4 injury source + depth chart movement for NFL/NBA/MLB.
 # ═══════════════════════════════════════════════════════════════
 
+def fetch_pitcher_recent_form(player_name: str) -> dict:
+    """
+    L5-start ERA vs season ERA for a pitcher. Confirmed real via live
+    test 2026-08-05: statsapi.mlb.com gameLog (group=pitching) returns
+    real per-start earnedRuns/inningsPitched.
+
+    Returns {l5_era, season_era, n_starts, trend} where trend is
+    "improving" (L5 ERA well below season), "regressing" (well above),
+    or "stable". Empty dict if player not found or has no starts.
+    Cached 6h.
+    """
+    if not player_name:
+        return {}
+    cp = os.path.join(CACHE_DIR, f"pitcher_l5_era_{normalize_name(player_name)}.pkl")
+    if os.path.exists(cp) and (time.time() - os.path.getmtime(cp)) / 3600 < 6:
+        c = _safe_load_pkl(cp)
+        if c is not None:
+            return c
+    try:
+        r = requests.get("https://statsapi.mlb.com/api/v1/people/search",
+                          params={"names": player_name}, timeout=10)
+        if r.status_code != 200:
+            return {}
+        people = r.json().get("people", [])
+        match = next((p for p in people if normalize_name(p.get("fullName", "")) == normalize_name(player_name)), None) or (people[0] if people else None)
+        if not match:
+            return {}
+        r2 = requests.get(f"https://statsapi.mlb.com/api/v1/people/{match['id']}/stats",
+                           params={"stats": "gameLog", "group": "pitching", "season": datetime.now().year}, timeout=15)
+        if r2.status_code != 200:
+            return {}
+        splits = r2.json().get("stats", [{}])[0].get("splits", [])
+        starts = [s["stat"] for s in splits if (s.get("stat", {}).get("gamesStarted") or 0) > 0]
+        if not starts:
+            return {}
+
+        def _era(games):
+            er = sum(g.get("earnedRuns", 0) for g in games)
+            outs = sum(_ip_to_outs(g.get("inningsPitched", "0.0")) for g in games)
+            return round(er * 27 / outs, 2) if outs else None
+
+        season_era = _era(starts)
+        l5 = starts[-5:]
+        l5_era = _era(l5)
+        if season_era is None or l5_era is None:
+            return {}
+        diff = l5_era - season_era
+        trend = "improving" if diff <= -0.75 else ("regressing" if diff >= 0.75 else "stable")
+        result = {"l5_era": l5_era, "season_era": season_era, "n_starts": len(starts), "trend": trend}
+        _safe_save_pkl(cp, result)
+        return result
+    except Exception:
+        return {}
+
+
+def _ip_to_outs(ip_str) -> int:
+    whole, _, frac = str(ip_str or "0.0").partition(".")
+    try:
+        return int(whole or 0) * 3 + int(frac or 0)
+    except ValueError:
+        return 0
+
+
 def fetch_mlb_player_season_avg(player_name: str) -> dict:
     """
     Real per-game season averages from statsapi.mlb.com (same API already
