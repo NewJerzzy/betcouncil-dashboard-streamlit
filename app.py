@@ -3735,6 +3735,28 @@ with tabs[3]:
                             st.markdown(f'<div style="font-size:0.8rem;color:{_ump_color};">⚾ HP Ump: {_ump_name} — {_ump_avg} R/G · {_ump_over:.0%} Over (n={_ump_n}, {datetime.now().year})</div>', unsafe_allow_html=True)
                 except Exception:
                     pass
+            if _gsport == "NFL":
+                try:
+                    _ll_state = fetch_leaguelogs_nfl_state()
+                    if _ll_state.get("week") is not None:
+                        _ll_phase = {"pre": "Preseason", "regular": "Regular Season", "post": "Postseason"}.get(_ll_state.get("seasonType"), "")
+                        st.caption(f"🏈 NFL · Week {_ll_state['week']} · {_ll_phase}")
+                except Exception:
+                    pass
+            if _gsport == "MLB":
+                try:
+                    _rlv_home_ml = float(str(_g.get("HomeML", "")).replace("+", "")) if str(_g.get("HomeML", "")).lstrip("+-").replace(".", "").isdigit() else None
+                    _rlv_away_ml = float(str(_g.get("AwayML", "")).replace("+", "")) if str(_g.get("AwayML", "")).lstrip("+-").replace(".", "").isdigit() else None
+                    _rlv_fav_ml, _rlv_fav_team = (None, None)
+                    if _rlv_home_ml is not None and _rlv_away_ml is not None:
+                        if _rlv_home_ml < 0 and _rlv_home_ml < _rlv_away_ml:
+                            _rlv_fav_ml, _rlv_fav_team = _rlv_home_ml, _g.get("home", "")
+                        elif _rlv_away_ml < 0 and _rlv_away_ml < _rlv_home_ml:
+                            _rlv_fav_ml, _rlv_fav_team = _rlv_away_ml, _g.get("away", "")
+                    if _rlv_fav_ml is not None and -155 <= _rlv_fav_ml <= -130:
+                        st.caption(f"💰 Run Line value check: {_rlv_fav_team} ML {_rlv_fav_ml:+.0f} — favorite in ECU's run-line-value zone (check -1.5 RL price vs ML)")
+                except Exception:
+                    pass
             # 3-column picks
             _pc1, _pc2, _pc3, _pc4 = st.columns(4)
             for _idx, (_pc, _pk) in enumerate(zip([_pc1,_pc2,_pc3,_pc4], _picks)):
@@ -8654,6 +8676,17 @@ with tabs[8]:
                         f"(gap {_og_pl_gap:+.1f}) · estimated {_og_pl_match.get('win_pct','?')}% win"
                     )
                     st.caption(f"{_og_pl_match.get('event','')} · {_og_pl_match.get('commence_time','')[:16]}")
+
+            if sport == "NFL":
+                try:
+                    _ll_blurbs = fetch_leaguelogs_blurbs()
+                    _ll_target_last = normalize_name(pl_name_d.split()[-1]) if pl_name_d else ""
+                    _ll_match = next((b for b in _ll_blurbs if normalize_name(b.get("lastName","")) == _ll_target_last and normalize_name(b.get("firstName","")) in normalize_name(pl_name_d)), None)
+                    if _ll_match and _ll_match.get("blurb"):
+                        st.warning(f"⚠️ {pl_name_d} — Status Update\n\n{_ll_match['blurb']}")
+                        st.caption("Powered by LeagueLogs API")
+                except Exception:
+                    pass
 
             # BettingPros hit-rate/streak trend data -- covers all 5
             # sports this source has (MLB/NBA/NHL/WNBA/NFL).
