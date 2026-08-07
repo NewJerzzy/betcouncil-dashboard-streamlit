@@ -8921,13 +8921,18 @@ def fetch_oddswrap_props(sport):
         if age_hours < 1:
             return _safe_load_pkl(cache_path)
     all_props = []
+    _deadline = time.time() + 15
     try:
         client = OddsClient(books=["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"])
         seen = set()
         for book in ["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"]:
+            if time.time() > _deadline:
+                break
             try:
                 cats = client.get_prop_categories(sport_key, book=book)
                 for cat in cats[:10]:
+                    if time.time() > _deadline:
+                        break
                     try:
                         props = client.get_props(sport_key, category_id=cat.category_id, subcategory_id=cat.subcategory_id, book=book)
                         for prop in props:
