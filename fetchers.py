@@ -12216,6 +12216,50 @@ def fetch_leaguelogs_blurbs() -> list:
         return _safe_load_pkl(cache_path) or []
 
 
+def fetch_team_recent_scoring(days_back=10):
+    """
+    Per-team runs scored in each completed game over the last `days_back`
+    days, MLB only. Confirmed real via live test 2026-08-05: schedule
+    range query returns real final scores. No team-ID mapping needed --
+    pulls the whole league's schedule in one call and aggregates by
+    team name from each game's home/away fields.
+
+    Returns dict: team_name -> [runs_scored_most_recent_first, ...]
+    (only completed games, most recent last-4 usable via [-4:]).
+    Cached 3h.
+    """
+    cache_path = os.path.join(CACHE_DIR, "mlb_team_recent_scoring.pkl")
+    if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) / 3600 < 3:
+        c = _safe_load_pkl(cache_path)
+        if c: return c
+    try:
+        end = datetime.now().date()
+        start = end - timedelta(days=days_back)
+        url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate={start}&endDate={end}"
+        r = requests.get(url, timeout=20)
+        if r.status_code != 200: return _safe_load_pkl(cache_path) or {}
+        data = r.json()
+        from collections import defaultdict
+        by_team = defaultdict(list)
+        for d in sorted(data.get("dates", []), key=lambda x: x.get("date", "")):
+            for g in d.get("games", []):
+                if g.get("status", {}).get("statusCode") != "F":
+                    continue
+                home = g.get("teams", {}).get("home", {})
+                away = g.get("teams", {}).get("away", {})
+                h_name, a_name = home.get("team", {}).get("name"), away.get("team", {}).get("name")
+                h_score, a_score = home.get("score"), away.get("score")
+                if h_name and h_score is not None:
+                    by_team[h_name].append(h_score)
+                if a_name and a_score is not None:
+                    by_team[a_name].append(a_score)
+        result = dict(by_team)
+        if result: _safe_save_pkl(cache_path, result)
+        return result
+    except Exception:
+        return _safe_load_pkl(cache_path) or {}
+
+
 def fetch_ump_game_totals(year=None):
     """
     Per-umpire CURRENT-YEAR avg total runs/game and Over rate from
