@@ -12166,12 +12166,80 @@ def fetch_ump_scorecards():
                 "called_correct_pct":  round(correct / total * 100, 2) if total else None,
                 "x_correct_calls":     x_correct,
                 "accuracy_pct":        round(x_correct / total * 100, 2) if total else None,
+                "run_impact_mean":     row.get("total_run_impact_mean") or 0.0,
+                "favor_abs_mean":      row.get("favor_abs_mean") or 0.0,
                 "raw":                 row,
             }
         if lookup: _safe_save_pkl(cache_path, lookup)
         return lookup
     except Exception as _e:
         print(f"[WARN] fetch_ump_scorecards: {_e}")
+        return _safe_load_pkl(cache_path) or {}
+
+
+def fetch_ump_game_totals(year=None):
+    """
+    Per-umpire CURRENT-YEAR avg total runs/game and Over rate from
+    umpscorecards.com/api/games -- this is a genuinely different signal
+    from fetch_ump_scorecards' run_impact_mean (career strike-zone
+    impact). This is the actual "runs/game, O/U record" tendency
+    ECUalum2003 cites (e.g. "Ump Muchlinski -- 9.25 runs/game").
+
+    Confirmed live 2026-08-05: the endpoint returns ALL games back to
+    2015 (~27K rows, ~30MB) with no server-side date filter available --
+    filters to the target year + regular season ("type"=="R") client-
+    side. Real fields confirmed: date, type, umpire, home_team,
+    away_team, home_score, away_score.
+
+    Returns dict: lowercase_ump_name -> {avg_total_runs, game_count,
+    over_rate_vs_85} where over_rate_vs_85 is the fraction of that
+    umpire's current-year games with total runs > 8.5 (a standard MLB
+    total-line baseline). Cached 12h given the real ~30MB download.
+    """
+    year = year or datetime.now().year
+    cache_path = os.path.join(CACHE_DIR, f"ump_game_totals_{year}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 3600 < 12:
+            cached = _safe_load_pkl(cache_path)
+            if cached: return cached
+
+    url = "https://umpscorecards.com/api/games"
+    try:
+        r = _http.get(url, headers={**HEADERS, "Referer": "https://umpscorecards.com/"},
+                      timeout=60)
+        if r.status_code != 200: return _safe_load_pkl(cache_path) or {}
+        data = r.json()
+        rows = data.get("rows", data) if isinstance(data, dict) else data
+
+        from collections import defaultdict
+        totals = defaultdict(list)
+        year_str = str(year)
+        for g in rows:
+            if str(g.get("date", "")).split("-")[0] != year_str:
+                continue
+            if g.get("type") != "R":  # regular season only
+                continue
+            ump = (g.get("umpire") or "").strip().lower()
+            if not ump:
+                continue
+            hs, aws = g.get("home_score"), g.get("away_score")
+            if hs is None or aws is None:
+                continue
+            totals[ump].append(hs + aws)
+
+        result = {}
+        for ump, run_list in totals.items():
+            if not run_list:
+                continue
+            result[ump] = {
+                "avg_total_runs":  round(sum(run_list) / len(run_list), 2),
+                "game_count":      len(run_list),
+                "over_rate_vs_85": round(sum(1 for x in run_list if x > 8.5) / len(run_list), 3),
+            }
+        if result: _safe_save_pkl(cache_path, result)
+        return result
+    except Exception as _e:
+        print(f"[WARN] fetch_ump_game_totals: {_e}")
         return _safe_load_pkl(cache_path) or {}
 
 
