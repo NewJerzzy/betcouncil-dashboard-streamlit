@@ -8531,6 +8531,52 @@ def get_goalie_for_team(team_abbr, goalies=None):
 
 with tabs[8]:
     st.markdown('<div class="bc-section-header">🔎 Player Lookup</div>', unsafe_allow_html=True)
+
+    with st.expander("📊 Props Browser — browse all props, sort/filter (no name lookup needed)", expanded=False):
+        _pbr_sport = st.selectbox("Sport", ["MLB", "NBA", "NFL", "NHL", "WNBA"], key="_pbr_sport")
+        _pbr_raw = st.session_state.get("bettingpros_props", [])
+        _pbr_raw = [p for p in _pbr_raw if str(p.get("sport", "")).upper() == _pbr_sport] if _pbr_raw else []
+        if not _pbr_raw:
+            st.caption("No BettingPros props loaded for this sport yet — load a board first.")
+        else:
+            _pbr_min_rating = st.slider("Min Bet Rating", 1, 5, 1, key="_pbr_min_rating")
+            _pbr_rows = []
+            for p in _pbr_raw:
+                proj = p.get("projection", {}) or {}
+                side = str(proj.get("recommended_side", "")).lower()
+                if side not in ("over", "under"):
+                    continue
+                side_data = p.get(side, {}) or {}
+                if (proj.get("bet_rating") or 0) < _pbr_min_rating:
+                    continue
+                perf = p.get("performance", {}) or {}
+                def _pbr_fmt(window):
+                    w = perf.get(window, {}) or {}
+                    o, u = w.get("over", 0), w.get("under", 0)
+                    hits = o if side == "over" else u
+                    return f"{hits}/{o+u}" if (o + u) else "—"
+                player = (p.get("participant", {}) or {}).get("player", {}) or {}
+                stat_slug = p.get("links", {}).get("odds", "").rstrip("/").split("/")[-1]
+                stat_name = stat_slug.replace("-", " ").title() if stat_slug else f"Market {p.get('market_id','?')}"
+                _pbr_rows.append({
+                    "Player": player.get("last_name") and f"{player.get('first_name','')} {player.get('last_name','')}".strip() or "—",
+                    "Team": player.get("team", ""), "Pos": player.get("position", ""),
+                    "Stat": stat_name, "Line": side_data.get("line"), "Side": side.upper(),
+                    "L5": _pbr_fmt("last_5"), "L10": _pbr_fmt("last_10"), "L15": _pbr_fmt("last_15"), "Szn": _pbr_fmt("season"),
+                    "Streak": f"{perf.get('streak','')} {str(perf.get('streak_type','')).upper()}" if perf.get("streak") else "",
+                    "Proj": proj.get("value"), "Diff": proj.get("diff"),
+                    "EV": f"{(proj.get('expected_value') or 0)*100:+.1f}%", "⭐": "⭐" * int(proj.get("bet_rating") or 0),
+                })
+            if _pbr_rows:
+                import pandas as _pbr_pd
+                _pbr_df = _pbr_pd.DataFrame(_pbr_rows)
+                _pbr_sort = st.selectbox("Sort by", ["⭐", "EV", "Diff"], key="_pbr_sort")
+                _pbr_df = _pbr_df.sort_values(_pbr_sort, ascending=False, key=lambda c: c.str.len() if _pbr_sort == "⭐" else c)
+                st.dataframe(_pbr_df, use_container_width=True, hide_index=True)
+                st.caption(f"{len(_pbr_df)} props · BettingPros")
+            else:
+                st.caption("No props meet the current filters.")
+
     st.caption("Deep dive on any player — game log, hit rates, H2H vs tonight's opponent, home/away splits. Powered by BallsDontLie.")
 
     if not BDL_API_KEY:
