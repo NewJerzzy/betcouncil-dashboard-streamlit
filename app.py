@@ -242,6 +242,25 @@ with tabs[0]:
                     _wr = v["W"] / _wl * 100 if _wl else 0
                     st.metric(m, f"{_wr:.1f}%", f"{v['W']}-{v['L']}" + (f"-{v['P']}P" if v["P"] else ""))
             st.caption(f"Game Lines · {len(_glt_recs)} graded picks · {_glt_window.lower()}")
+
+            _glt_losses = [r for r in _glt_recs if r.get("outcome") == "LOSS"]
+            if len(_glt_losses) >= 5:
+                with st.expander(f"📉 Loss Breakdown ({len(_glt_losses)} losses, {_glt_window.lower()})", expanded=False):
+                    _lb_low_edge = sum(1 for r in _glt_losses if (r.get("edge") or 0) < 0.02)
+                    _lb_low_tier = sum(1 for r in _glt_losses if r.get("tier") in ("LEAN", "PASS", ""))
+                    _lb_other = len(_glt_losses) - _lb_low_edge
+                    st.caption(
+                        f"Low-edge picks (<2%): {_lb_low_edge} ({_lb_low_edge/len(_glt_losses)*100:.0f}%) · "
+                        f"Low-tier picks: {_lb_low_tier} ({_lb_low_tier/len(_glt_losses)*100:.0f}%) · "
+                        f"Other: {_lb_other}"
+                    )
+                    if _lb_low_edge / len(_glt_losses) > 0.4:
+                        st.warning(f"⚠️ {_lb_low_edge} of {len(_glt_losses)} losses had <2% edge. Consider raising the minimum edge threshold.")
+                    st.caption(
+                        "Sharp-money-opposite, line-movement, weather, and injury tags aren't available for "
+                        "already-graded picks — that data wasn't captured at snapshot time, only reconstructable "
+                        "going forward if the snapshot itself is extended to record it."
+                    )
     except Exception:
         pass
 
