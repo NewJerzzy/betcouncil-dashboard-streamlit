@@ -8777,6 +8777,15 @@ with tabs[8]:
                 except Exception:
                     pass
 
+            if sport == "MLB":
+                try:
+                    _pf_form = fetch_pitcher_recent_form(pl_name_d)
+                    if _pf_form:
+                        _pf_icon = {"improving": "🟢", "regressing": "🔴", "stable": "⚪"}[_pf_form["trend"]]
+                        st.caption(f"{_pf_icon} L5 ERA {_pf_form['l5_era']} vs Season ERA {_pf_form['season_era']} ({_pf_form['n_starts']} starts) — {_pf_form['trend']}")
+                except Exception:
+                    pass
+
             # BettingPros hit-rate/streak trend data -- covers all 5
             # sports this source has (MLB/NBA/NHL/WNBA/NFL).
             if _pl_sport_used in ("MLB", "NBA", "NHL", "WNBA", "NFL"):
