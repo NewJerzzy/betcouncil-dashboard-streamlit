@@ -71,8 +71,9 @@ def fetch_sport(sport: str) -> list:
     page = 1
     while page <= 12:
         url = SITE_URL.format(sport_path=sport_path)
+        params = {} if page == 1 else {"page": page}
         try:
-            r = requests.get(url, headers=HEADERS, params={"page": page}, timeout=20)
+            r = requests.get(url, headers=HEADERS, params=params, timeout=20)
             DEBUG_LOG.append({"sport": sport, "page": page, "status": r.status_code, "body_len": len(r.text)})
         except Exception as e:
             DEBUG_LOG.append({"sport": sport, "page": page, "error": str(e)[:200]})
@@ -203,12 +204,11 @@ def main() -> int:
 
 
 # --- test wrapper ---
-import sys as _s
 _all = []
 for sport in ["MLB", "NBA", "NHL", "WNBA", "NFL"]:
     props = fetch_sport(sport)
     _all.append((sport, len(props), props[0] if props else None))
-_result = {"summary": [(s, n) for s, n, p in _all]}
+_result = {"summary": [(s, n) for s, n, p in _all], "debug_log_tail": DEBUG_LOG[-15:]}
 for s, n, p in _all:
     if p:
         _result[f"{s}_sample"] = p
