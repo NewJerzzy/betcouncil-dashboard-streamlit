@@ -17,9 +17,13 @@ harvester run.
 import json
 import os
 import sys
+import time
+import random
 from datetime import datetime, timezone
 
 import requests
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 API_URL = "https://partner-api.prizepicks.com/projections?per_page=10000&include=new_player"
@@ -203,58 +207,79 @@ def _trim_prizepicks_body(body: dict) -> dict:
 
 
 def push_league_files(by_league: dict) -> int:
-    import time
-    import random
+    """
+    Merges all leagues into ONE file (betcouncil_prizepicks_combined.json)
+    instead of one file per league. Confirmed real: this had grown to 59
+    separate files (nearly 20% of the Gist's hard 300-file cap) because
+    league_key is dynamically discovered from PrizePicks' own live
+    league list, not a fixed set -- it grows every time PrizePicks adds
+    a new league/event type. Uses the real distributed lock (gist_lock.py)
+    since multiple runs now write to the same shared file.
+    """
     github_token = os.environ["GITHUB_TOKEN"]
-    files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
+    SHARED_FILE = "betcouncil_prizepicks_combined.json"
 
+    merged = {}
     for league_key, body in by_league.items():
-        filename = f"betcouncil_prizepicks_{league_key}.json"
         try:
             trimmed_body = _trim_prizepicks_body(body)
         except Exception as e:
             log(f"{league_key}: trim failed ({e}) -- falling back to untrimmed body")
             trimmed_body = body
-        wrapper = {
+        merged[league_key] = {
             "sport": league_key,
             "captured_at": now_iso,
             "data": trimmed_body,
             "source": "github_actions_partner_api",
         }
-        files_payload[filename] = {"content": json.dumps(wrapper)}
 
-    for attempt in range(4):
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={
-                "Authorization": f"Bearer {github_token}",
-                "Accept": "application/vnd.github+json",
-            },
-            json={"files": files_payload},
-            timeout=30,
-        )
-        if resp.status_code in (200, 201):
-            returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
-                wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+    lock_token = acquire_lock(GIST_ID, github_token, "prizepicks_combined", holder="prizepicks")
+    if not lock_token:
+        log("Could not acquire prizepicks_combined lock -- skipping this run to avoid a collision")
+        return 0
+    try:
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        existing.update(merged)
+        shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+
+        for attempt in range(4):
+            resp = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": shared_payload}, timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                returned_files = resp.json().get("files", {}) or {}
+                if SHARED_FILE in returned_files:
+                    return len(merged)
+                if attempt < 3:
+                    time.sleep(5)
+                    continue
+                return 0
+            if resp.status_code in (403, 429, 409) and attempt < 3:
+                base_wait = (attempt + 1) * 8
+                wait = base_wait + random.uniform(0, base_wait * 0.4)
+                log(f"Gist {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/4)")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
-        if resp.status_code == 409 and attempt < 3:
-            base_wait = (attempt + 1) * 8
-            wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist 409 conflict (concurrent write) — retrying in {wait:.1f}s (attempt {attempt+1}/4)")
-            time.sleep(wait)
-            continue
-        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            return 0
         return 0
-    return 0
+    finally:
+        release_lock(GIST_ID, github_token, "prizepicks_combined", lock_token)
 
 
 def main() -> int:
