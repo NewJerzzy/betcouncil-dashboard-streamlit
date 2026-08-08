@@ -16184,7 +16184,7 @@ HARVESTER_REGISTRY = {
     "caesars":         ("betcouncil_caesars_tokens.json",             720, "lines"),
     # GitHub-Actions-backed sources (cron, not a live browser tab) — 2x their
     # cron cadence as the freshness bar so a single missed run doesn't trip.
-    "prizepicks":      ("betcouncil_prizepicks_{sport}.json",        30, "props"),
+    "prizepicks":      ("betcouncil_prizepicks_combined.json",       30, "props"),
     "pick6":           ("betcouncil_pick6_props.json",               60, "props"),
 }
 
@@ -16228,6 +16228,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
         "underdog":       ("underdog", "betcouncil_sharp_feeds.json"),
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
         "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
+        "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
     }
 
     results = []
@@ -16242,7 +16243,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
                     _merged_file_cache[merged_fname] = _read_gist_file(merged_fname, cache_minutes=5) or {}
                 except Exception:
                     _merged_file_cache[merged_fname] = {}
-            source_data = _merged_file_cache[merged_fname].get(merge_key, {})
+            source_data = _merged_file_cache[merged_fname] if merge_key is None else _merged_file_cache[merged_fname].get(merge_key, {})
             ages = []
             if isinstance(source_data, dict):
                 if source_data.get("captured_at"):
@@ -17913,7 +17914,8 @@ def fetch_prizepicks_from_gist(sport: str) -> tuple:
     SECONDARY: Falls back to fetch_prizepicks_props() CDN scraper.
     Returns (props_list, source_label)
     """
-    data = _read_gist_file(f"betcouncil_prizepicks_{sport}.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_prizepicks_combined.json", cache_minutes=5)
+    data = (combined or {}).get(str(sport).upper(), {})
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
