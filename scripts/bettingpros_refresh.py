@@ -57,6 +57,10 @@ SITE_URL = "https://www.bettingpros.com/{sport_path}/props/"
 _SPORT_PATHS = {"MLB": "mlb", "NBA": "nba", "NHL": "nhl", "WNBA": "wnba", "NFL": "nfl"}
 
 
+_SESSION = requests.Session()
+_SESSION.headers.update(HEADERS)
+
+
 def fetch_sport(sport: str) -> list:
     """
     api.bettingpros.com now returns a real HTTP 403 (AWS API Gateway
@@ -64,6 +68,11 @@ def fetch_sport(sport: str) -> list:
     not a transient error. The site's own pages still embed the exact
     same prop data server-side in a JSON <script> tag, confirmed real
     and field-identical to the old API response. Scrapes that instead.
+
+    Uses a shared requests.Session for connection reuse -- each request
+    was opening a fresh TCP/TLS handshake, confirmed via live timing to
+    be a major contributor to the real ~30s/page rate that was causing
+    workflow timeouts.
     """
     all_props = []
     seen_ids = set()
@@ -73,7 +82,7 @@ def fetch_sport(sport: str) -> list:
         url = SITE_URL.format(sport_path=sport_path)
         params = {} if page == 1 else {"page": page}
         try:
-            r = requests.get(url, headers=HEADERS, params=params, timeout=20)
+            r = _SESSION.get(url, params=params, timeout=20)
             DEBUG_LOG.append({"sport": sport, "page": page, "status": r.status_code, "body_len": len(r.text)})
         except Exception as e:
             DEBUG_LOG.append({"sport": sport, "page": page, "error": str(e)[:200]})
