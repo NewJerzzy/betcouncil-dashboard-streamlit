@@ -16148,7 +16148,7 @@ HARVESTER_REGISTRY = {
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
     "underdog":        ("betcouncil_sharp_feeds.json",                20, "props"),
     "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
-    "polymarket":      ("betcouncil_sharptrack_live.json",           30, "signal"),
+    "polymarket":      ("betcouncil_sharp_feeds.json",               30, "signal"),
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
     "parlaysavant":    ("betcouncil_parlaysavant_{sport}.json",      20, "props"),
     "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
@@ -16227,6 +16227,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
         "unabated":       ("unabated", "betcouncil_sharp_feeds.json"),
         "underdog":       ("underdog", "betcouncil_sharp_feeds.json"),
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
+        "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
     }
 
     results = []
@@ -16244,11 +16245,16 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
             source_data = _merged_file_cache[merged_fname].get(merge_key, {})
             ages = []
             if isinstance(source_data, dict):
-                for sub in source_data.values():
-                    if isinstance(sub, dict) and sub.get("captured_at"):
-                        a = _gist_data_age_minutes(sub)
-                        if a is not None:
-                            ages.append(a)
+                if source_data.get("captured_at"):
+                    a = _gist_data_age_minutes(source_data)
+                    if a is not None:
+                        ages.append(a)
+                else:
+                    for sub in source_data.values():
+                        if isinstance(sub, dict) and sub.get("captured_at"):
+                            a = _gist_data_age_minutes(sub)
+                            if a is not None:
+                                ages.append(a)
             age = min(ages) if ages else None
         else:
             fname = fname_tmpl.format(sport=sport) if "{sport}" in fname_tmpl else fname_tmpl
