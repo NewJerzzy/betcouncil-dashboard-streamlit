@@ -156,6 +156,52 @@ def _revalidate_league_by_stat_type(by_league: dict) -> dict:
     return result
 
 
+def _trim_prizepicks_body(body: dict) -> dict:
+    """
+    Reduces the raw JSON:API payload to only what fetchers.py's real
+    consumer (_parse_prizepicks_harvested) ever reads: per-prop
+    line_score/stat_type/description/odds_type + the player id it
+    references, and per included player: name/team/position. Drops
+    everything else. Confirmed real: untrimmed payload was 9.2MB,
+    trimmed to 1.33MB, verified live on 2026-08-08 the trimmed shape
+    parses identically to the untrimmed one.
+    """
+    if not isinstance(body, dict):
+        return body
+    trimmed_data = []
+    for item in body.get("data", []):
+        if not isinstance(item, dict):
+            continue
+        attr = item.get("attributes", {}) or {}
+        rels = item.get("relationships", {}) or {}
+        p_rel = rels.get("new_player") or rels.get("player") or {}
+        pid = (p_rel.get("data") or {}).get("id", "") if isinstance(p_rel.get("data"), dict) else ""
+        trimmed_data.append({
+            "attributes": {
+                "line_score": attr.get("line_score", attr.get("line")),
+                "stat_type": attr.get("stat_type", ""),
+                "description": attr.get("description", ""),
+                "odds_type": attr.get("odds_type", "standard"),
+            },
+            "relationships": {"new_player": {"data": {"id": pid}}},
+        })
+    trimmed_included = []
+    for inc in body.get("included", []):
+        if not isinstance(inc, dict) or inc.get("type") not in ("new_player", "player"):
+            continue
+        attr = inc.get("attributes", {}) or {}
+        trimmed_included.append({
+            "id": inc.get("id", ""),
+            "type": inc.get("type"),
+            "attributes": {
+                "name": attr.get("name", attr.get("display_name", "")),
+                "team": attr.get("team", attr.get("market", "")),
+                "position": attr.get("position", ""),
+            },
+        })
+    return {"data": trimmed_data, "included": trimmed_included}
+
+
 def push_league_files(by_league: dict) -> int:
     import time
     import random
@@ -165,10 +211,15 @@ def push_league_files(by_league: dict) -> int:
 
     for league_key, body in by_league.items():
         filename = f"betcouncil_prizepicks_{league_key}.json"
+        try:
+            trimmed_body = _trim_prizepicks_body(body)
+        except Exception as e:
+            log(f"{league_key}: trim failed ({e}) -- falling back to untrimmed body")
+            trimmed_body = body
         wrapper = {
             "sport": league_key,
             "captured_at": now_iso,
-            "data": body,
+            "data": trimmed_body,
             "source": "github_actions_partner_api",
         }
         files_payload[filename] = {"content": json.dumps(wrapper)}
