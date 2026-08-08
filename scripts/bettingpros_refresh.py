@@ -69,7 +69,7 @@ def fetch_sport(sport: str) -> list:
     seen_ids = set()
     sport_path = _SPORT_PATHS.get(sport, sport.lower())
     page = 1
-    while page <= 25:
+    while page <= 8:
         url = SITE_URL.format(sport_path=sport_path)
         params = {} if page == 1 else {"page": page}
         try:
