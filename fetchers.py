@@ -16975,7 +16975,8 @@ def fetch_mybookie_ssr_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     entries). Game-line comparison data — same category as Dimers/
     BettingPros/Covers, not props.
     """
-    data = _read_gist_file(f"betcouncil_mybookie_ssr_{sport.upper()}.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_mybookie_ssr_combined.json", cache_minutes=5)
+    data = (combined or {}).get(sport.upper(), {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("games", [])
         if isinstance(raw, list):
