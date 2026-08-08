@@ -189,7 +189,7 @@ def main() -> int:
                                     "source": "bettingpros_v3_props", "props": props})
         }
 
-    files_payload["betcouncil_bettingpros_debug.json"] = {
+    files_payload["betcouncil_qwzx_bptest_result.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:20]}, indent=2)
     }
 
@@ -216,5 +216,5 @@ for s, n, p in _all:
 _tok = os.environ.get("GITHUB_TOKEN")
 requests.patch(f"https://api.github.com/gists/{GIST_ID}",
     headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
-    json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps(_result, default=str)}}})
+    json={"files": {"betcouncil_qwzx_bptest_result.json": {"content": json.dumps(_result, default=str)}}})
 print("done")
