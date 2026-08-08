@@ -259,7 +259,7 @@ def push_league_files(by_league: dict) -> int:
         try:
             requests.patch(f"https://api.github.com/gists/{GIST_ID}",
                 headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-                json={"files": {"betcouncil_zzdebug_pp.json": {"content": json.dumps({
+                json={"files": {"betcouncil_locks.json": {"content": json.dumps({
                     "status": resp.status_code, "body": resp.text[:2000],
                     "payload_size_bytes": len(json.dumps(files_payload)),
                     "num_files": len(files_payload),
