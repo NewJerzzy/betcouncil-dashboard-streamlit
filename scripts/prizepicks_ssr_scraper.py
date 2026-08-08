@@ -214,10 +214,15 @@ def push_league_files(by_league: dict) -> int:
 
     for league_key, body in by_league.items():
         filename = f"betcouncil_prizepicks_{league_key}.json"
+        try:
+            trimmed_body = _trim_prizepicks_body(body)
+        except Exception as e:
+            log(f"{league_key}: trim failed ({e}) -- falling back to untrimmed body")
+            trimmed_body = body
         wrapper = {
             "sport": league_key,
             "captured_at": now_iso,
-            "data": _trim_prizepicks_body(body),
+            "data": trimmed_body,
             "source": "github_actions_partner_api",
         }
         files_payload[filename] = {"content": json.dumps(wrapper)}
