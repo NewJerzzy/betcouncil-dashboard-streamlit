@@ -156,55 +156,6 @@ def _revalidate_league_by_stat_type(by_league: dict) -> dict:
     return result
 
 
-def _trim_prizepicks_body(body: dict) -> dict:
-    """
-    Reduces the raw JSON:API payload to only what fetchers.py's real
-    consumer (_parse_prizepicks_harvested) ever reads: per-prop
-    line_score/stat_type/description/odds_type + the player id it
-    references, and per included player: name/team/position. Drops
-    everything else (links, meta, other relationship types, non-player
-    included types like leagues/stat_types/games/durations that the
-    consumer never touches). Confirmed real bug: the untrimmed payload
-    was ~8MB for what's actually a few hundred KB of real signal,
-    contributing directly to the Gist hitting its real size/file-count
-    capacity limit (found 2026-08-08).
-    """
-    if not isinstance(body, dict):
-        return body
-    trimmed_data = []
-    for item in body.get("data", []):
-        if not isinstance(item, dict):
-            continue
-        attr = item.get("attributes", {}) or {}
-        rels = item.get("relationships", {}) or {}
-        p_rel = rels.get("new_player") or rels.get("player") or {}
-        pid = (p_rel.get("data") or {}).get("id", "") if isinstance(p_rel.get("data"), dict) else ""
-        trimmed_data.append({
-            "attributes": {
-                "line_score": attr.get("line_score", attr.get("line")),
-                "stat_type": attr.get("stat_type", ""),
-                "description": attr.get("description", ""),
-                "odds_type": attr.get("odds_type", "standard"),
-            },
-            "relationships": {"new_player": {"data": {"id": pid}}},
-        })
-    trimmed_included = []
-    for inc in body.get("included", []):
-        if not isinstance(inc, dict) or inc.get("type") not in ("new_player", "player"):
-            continue
-        attr = inc.get("attributes", {}) or {}
-        trimmed_included.append({
-            "id": inc.get("id", ""),
-            "type": inc.get("type"),
-            "attributes": {
-                "name": attr.get("name", attr.get("display_name", "")),
-                "team": attr.get("team", attr.get("market", "")),
-                "position": attr.get("position", ""),
-            },
-        })
-    return {"data": trimmed_data, "included": trimmed_included}
-
-
 def push_league_files(by_league: dict) -> int:
     import time
     import random
@@ -214,15 +165,10 @@ def push_league_files(by_league: dict) -> int:
 
     for league_key, body in by_league.items():
         filename = f"betcouncil_prizepicks_{league_key}.json"
-        try:
-            trimmed_body = _trim_prizepicks_body(body)
-        except Exception as e:
-            log(f"{league_key}: trim failed ({e}) -- falling back to untrimmed body")
-            trimmed_body = body
         wrapper = {
             "sport": league_key,
             "captured_at": now_iso,
-            "data": trimmed_body,
+            "data": body,
             "source": "github_actions_partner_api",
         }
         files_payload[filename] = {"content": json.dumps(wrapper)}
@@ -256,16 +202,6 @@ def push_league_files(by_league: dict) -> int:
             time.sleep(wait)
             continue
         log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
-        try:
-            requests.patch(f"https://api.github.com/gists/{GIST_ID}",
-                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-                json={"files": {"betcouncil_locks.json": {"content": json.dumps({
-                    "status": resp.status_code, "body": resp.text[:2000],
-                    "payload_size_bytes": len(json.dumps(files_payload)),
-                    "num_files": len(files_payload),
-                })}}}, timeout=15)
-        except Exception:
-            pass
         return 0
     return 0
 
@@ -298,17 +234,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception:
-        import traceback
-        tb = traceback.format_exc()
-        log("UNHANDLED EXCEPTION:\n" + tb)
-        try:
-            _tok = os.environ.get("GITHUB_TOKEN")
-            requests.patch(f"https://api.github.com/gists/{GIST_ID}",
-                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
-                json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps({"note": "TEMP prizepicks crash trace", "traceback": tb})}}})
-        except Exception:
-            pass
-        sys.exit(1)
+    sys.exit(main())
