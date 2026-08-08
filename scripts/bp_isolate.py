@@ -230,5 +230,5 @@ _result = {"num_props": len(props), "peak_mem_mb": peak_mem_mb, "debug_log": DEB
 _tok = os.environ.get("GITHUB_TOKEN")
 requests.patch(f"https://api.github.com/gists/{GIST_ID}",
     headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
-    json={"files": {"betcouncil_isolate_test_run2_xk92.json": {"content": json.dumps(_result, default=str)}}})
+    json={"files": {"betcouncil_bettingpros_debug.json": {"content": json.dumps(_result, default=str)}}})
 print("done, peak_mem_mb:", peak_mem_mb)
