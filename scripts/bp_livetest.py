@@ -69,7 +69,7 @@ def fetch_sport(sport: str) -> list:
     seen_ids = set()
     sport_path = _SPORT_PATHS.get(sport, sport.lower())
     page = 1
-    while page <= 12:
+    while page <= 25:
         url = SITE_URL.format(sport_path=sport_path)
         params = {} if page == 1 else {"page": page}
         try:
@@ -208,11 +208,7 @@ _all = []
 for sport in ["MLB", "NBA", "NHL", "WNBA", "NFL"]:
     props = fetch_sport(sport)
     _all.append((sport, len(props), props[0] if props else None))
-_result = {"summary": [(s, n) for s, n, p in _all], "debug_log_tail": DEBUG_LOG[-15:]}
-for s, n, p in _all:
-    if p:
-        _result[f"{s}_sample"] = p
-        break
+_result = {"summary": [(s, n) for s, n, p in _all]}
 _tok = os.environ.get("GITHUB_TOKEN")
 requests.patch(f"https://api.github.com/gists/{GIST_ID}",
     headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
