@@ -15679,7 +15679,8 @@ def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
     market_key, market_name, margin_percent, freshness_status, expires_at,
     legs: [{bookmaker, outcome, odds, stake_pct}], locked}
     """
-    data = _read_gist_file("betcouncil_signalodds_opportunities.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=10)
+    data = (combined or {}).get("signalodds", {}).get("opportunities", {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("opportunities", [])
         if isinstance(raw, list):
