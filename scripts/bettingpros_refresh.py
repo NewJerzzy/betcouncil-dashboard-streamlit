@@ -203,4 +203,21 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        log("UNHANDLED EXCEPTION:\n" + tb)
+        try:
+            gh_token = os.environ.get("GITHUB_TOKEN")
+            if gh_token:
+                requests.patch(
+                    f"https://api.github.com/gists/{GIST_ID}",
+                    headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github+json"},
+                    json={"files": {"betcouncil_bettingpros_debug.json": {
+                        "content": json.dumps({"error": "unhandled_exception", "traceback": tb, "debug_log_tail": DEBUG_LOG[-10:]}, default=str)
+                    }}}, timeout=15)
+        except Exception:
+            pass
+        sys.exit(1)
