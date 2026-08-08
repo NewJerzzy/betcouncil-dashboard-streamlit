@@ -88,7 +88,7 @@ def fetch_sport(sport: str) -> list:
                 continue
             try:
                 parsed = json.loads(blk)
-                if parsed.get("props"):
+                if parsed.get("offers"):
                     data = parsed
                     break
             except Exception:
@@ -96,7 +96,7 @@ def fetch_sport(sport: str) -> list:
         if data is None:
             break
 
-        props = data.get("props", [])
+        props = data.get("offers", [])
         if not isinstance(props, list) or not props:
             break
 
@@ -189,7 +189,7 @@ def main() -> int:
                                     "source": "bettingpros_v3_props", "props": props})
         }
 
-    files_payload["betcouncil_qwzx_bptest_result.json"] = {
+    files_payload["betcouncil_bettingpros_debug.json"] = {
         "content": json.dumps({"captured_at": now_iso, "requests": DEBUG_LOG[:20]}, indent=2)
     }
 
