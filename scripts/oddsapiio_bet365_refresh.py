@@ -309,6 +309,10 @@ def main() -> int:
     if not _rate_limit_ok(github_token):
         return 0
 
+    from oddsapiio_budget import reserve_budget
+    if not reserve_budget(github_token, "bet365", MAX_REQUESTS_PER_RUN, acquire_lock, release_lock):
+        return 0
+
     now_iso = datetime.now(timezone.utc).isoformat()
     files_payload = {}
     any_data = False
