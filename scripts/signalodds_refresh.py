@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 
 import requests
 import random
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.betslib.com"
@@ -252,37 +254,73 @@ def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
 
 
 def push_files(files_payload: dict) -> int:
+    """
+    Confirmed real bug (2026-08-07): betcouncil_signalodds_predictions/
+    opportunities/debug.json never once landed on this Gist despite the
+    fetch logic itself working -- same proven-unreliable new-file-
+    creation pattern as 8+ other sources this session. Merges into the
+    shared betcouncil_market_feeds.json (matches this script's 30-min
+    cadence group) under a "signalodds" key, using the real distributed
+    lock (gist_lock.py) to avoid the confirmed concurrent-writer race
+    on that shared file.
+    """
     github_token = os.environ["GITHUB_TOKEN"]
     if not _rate_limit_ok(github_token):
         return 0
-    for attempt in range(6):
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": files_payload},
-            timeout=30,
-        )
-        if resp.status_code in (200, 201):
-            returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
-                wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+    SHARED_FILE = "betcouncil_market_feeds.json"
+    merged = {}
+    for fname, fbody in files_payload.items():
+        key = fname.replace("betcouncil_signalodds_", "").replace(".json", "")
+        try:
+            merged[key] = json.loads(fbody["content"])
+        except Exception:
+            merged[key] = fbody["content"]
+
+    lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="signalodds")
+    if not lock_token:
+        log("Could not acquire market_feeds lock -- skipping this run to avoid a collision")
+        return 0
+    try:
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        existing["signalodds"] = merged
+        shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+
+        for attempt in range(4):
+            resp = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": shared_payload}, timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                returned_files = resp.json().get("files", {}) or {}
+                if SHARED_FILE in returned_files:
+                    return len(files_payload)
+                if attempt < 3:
+                    time.sleep(5)
+                    continue
+                return 0
+            if resp.status_code in (403, 429, 409) and attempt < 3:
+                wait = min((attempt + 1) * 8, 30)
+                log(f"Gist {resp.status_code} -- retrying in {wait}s (attempt {attempt+1}/4)")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
-        if resp.status_code in (409, 403, 429) and attempt < 5:
-            base_wait = min((attempt + 1) * 8, 60)
-            wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist {resp.status_code} — retrying in {wait:.1f}s (attempt {attempt+1}/6)")
-            time.sleep(wait)
-            continue
-        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            return 0
         return 0
-    return 0
+    finally:
+        release_lock(GIST_ID, github_token, "market_feeds", lock_token)
 
 
 def _fetch_models(jwt: str | None) -> list | None:
