@@ -45,6 +45,8 @@ import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
 import random
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -192,6 +194,76 @@ def fetch_commissions(event_ids: list) -> dict:
 
 
 # ── Gist push ────────────────────────────────────────────────────────────
+def push_merged_to_gist(sports_payload: dict, buckets_payload: dict) -> bool:
+    """
+    Merges all per-sport-bucket ProphetX files into ONE file
+    (betcouncil_prophetx_combined.json) instead of 10+ separate files.
+    Confirmed real: all 10 sport buckets (NFL/NBA/WNBA/MLB/NHL/MMA/
+    TENNIS/GOLF/SOCCER/OTHER) are genuinely read by fetch_prophetx_from_gist,
+    unlike PrizePicks' fringe leagues -- this reduces file COUNT while
+    keeping all real data, using the real distributed lock since this
+    now writes to one shared file.
+    """
+    if not GITHUB_TOKEN:
+        log("ERROR: GITHUB_TOKEN not set")
+        return False
+    SHARED_FILE = "betcouncil_prophetx_combined.json"
+
+    lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "prophetx_combined", holder="prophetx")
+    if not lock_token:
+        log("Could not acquire prophetx_combined lock -- skipping this run to avoid a collision")
+        return False
+    try:
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                listing = json.loads(r.read())
+            r_files = listing.get("files", {})
+            if SHARED_FILE in r_files:
+                with urllib.request.urlopen(r_files[SHARED_FILE]["raw_url"], timeout=15) as r2:
+                    existing = json.loads(r2.read())
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        existing["sports"] = sports_payload
+        existing.update(buckets_payload)
+        body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing, default=str)}}}).encode()
+
+        for attempt in range(4):
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}", data=body, method="PATCH",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json",
+                         "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    if r.status != 200:
+                        return False
+                    resp_body = json.loads(r.read())
+                    if SHARED_FILE in (resp_body.get("files") or {}):
+                        return True
+                    log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
+            except urllib.error.HTTPError as e:
+                if e.code in (403, 429, 409) and attempt < 3:
+                    wait = 8 * (attempt + 1)
+                    log(f"  Gist push got HTTP {e.code} -- retrying in {wait}s (attempt {attempt+1}/4)")
+                    time.sleep(wait)
+                    continue
+                log(f"  Gist push failed: HTTP {e.code}")
+                return False
+            except Exception as e:
+                log(f"  Gist push failed: {e}")
+                return False
+            if attempt < 3:
+                time.sleep(5)
+        return False
+    finally:
+        release_lock(GIST_ID, GITHUB_TOKEN, "prophetx_combined", lock_token)
+
+
 def push_to_gist(key: str, payload: dict) -> bool:
     if not GITHUB_TOKEN:
         log("ERROR: GITHUB_TOKEN not set")
@@ -308,35 +380,21 @@ def run():
             "commissions": commissions_by_event.get(eid),
         }
 
-    all_ok = True
-    push_results = {}
-
-    # NOTE: previously also pushed a combined "betcouncil_prophetx_all.json"
-    # (grew to 8.5MB) duplicating every event already covered by the
-    # per-sport-bucket files below. Nothing in app.py/fetchers.py ever read
-    # it (checked). Dropped -- it was roughly doubling this script's write
-    # volume/payload size against the shared Gist for zero consumers, which
-    # was the likely driver of this harvester's timeouts and of collision
-    # pressure on other scripts sharing the same Gist on overlapping crons.
-
-    all_ok &= push_to_gist("betcouncil_prophetx_sports.json", {
+    sports_payload = {
         "captured_at": now_iso, "updated": now_iso,
         "sport_id_map": sport_id_map,
-    })
-
-    # per-sport-bucket payloads, matching this repo's betcouncil_{source}_{SPORT}.json convention
+    }
+    buckets_payload = {}
     for bucket, bucket_events in buckets.items():
-        payload = {
+        buckets_payload[bucket] = {
             "captured_at": now_iso, "updated": now_iso,
             "sport": bucket,
             "event_count": len(bucket_events),
             "events": [enrich(ev) for ev in bucket_events],
         }
-        key = f"betcouncil_prophetx_{bucket}.json"
-        ok = push_to_gist(key, payload)
-        push_results[key] = ok
-        all_ok &= ok
-        log(f"  {bucket}: {len(bucket_events)} events -> {key} {'ok' if ok else 'FAILED'}")
+        log(f"  {bucket}: {len(bucket_events)} events")
+
+    all_ok = push_merged_to_gist(sports_payload, buckets_payload)
 
     if not all_ok:
         # Previously exited here with zero diagnostic trail left in the Gist
@@ -345,8 +403,7 @@ def run():
         try:
             push_to_gist("betcouncil_prophetx_debug.json", {
                 "captured_at": now_iso,
-                "error": "one_or_more_pushes_failed",
-                "push_results": push_results,
+                "error": "merged_push_failed",
             })
         except Exception:
             pass
