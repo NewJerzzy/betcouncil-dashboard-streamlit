@@ -368,4 +368,19 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        log("UNHANDLED EXCEPTION:\n" + tb)
+        try:
+            token = os.environ.get("GITHUB_TOKEN")
+            if token:
+                push_files({"betcouncil_signalodds_debug.json": {
+                    "content": json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(),
+                                            "error": "unhandled_exception", "traceback": tb}, indent=2)
+                }})
+        except Exception:
+            pass
+        sys.exit(1)
