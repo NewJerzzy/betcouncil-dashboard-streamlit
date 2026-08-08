@@ -84,6 +84,8 @@ import sys
 from datetime import datetime, timezone
 
 import requests
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 import time
 import random
 
@@ -424,27 +426,37 @@ def main() -> int:
     }
     content = json.dumps(payload, indent=2)
 
-    # ── Step 4: Gist slot management ──────────────────────────────────────
-    log("Checking gist slot availability")
-    existing_files = _get_gist_files(github_token)
+    # ── Step 4: Merge into shared file, preserving other scripts' keys ────
+    log("Acquiring evbets_combined lock")
+    lock_token = acquire_lock(GIST_ID, github_token, "evbets_combined", holder="evbets")
+    if not lock_token:
+        log("Could not acquire evbets_combined lock -- skipping this run to avoid a collision")
+        return 0
+    try:
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if TARGET_FILE in r_files:
+                raw_url = r_files[TARGET_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        # Update only evbets' own top-level keys; every other key (other
+        # scripts' merged sub-objects) passes through untouched.
+        existing.update(payload)
+        content2 = json.dumps(existing)
+        files_payload = {TARGET_FILE: {"content": content2}}
 
-    if TARGET_FILE in existing_files:
-        log(f"  Target '{TARGET_FILE}' exists — pushing update")
-        files_payload = {TARGET_FILE: {"content": content}}
-    else:
-        log(f"  Target '{TARGET_FILE}' not found — repurposing '{LEGACY_FILE}' via rename")
-        files_payload = {
-            LEGACY_FILE: {
-                "filename": TARGET_FILE,
-                "content": content,
-            }
-        }
-
-    # Push even when total_bets == 0 so the "no active bets" state is
-    # recorded in the gist (avoids stale data from a previous run with bets).
-    pushed = push_files(files_payload, github_token)
-    log(f"Pushed {pushed} file(s) → {TARGET_FILE}")
-    return 0 if pushed > 0 else 1
+        pushed = push_files(files_payload, github_token)
+        log(f"Pushed {pushed} file(s) → {TARGET_FILE}")
+        return 0 if pushed > 0 else 1
+    finally:
+        release_lock(GIST_ID, github_token, "evbets_combined", lock_token)
 
 
 if __name__ == "__main__":
