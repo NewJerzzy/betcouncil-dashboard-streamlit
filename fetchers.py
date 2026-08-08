@@ -17676,7 +17676,8 @@ def fetch_favoredprops_from_gist(kind: str, sport: str, max_age_minutes: int = 1
     """
     if kind not in ("dfs", "sportsbook"):
         return []
-    data = _read_gist_file(f"betcouncil_favoredprops_{kind}_{sport.upper()}.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_favoredprops_combined.json", cache_minutes=5)
+    data = (combined or {}).get(f"{kind}_{sport.upper()}", {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("props", [])
         if isinstance(raw, list):
