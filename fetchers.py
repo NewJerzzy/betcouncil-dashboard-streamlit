@@ -18365,7 +18365,8 @@ def fetch_prophetx_from_gist(sport: str) -> tuple:
     MLB/NHL/MMA/TENNIS/GOLF/SOCCER/OTHER (see prophetx_harvester.py
     classify_sport). Not yet normalized into BetCouncil's internal prop/
     line schema — callers get the raw harvester payload today."""
-    data = _read_gist_file(f"betcouncil_prophetx_{sport}.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_prophetx_combined.json", cache_minutes=10)
+    data = (combined or {}).get(str(sport).upper(), {})
     if data and _is_fresh(data, max_age_minutes=100):
         events = data.get("events", [])
         if events:
