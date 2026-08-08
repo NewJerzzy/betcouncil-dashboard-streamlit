@@ -10,4 +10,4 @@ jobs:
         with: {python-version: "3.11"}
       - run: pip install requests
       - env: {GITHUB_TOKEN: "${{ secrets.PICK6_GIST_TOKEN }}"}
-        run: python scripts/bp_livetest.py
+        run: python scripts/bp_diag3.py
