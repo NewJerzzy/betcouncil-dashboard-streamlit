@@ -13422,7 +13422,8 @@ def fetch_bovada_props(sport: str) -> list:
     Returns list of {Player, Prop, Line, OverOdds, UnderOdds, Book, Sport, source}
     """
     try:
-        oddsapiio_data = _read_gist_file(f"betcouncil_oddsapiio_bovada_props_{sport.upper()}.json", cache_minutes=15)
+        _combined = _read_gist_file("betcouncil_oddsapiio_combined.json", cache_minutes=15)
+        oddsapiio_data = (_combined or {}).get(f"bovada_props_{sport.upper()}")
     except Exception:
         oddsapiio_data = None
     if oddsapiio_data and oddsapiio_data.get("props"):
@@ -13754,7 +13755,8 @@ def fetch_bet365_game_lines(sport: str) -> list:
     a known Kambi platform customer) -- dead weight, not a real fallback.
     """
     try:
-        data = _read_gist_file(f"betcouncil_oddsapiio_bet365_{sport.upper()}.json", cache_minutes=15)
+        _combined = _read_gist_file("betcouncil_oddsapiio_combined.json", cache_minutes=15)
+        data = (_combined or {}).get(f"bet365_{sport.upper()}")
     except Exception:
         data = None
     if data and data.get("games"):
@@ -16365,7 +16367,8 @@ def fetch_fanduel_props_from_gist(sport: str) -> list:
     Returns (props_list, source_label)
     """
     try:
-        oddsapiio_data = _read_gist_file(f"betcouncil_oddsapiio_fanduel_props_{sport.upper()}.json", cache_minutes=15)
+        _combined = _read_gist_file("betcouncil_oddsapiio_combined.json", cache_minutes=15)
+        oddsapiio_data = (_combined or {}).get(f"fanduel_props_{sport.upper()}")
     except Exception:
         oddsapiio_data = None
     if oddsapiio_data and oddsapiio_data.get("props"):
@@ -16975,7 +16978,8 @@ def fetch_mybookie_ssr_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     entries). Game-line comparison data — same category as Dimers/
     BettingPros/Covers, not props.
     """
-    data = _read_gist_file(f"betcouncil_mybookie_ssr_{sport.upper()}.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_mybookie_ssr_combined.json", cache_minutes=5)
+    data = (combined or {}).get(sport.upper(), {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("games", [])
         if isinstance(raw, list):
