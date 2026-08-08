@@ -38,7 +38,7 @@ def main():
 
     resp = requests.patch(f"https://api.github.com/gists/{GIST_ID}",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {"betcouncil_oddsapiio_bovada_props_debug.json": {"content": json.dumps(result, default=str)}}})
+        json={"files": {"betcouncil_zz_bp_temp_debug_9f8e7d.json": {"content": json.dumps(result, default=str)}}})
     print(resp.status_code)
 
 if __name__ == "__main__":
