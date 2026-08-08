@@ -38,6 +38,8 @@ import urllib.parse
 from datetime import datetime, timezone
 from collections import defaultdict
 import random
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -403,6 +405,76 @@ def push_to_gist(key: str, payload: dict) -> bool:
     return False
 
 
+def push_merged_to_gist(wallets_payload: dict, live_payload: dict) -> bool:
+    """
+    Confirmed real bug (2026-08-07): betcouncil_sharptrack_wallets/
+    live.json never once landed on this Gist despite the harvester
+    itself completing real work every run (confirmed via job timing:
+    64s of real fetching, then a silent push failure). Merges both
+    into betcouncil_sharp_feeds.json under "sharptrack_wallets" /
+    "sharptrack_live" keys, using the real distributed lock.
+    """
+    if not GITHUB_TOKEN:
+        log("ERROR: GITHUB_TOKEN not set")
+        return False
+    SHARED_FILE = "betcouncil_sharp_feeds.json"
+
+    lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", holder="sharptrack")
+    if not lock_token:
+        log("Could not acquire sharp_feeds lock -- skipping this run to avoid a collision")
+        return False
+    try:
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                listing = json.loads(r.read())
+            r_files = listing.get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                with urllib.request.urlopen(raw_url, timeout=15) as r2:
+                    existing = json.loads(r2.read())
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        existing["sharptrack_wallets"] = wallets_payload
+        existing["sharptrack_live"] = live_payload
+        body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing, default=str)}}}).encode()
+
+        for attempt in range(4):
+            req = urllib.request.Request(
+                f"https://api.github.com/gists/{GIST_ID}", data=body, method="PATCH",
+                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json",
+                         "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    if r.status != 200:
+                        return False
+                    resp_body = json.loads(r.read())
+                    if SHARED_FILE in (resp_body.get("files") or {}):
+                        return True
+                    log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
+            except urllib.error.HTTPError as e:
+                if e.code in (403, 429, 409) and attempt < 3:
+                    wait = 8 * (attempt + 1)
+                    log(f"  Gist push got HTTP {e.code} -- retrying in {wait}s (attempt {attempt+1}/4)")
+                    time.sleep(wait)
+                    continue
+                log(f"  Gist push failed: HTTP {e.code}")
+                return False
+            except Exception as e:
+                log(f"  Gist push failed: {e}")
+                return False
+            if attempt < 3:
+                time.sleep(5)
+        return False
+    finally:
+        release_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", lock_token)
+
+
 def run():
     log("Fetching Polymarket SPORTS/ESPORTS leaderboards...")
     raw_wallets = fetch_leaderboards()
@@ -447,11 +519,10 @@ def run():
         "clusters": clusters[:50],
     }
 
-    ok1 = push_to_gist("betcouncil_sharptrack_wallets.json", wallets_payload)
-    ok2 = push_to_gist("betcouncil_sharptrack_live.json", live_payload)
-    log(f"  wallets push: {'ok' if ok1 else 'FAILED'}, live push: {'ok' if ok2 else 'FAILED'}")
+    ok = push_merged_to_gist(wallets_payload, live_payload)
+    log(f"  merged push: {'ok' if ok else 'FAILED'}")
 
-    if not (ok1 and ok2):
+    if not ok:
         sys.exit(1)
 
 
