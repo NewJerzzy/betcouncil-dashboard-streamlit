@@ -62,6 +62,8 @@ from datetime import datetime, timezone
 import requests
 import time
 import random
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.smarkets.com/v3"
@@ -132,33 +134,69 @@ def build_contract(c: dict) -> dict:
 
 
 def push_files(files_payload: dict, github_token: str) -> int:
-    for attempt in range(5):
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
-            json={"files": files_payload}, timeout=60,
-        )
-        if resp.status_code in (200, 201):
-            returned_files = resp.json().get("files", {}) or {}
-            missing = [fn for fn in files_payload if fn not in returned_files]
-            if missing and attempt < 4:
-                wait = min((attempt + 1) * 5, 30)
-                log(f"Push returned 200 but {missing} missing from response -- retrying in {wait}s")
+    """
+    Confirmed real bug (2026-08-07): betcouncil_smarkets_game_lines_MLB/
+    props_MLB/debug.json never once landed on this Gist despite the
+    fetch logic working. Merges into betcouncil_market_feeds.json
+    (matches this script's 30-min cadence group) under a "smarkets"
+    key, using the real distributed lock.
+    """
+    if not _rate_limit_ok(github_token):
+        return 0
+    SHARED_FILE = "betcouncil_market_feeds.json"
+    merged = {}
+    for fname, fbody in files_payload.items():
+        key = fname.replace("betcouncil_smarkets_", "").replace(".json", "")
+        try:
+            merged[key] = json.loads(fbody["content"])
+        except Exception:
+            merged[key] = fbody["content"]
+
+    lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="smarkets")
+    if not lock_token:
+        log("Could not acquire market_feeds lock -- skipping this run to avoid a collision")
+        return 0
+    try:
+        try:
+            r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                              headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                              timeout=15)
+            r_files = r.json().get("files", {})
+            if SHARED_FILE in r_files:
+                raw_url = r_files[SHARED_FILE]["raw_url"]
+                existing = requests.get(raw_url, timeout=15).json()
+            else:
+                existing = {}
+        except Exception as e:
+            log(f"Could not read existing shared file, starting fresh: {e}")
+            existing = {}
+        existing["smarkets"] = merged
+        shared_payload = {SHARED_FILE: {"content": json.dumps(existing)}}
+
+        for attempt in range(4):
+            resp = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": shared_payload}, timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                returned_files = resp.json().get("files", {}) or {}
+                if SHARED_FILE in returned_files:
+                    return len(files_payload)
+                if attempt < 3:
+                    time.sleep(5)
+                    continue
+                return 0
+            if resp.status_code in (403, 429, 409) and attempt < 3:
+                wait = min((attempt + 1) * 8, 30)
+                log(f"Gist {resp.status_code} -- retrying in {wait}s (attempt {attempt+1}/4)")
                 time.sleep(wait)
                 continue
-            if missing:
-                log(f"Push returned 200 but {missing} still missing after retries -- treating as failed")
-                return len(files_payload) - len(missing)
-            return len(files_payload)
-        if resp.status_code in (403, 429, 409) and attempt < 4:
-            base_wait = min(10 * (2 ** attempt), 90)  # 10, 20
-            wait = base_wait + random.uniform(0, base_wait * 0.4)
-            log(f"Gist push got {resp.status_code} -- retrying in {wait:.1f}s (attempt {attempt+1}/5)")
-            time.sleep(wait)
-            continue
-        log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            log(f"Gist push failed: {resp.status_code} {resp.text[:300]}")
+            return 0
         return 0
-    return 0
+    finally:
+        release_lock(GIST_ID, github_token, "market_feeds", lock_token)
 
 
 def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
