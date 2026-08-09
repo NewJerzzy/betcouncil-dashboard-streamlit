@@ -78,6 +78,17 @@ def _read_lock(gist_id: str, github_token: str, lock_name: str) -> dict:
 
 
 def _write_lock(gist_id: str, github_token: str, lock_name: str, payload: dict) -> bool:
+    """
+    Confirmed real bug (2026-08-09): this only checked the HTTP status
+    code, not whether the file actually appeared in the response --
+    matching the "200 but silently missing" pattern confirmed elsewhere
+    this session. For a brand-new lock name (first-ever acquisition
+    attempt, no pre-existing lock file), this let a genuinely-failed
+    write masquerade as success, which then made the verify-read
+    correctly find nothing and misread it as "someone else raced us"
+    rather than "my own write vanished" -- causing acquire_lock to
+    fail every attempt with no way to recover. Now verifies presence.
+    """
     fname = _lock_filename(lock_name)
     try:
         resp = requests.patch(
@@ -86,7 +97,10 @@ def _write_lock(gist_id: str, github_token: str, lock_name: str, payload: dict) 
             json={"files": {fname: {"content": json.dumps(payload)}}},
             timeout=20,
         )
-        return resp.status_code in (200, 201)
+        if resp.status_code not in (200, 201):
+            return False
+        returned_files = resp.json().get("files", {}) or {}
+        return fname in returned_files
     except Exception:
         return False
 
