@@ -2,7 +2,7 @@ name: BallDontLie Scores Refresh
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "1,21,41 * * * *"
   workflow_dispatch: {}
 
 jobs:
