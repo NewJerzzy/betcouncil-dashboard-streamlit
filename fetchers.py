@@ -18868,7 +18868,8 @@ def fetch_linestar_salaries_from_gist(sport="MLB"):
     MatchupData[].PlayerMatchups[]: SID, PlayerId, Values [PA,AVG,SB,HR,RBI,ISO,wOBA,
     wOBA+ISO,HR/PA,HR+SB/PA,wRC+,FP/PA], Ranks.
     """
-    data = _read_gist_file(f"betcouncil_linestar_salaries_{sport}.json", 5)
+    combined = _read_gist_file("betcouncil_linestar_salaries_combined.json", 5)
+    data = (combined or {}).get(sport, {})
     if data and _is_fresh(data, 65):
         return data.get("data", {}), "browser_harvester"
     return {}, "unavailable"
