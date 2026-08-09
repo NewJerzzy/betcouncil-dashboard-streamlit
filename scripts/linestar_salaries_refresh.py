@@ -223,4 +223,17 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback, requests as _req
+        tb = traceback.format_exc()
+        log("UNHANDLED EXCEPTION:\n" + tb)
+        try:
+            _tok = os.environ.get("GITHUB_TOKEN")
+            _req.patch(f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
+                json={"files": {"betcouncil_linestar_salaries_debug.json": {"content": json.dumps({"note": "crash trace", "traceback": tb})}}})
+        except Exception:
+            pass
+        sys.exit(1)
