@@ -119,18 +119,29 @@ def _is_stale(lock: dict) -> bool:
 
 
 def acquire_lock(gist_id: str, github_token: str, lock_name: str, holder: str,
-                  max_attempts: int = 6, verify_delay_seconds: float = 2.5) -> str:
+                  max_attempts: int = 4, verify_delay_seconds: float = 2.5) -> str:
     """
     Attempts to acquire the named lock. Returns a unique token string on
     success (pass this to release_lock), or "" if the lock could not be
     acquired after max_attempts.
+
+    max_attempts reduced from 6 to 4 (2026-08-09): real production
+    evidence this session traced repeated GitHub secondary-rate-limit
+    trips partly to lock-retry volume compounding on top of normal
+    write traffic. Now that the real contributing crons are staggered
+    (see .github/workflows/*_refresh.yml minute-offset fixes same
+    session), genuine multi-script contention on one lock name should
+    be rare -- 4 attempts is enough margin without the worst-case call
+    count of the original 6. Backoff base also widened (5s->8s) to
+    target GitHub's actual documented secondary-limit trigger --
+    rapid requests within a short window -- not just fewer calls.
     """
     from datetime import datetime, timezone
 
     for attempt in range(max_attempts):
         current = _read_lock(gist_id, github_token, lock_name)
         if current and not _is_stale(current):
-            wait = min(5 * (attempt + 1), 30) + random.uniform(0, 3)
+            wait = min(8 * (attempt + 1), 40) + random.uniform(0, 3)
             print(f"[gist_lock] {lock_name} held by {current.get('holder','?')}, waiting {wait:.1f}s (attempt {attempt+1}/{max_attempts})", flush=True)
             time.sleep(wait)
             continue
@@ -142,7 +153,7 @@ def acquire_lock(gist_id: str, github_token: str, lock_name: str, holder: str,
             "acquired_at": datetime.now(timezone.utc).isoformat(),
         }
         if not _write_lock(gist_id, github_token, lock_name, claim):
-            time.sleep(2 + random.uniform(0, 2))
+            time.sleep(3 + random.uniform(0, 3))
             continue
 
         # Claim-then-verify: another script may have raced us and written
@@ -154,7 +165,7 @@ def acquire_lock(gist_id: str, github_token: str, lock_name: str, holder: str,
             print(f"[gist_lock] {lock_name} acquired by {holder}", flush=True)
             return my_token
 
-        wait = 3 + random.uniform(0, 4)
+        wait = 4 + random.uniform(0, 5)
         print(f"[gist_lock] Lost the race for {lock_name} to {verify.get('holder','?')} -- retrying in {wait:.1f}s", flush=True)
         time.sleep(wait)
 
