@@ -16574,7 +16574,8 @@ def fetch_action_network_from_gist(sport: str) -> dict:
 
 def fetch_covers_from_gist(sport: str) -> tuple:
     """PRIMARY: Covers consensus % from browser harvester. SECONDARY: scraper."""
-    data = _read_gist_file(f"betcouncil_covers_{sport}.json", cache_minutes=5)
+    _cv_combined = _read_gist_file("betcouncil_covers_combined.json", cache_minutes=5)
+    data = (_cv_combined or {}).get(sport)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
         if raw:
