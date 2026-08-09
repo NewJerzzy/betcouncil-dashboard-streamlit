@@ -5388,7 +5388,8 @@ def fetch_bettingpros_props(sport: str) -> list:
     -- feeds the SignalNotes overlay in score_pick_standalone, matched
     per-player the same way GamblingForecast's playerProps is.
     """
-    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    _bp_combined = _read_gist_file("betcouncil_bettingpros_combined.json", cache_minutes=30)
+    data = (_bp_combined or {}).get(sport.upper())
     if not data:
         return []
     return data.get("props", [])
@@ -5640,7 +5641,8 @@ def fetch_bettingpros_hitrate(player_name, sport="MLB"):
     participant.player.short_name (BettingPros' own compact format,
     e.g. "S. Drohan").
     """
-    data = _read_gist_file(f"betcouncil_bettingpros_{sport.upper()}.json", cache_minutes=30)
+    _bp_combined = _read_gist_file("betcouncil_bettingpros_combined.json", cache_minutes=30)
+    data = (_bp_combined or {}).get(sport.upper())
     if not data:
         return []
     props = data.get("props", [])
