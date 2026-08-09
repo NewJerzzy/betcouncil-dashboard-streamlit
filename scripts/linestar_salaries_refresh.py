@@ -259,7 +259,21 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
-        import traceback, requests as _req
+        import traceback
         tb = traceback.format_exc()
         log("UNHANDLED EXCEPTION:\n" + tb)
+        try:
+            _tok = os.environ.get("GITHUB_TOKEN")
+            _r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"}, timeout=15)
+            _files = _r.json().get("files", {})
+            _existing = {}
+            if "betcouncil_linestar_salaries_combined.json" in _files:
+                _existing = requests.get(_files["betcouncil_linestar_salaries_combined.json"]["raw_url"], timeout=15).json()
+            _existing["_crash_note"] = tb
+            requests.patch(f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/vnd.github+json"},
+                json={"files": {"betcouncil_linestar_salaries_combined.json": {"content": json.dumps(_existing)}}}, timeout=20)
+        except Exception:
+            pass
         sys.exit(1)
