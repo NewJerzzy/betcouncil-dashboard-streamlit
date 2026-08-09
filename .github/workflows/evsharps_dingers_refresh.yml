@@ -2,7 +2,7 @@ name: EVSharps Dingers Refresh
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '3,23,43 * * * *'
   workflow_dispatch: {}
 
 jobs:
