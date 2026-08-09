@@ -4242,7 +4242,8 @@ with tabs[3]:
         # independent sources agreed on it.
         _osk_game = None
         try:
-            _osk_data = load_from_gist(f"oddsshark_consensus_{_gsport.upper()}", None) or {}
+            _osk_combined = load_from_gist("oddsshark_consensus_combined", {}) or {}
+            _osk_data = _osk_combined.get(_gsport.upper(), {})
             for _osk_g in _osk_data.get("games", []):
                 _osk_home, _osk_away = _osk_g.get("home_team", ""), _osk_g.get("away_team", "")
                 if _osk_home and _osk_away and _home_nm and _away_nm and (
