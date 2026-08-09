@@ -2,7 +2,7 @@ name: LineStar Data Refresh
 
 on:
   schedule:
-    - cron: "37 * * * *"   # offset from top-of-hour -- confirmed :00 is the most contended slot (shared by 7+ other workflows), likely cause of intermittent push failures despite the code itself working cleanly
+    - cron: "38 * * * *"   # offset from top-of-hour -- confirmed :00 is the most contended slot (shared by 7+ other workflows), likely cause of intermittent push failures despite the code itself working cleanly
   workflow_dispatch: {}
 
 jobs:
