@@ -2046,7 +2046,7 @@ def check_daily_risk_limits(sport=None):
 _GIST_BATCH_WINDOW = 5.0  # seconds
 
 # Keys that must be flushed immediately rather than held in the batch window.
-_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status", "weight_overrides", "weight_adjustment_log", "optimized_weights"})
+_GIST_CRITICAL_KEYS = frozenset({"history", "bankroll", "signal_performance", "injury_performance", "locks", "scrapeops_status", "weight_overrides", "weight_adjustment_log", "optimized_weights", "board_snapshots"})
 # "locks" added 2026-07: WIN/LOSS/VOID slip buttons remove a lock from
 # st.session_state immediately, then call save_to_gist("locks", ...) — but
 # as a non-critical key that write was only QUEUED, flushed up to 5s later.
@@ -13096,8 +13096,8 @@ def store_board_snapshot(board, sport):
         stored = {k: v for k, v in stored.items() if v.get("date", "0000-00-00") >= cutoff}
         save_json_data(BOARD_SNAP_PATH, stored)  # local cache for same-session reads
         save_to_gist("board_snapshots", stored)
-    except (ValueError, KeyError, TypeError, AttributeError):
-        pass
+    except (ValueError, KeyError, TypeError, AttributeError) as _snap_err:
+        print(f"[WARN] store_board_snapshot failed: {type(_snap_err).__name__}: {_snap_err}")
 
 
 def store_game_board_snapshot(game_analysis, sport):
@@ -15345,7 +15345,16 @@ def load_sport_data(sport):
         })
     st.session_state["better_lines_lookup"] = better_lines
     # oddswrap already fetched in parallel above — just compute discrepancies
-    multibook_discrepancies = compare_multibook_lines(pp_props if pp_props else [], oddswrap_props or [])
+    _full_book_pool = list(oddswrap_props or [])
+    for _alt_prop, _alt_book in all_alt_sources:
+        if isinstance(_alt_prop, dict) and _alt_prop.get("Player") and _alt_prop.get("Prop"):
+            _full_book_pool.append({
+                "Player": _alt_prop.get("Player", ""),
+                "Prop":   _alt_prop.get("Prop", ""),
+                "Line":   _alt_prop.get("Line", 0),
+                "Book":   _alt_book,
+            })
+    multibook_discrepancies = compare_multibook_lines(pp_props if pp_props else [], _full_book_pool)
     st.session_state["line_discrepancies"] = []
     st.session_state["multibook_discrepancies"] = multibook_discrepancies
 
