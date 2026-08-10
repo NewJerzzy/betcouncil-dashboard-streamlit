@@ -13714,6 +13714,22 @@ def load_sport_data(sport):
             return _fetch_vsin_splits(sport)
         except Exception:
             return []
+    def _pf_baseballpress2():
+        if sport != "MLB":
+            return None
+        try:
+            from fetchers import fetch_baseballpress_from_gist as _fbp
+            return _fbp()
+        except Exception:
+            return None
+    def _pf_weather2():
+        if sport not in ("NFL", "MLB"):
+            return None
+        try:
+            from fetchers import fetch_weather_from_gist as _fwx
+            return _fwx(sport)
+        except Exception:
+            return None
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
@@ -14042,7 +14058,7 @@ def load_sport_data(sport):
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
-        _pf_evbets2, _pf_vsin_splits2,
+        _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
 
@@ -14061,7 +14077,7 @@ def load_sport_data(sport):
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
      parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw,
-     evbets2_raw, vsin_splits2_raw) = _results
+     evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
     # NOT added to the _parallel_fns tuple above. That tuple is already a
@@ -14196,18 +14212,12 @@ def load_sport_data(sport):
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
         ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
     ]
-    if sport == "MLB":
-        try:
-            from fetchers import fetch_baseballpress_from_gist as _fbp
-            _bp_data, _bp_src = _fbp()
-            if _bp_data: st.session_state["baseballpress_lineups"] = _bp_data
-        except Exception: pass
-    if sport in ("NFL","MLB"):
-        try:
-            from fetchers import fetch_weather_from_gist as _fwx
-            _wx_data, _ = _fwx(sport)
-            if _wx_data: st.session_state["weather_data"] = _wx_data
-        except Exception: pass
+    if sport == "MLB" and baseballpress2_raw:
+        _bp_data, _bp_src = baseballpress2_raw
+        if _bp_data: st.session_state["baseballpress_lineups"] = _bp_data
+    if sport in ("NFL","MLB") and weather2_raw:
+        _wx_data, _ = weather2_raw
+        if _wx_data: st.session_state["weather_data"] = _wx_data
     _harvester_results = _fetch_harvester_data_cached(sport, tuple(h[0] for h in _harvester_sources))
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         _result = _harvester_results.get(_fn_name)
