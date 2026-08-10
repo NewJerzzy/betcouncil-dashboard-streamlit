@@ -10806,6 +10806,34 @@ with tabs[14]:
     except Exception:
         _logger.debug("System Metrics Mini-Dashboard failed silently")
 
+    # ── Slowest Fetch Slots (real per-slot timing, not just the average) ──
+    # fetch_timings has captured per-slot elapsed time on every board load
+    # this whole session (see _fetch_parallel's _timed() wrapper) but it
+    # was never actually displayed anywhere -- only ever rolled up into an
+    # average. Total board-load wall time is bounded by the SLOWEST slot in
+    # a wave, not the average, so this is the real, direct answer to "what
+    # to speed up next" instead of guessing at which sources might be slow.
+    try:
+        _sf_timings = st.session_state.get("fetch_timings", {})
+        if _sf_timings:
+            _sf_sorted = sorted(_sf_timings.items(), key=lambda kv: kv[1].get("time", 0), reverse=True)[:15]
+            with st.expander(f"🐢 Slowest Fetch Slots ({len(_sf_timings)} tracked this session)", expanded=False):
+                for _sf_name, _sf_info in _sf_sorted:
+                    _sf_t = _sf_info.get("time", 0)
+                    _sf_status = _sf_info.get("status", "")
+                    _sf_color = "#e04040" if _sf_t > 15 else ("#f5a623" if _sf_t > 5 else "#6a7a8a")
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem;">'
+                        f'<span>{_sf_name}</span>'
+                        f'<span style="color:{_sf_color};font-weight:600;">{_sf_t:.1f}s</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    if _sf_status.startswith("❌"):
+                        st.caption(f"　{_sf_status}")
+    except Exception:
+        _logger.debug("Slowest Fetch Slots table failed silently")
+
     # ── Model Self-Learning (plain-language) ──────────────────────────
     # Surfaces the same weekly_audit.py weight-adjustment run that used
     # to only be visible in a GitHub Issue -- written for a non-technical
