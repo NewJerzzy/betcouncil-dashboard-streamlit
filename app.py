@@ -12864,8 +12864,9 @@ with tabs[6]:
             st.markdown(f'<div class="ms-card" style="padding:4px 8px;">{_ms_rows_html}</div>', unsafe_allow_html=True)
             if len(_ms_all_props) > 60:
                 st.caption(f"Showing top 60 of {len(_ms_all_props)} props by {_ms_sort.lower()}.")
-    except Exception:
+    except Exception as _ms_err:
         st.info("Market Scanner data unavailable right now — try loading a board first.")
+        st.caption(f"Debug: {type(_ms_err).__name__}: {_ms_err}")
 
     # ── Kalshi order book ──────────────────────────────────────────
     # Real bid/ask spread + volume/liquidity/open interest per market
