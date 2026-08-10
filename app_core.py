@@ -13593,8 +13593,8 @@ def load_sport_data(sport):
     # _fetch_parallel was built last session but never wired in — now connected.
     def _pf_prizepicks():   return scrape_prizepicks_with_gist_fallback(sport)
     def _pf_underdog():     return fetch_underdog_props(sport)
-    def _pf_dk_sal():       return []  # fetch_dk_salaries not implemented
     def _pf_pinnacle():     return fetch_pinnacle_game_lines(sport)
+    def _pf_dk_sal():       return []  # fetch_dk_salaries not implemented
     def _pf_oddswrap():     return fetch_oddswrap_props(sport)
     _parlayapi_key = f'parlayapi_props_{sport}'
     def _pf_parlayapi():
@@ -13702,6 +13702,18 @@ def load_sport_data(sport):
     def _pf_fd_props_sa():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_sharpapi_drops(): return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_sharpapi_ev():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
+    def _pf_evbets2():
+        try:
+            from fetchers import fetch_evbets_from_gist as _fetch_evbets
+            return _fetch_evbets(sport)
+        except Exception:
+            return []
+    def _pf_vsin_splits2():
+        try:
+            from fetchers import fetch_vsin_splits_from_gist as _fetch_vsin_splits
+            return _fetch_vsin_splits(sport)
+        except Exception:
+            return []
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
@@ -14030,6 +14042,7 @@ def load_sport_data(sport):
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
+        _pf_evbets2, _pf_vsin_splits2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
 
@@ -14047,7 +14060,8 @@ def load_sport_data(sport):
      nba_advanced_raw, pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
-     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw) = _results
+     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw,
+     evbets2_raw, vsin_splits2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
     # NOT added to the _parallel_fns tuple above. That tuple is already a
@@ -14072,22 +14086,9 @@ def load_sport_data(sport):
     # (prop bets — currently always empty since evbets.app only publishes
     # moneyline/spread/total value bets, no player props as of 2026-08-01).
     # Keyed per-sport so a refresh of one sport doesn't clobber another.
-    try:
-        from fetchers import fetch_evbets_from_gist as _fetch_evbets
-        _evbets_bets = _fetch_evbets(sport)
-        st.session_state["evbets_ev_picks"]   = _evbets_bets
-        st.session_state["evbets_prop_picks"] = []
-    except Exception as _evb_err:
-        st.session_state.setdefault("evbets_ev_picks",   [])
-        st.session_state.setdefault("evbets_prop_picks", [])
-        print(f"[WARN] fetch_evbets_from_gist({sport}): {_evb_err}")
-
-    try:
-        from fetchers import fetch_vsin_splits_from_gist as _fetch_vsin_splits
-        st.session_state["vsin_splits_games"] = _fetch_vsin_splits(sport)
-    except Exception as _vs_err:
-        st.session_state.setdefault("vsin_splits_games", [])
-        print(f"[WARN] fetch_vsin_splits_from_gist({sport}): {_vs_err}")
+    st.session_state["evbets_ev_picks"]   = evbets2_raw or []
+    st.session_state["evbets_prop_picks"] = []
+    st.session_state["vsin_splits_games"] = vsin_splits2_raw or []
 
     # Unpack game_lines tuple safely
     if isinstance(_game_lines_result, tuple) and len(_game_lines_result) == 4:
