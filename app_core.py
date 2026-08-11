@@ -15765,6 +15765,11 @@ def load_sport_data(sport):
             for _t, _res in zip(_def_teams, _def_results):
                 _team_def_prefetch[_t] = _res
 
+    # Team-to-matchup cache: confirmed real duplicate work -- the same
+    # "find my team's game in the games list" scan ran twice per prop
+    # (once for opponent defense rating, once for sharp flag lookup)
+    # and was re-scanned from scratch for every prop sharing a team.
+    _team_matchup_cache = {}
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
@@ -15870,33 +15875,40 @@ def load_sport_data(sport):
         opp_def_rating = 112.0
         opp_team_abbrev = ""
         if player_team and games:
-            for game in games:
-                matchup = game["Matchup"]
-                if player_team in matchup:
-                    parts = matchup.replace("@","vs").split()
-                    for p2 in parts:
-                        if (p2 != player_team and len(p2) <= 3 and p2.isalpha()):
-                            opp_team_abbrev = p2
-                            season_def = team_defense.get(p2, 112.0)
-                            recent_def = _team_def_prefetch.get(p2)
-                            if recent_def and recent_def.get("def_rating_recent"):
-                                recent_rating = recent_def["def_rating_recent"]
-                                is_playoff_month = is_playoff  # use regime-aware flag from fetch_game_lines
-                                recent_weight = 0.80 if is_playoff_month else 0.70
-                                season_weight = 1 - recent_weight
-                                opp_def_rating = round(recent_rating * recent_weight + season_def * season_weight, 1)
-                            else:
-                                opp_def_rating = season_def
-                                avg_dict["def_data_stale"] = True
-                            if (sport == "NBA" and stat_norm == "PTS" and p2 in NBA_POSITION_DEFENSE):
-                                position = NBA_PLAYER_POSITIONS.get(player, "")
-                                if position:
-                                    pos_allowed = NBA_POSITION_DEFENSE[p2].get(position, LEAGUE_AVG_POSITION.get(position, 22.0))
-                                    league_pos_avg = LEAGUE_AVG_POSITION.get(position, 22.0)
-                                    pos_adj_rtg = round((pos_allowed / league_pos_avg) * 112.0, 1)
-                                    opp_def_rating = round(pos_adj_rtg * 0.5 + opp_def_rating * 0.5, 1)
-                            break
-                    break
+            if player_team not in _team_matchup_cache:
+                _found_matchup, _found_opp, _found_game = None, None, None
+                for game in games:
+                    matchup = game["Matchup"]
+                    if player_team in matchup:
+                        _found_game = game
+                        parts = matchup.replace("@","vs").split()
+                        for p2 in parts:
+                            if (p2 != player_team and len(p2) <= 3 and p2.isalpha()):
+                                _found_matchup, _found_opp = matchup, p2
+                                break
+                        break
+                _team_matchup_cache[player_team] = (_found_matchup, _found_opp, _found_game)
+            _cached_matchup, p2, _cached_game = _team_matchup_cache[player_team]
+            if p2:
+                opp_team_abbrev = p2
+                season_def = team_defense.get(p2, 112.0)
+                recent_def = _team_def_prefetch.get(p2)
+                if recent_def and recent_def.get("def_rating_recent"):
+                    recent_rating = recent_def["def_rating_recent"]
+                    is_playoff_month = is_playoff  # use regime-aware flag from fetch_game_lines
+                    recent_weight = 0.80 if is_playoff_month else 0.70
+                    season_weight = 1 - recent_weight
+                    opp_def_rating = round(recent_rating * recent_weight + season_def * season_weight, 1)
+                else:
+                    opp_def_rating = season_def
+                    avg_dict["def_data_stale"] = True
+                if (sport == "NBA" and stat_norm == "PTS" and p2 in NBA_POSITION_DEFENSE):
+                    position = NBA_PLAYER_POSITIONS.get(player, "")
+                    if position:
+                        pos_allowed = NBA_POSITION_DEFENSE[p2].get(position, LEAGUE_AVG_POSITION.get(position, 22.0))
+                        league_pos_avg = LEAGUE_AVG_POSITION.get(position, 22.0)
+                        pos_adj_rtg = round((pos_allowed / league_pos_avg) * 112.0, 1)
+                        opp_def_rating = round(pos_adj_rtg * 0.5 + opp_def_rating * 0.5, 1)
         is_home = False
         if player_team and games:
             for matchup, home in home_teams.items():
@@ -15911,21 +15923,18 @@ def load_sport_data(sport):
                 avg_val = avg if avg > 0 else 1
                 usage_boost = min(raw_boost / avg_val * 0.5, 0.10)
         sharp_flag = ""
-        if player_team and games:
-            for game in games:
-                matchup = game.get("Matchup", "")
-                if player_team in matchup:
-                    sharp_info = game_sharp_flags.get(matchup, {})
-                    if sharp_info.get("sharp"):
-                        sharp_flag = f"⚡ Sharp {sharp_info['direction']}{sharp_info['magnitude']}"
-                    pb_data = st.session_state.get("public_betting_data", {})
-                    for gkey, gd in pb_data.items():
-                        gteams = gd.get("teams", [])
-                        if player_team in gteams:
-                            pb_signals = gd.get("sharp_signals", [])
-                            if pb_signals:
-                                sharp_flag = sharp_flag + " 📊PB" if sharp_flag else "📊 Public sharp"
-                            break
+        if player_team and games and _cached_matchup:
+            matchup = _cached_matchup
+            sharp_info = game_sharp_flags.get(matchup, {})
+            if sharp_info.get("sharp"):
+                sharp_flag = f"⚡ Sharp {sharp_info['direction']}{sharp_info['magnitude']}"
+            pb_data = st.session_state.get("public_betting_data", {})
+            for gkey, gd in pb_data.items():
+                gteams = gd.get("teams", [])
+                if player_team in gteams:
+                    pb_signals = gd.get("sharp_signals", [])
+                    if pb_signals:
+                        sharp_flag = sharp_flag + " 📊PB" if sharp_flag else "📊 Public sharp"
                     break
         # Rest days — use actual game schedule if available
         if player_team in b2b_teams:
@@ -15933,12 +15942,8 @@ def load_sport_data(sport):
         else:
             # Try to compute from game schedule
             _rest_days = 2  # default
-            if games and player_team:
-                for _g in games:
-                    if player_team in _g.get("Matchup",""):
-                        # If DaysRest field populated from fetch_game_lines
-                        _rest_days = int(_g.get("DaysRest", 2))
-                        break
+            if games and player_team and _cached_game:
+                _rest_days = int(_cached_game.get("DaysRest", 2))
             days_rest = _rest_days
         blowout_adj = 0.0
         if player_team and games:
