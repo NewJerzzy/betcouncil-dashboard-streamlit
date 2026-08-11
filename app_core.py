@@ -16797,8 +16797,11 @@ def load_sport_data(sport):
             final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _stat_adj)), 4)
 
         # ── Projection confidence score ─────────────────────────
-        _sample_n = len([h for h in st.session_state.get("history", [])
-                         if normalize_name(h.get("player","")) == normalize_name(player)])
+        _sn_key = ("_sample_n", normalize_name(player))
+        if _sn_key not in _team_matchup_cache:
+            _team_matchup_cache[_sn_key] = len([h for h in st.session_state.get("history", [])
+                             if normalize_name(h.get("player","")) == normalize_name(player)])
+        _sample_n = _team_matchup_cache[_sn_key]
         _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
         _lineup_conf = p.get("LineupStatus","").startswith("✅") if p.get("LineupStatus") else None
         # Real Pinnacle agreement: how close our model's probability is to
