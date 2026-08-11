@@ -16429,22 +16429,10 @@ def load_sport_data(sport):
                 pass
 
         # ── SharpAPI Pinnacle steam detection ────────────────────────────────
-        if home_team or away_team:
-            try:
-                _sa_drops = st.session_state.get("sharpapi_line_drops", [])
-                _steam = next((d for d in _sa_drops if d.get("is_steam") and (
-                    normalize_name(home_team or "") in normalize_name(d.get("home",""))
-                    or normalize_name(away_team or "") in normalize_name(d.get("away",""))
-                )), None)
-                if _steam:
-                    _dp = _steam.get("drop_pct",0)
-                    p["SteamMove"]   = True
-                    p["SignalNotes"] = p.get("SignalNotes","") + f" 🔥 Steam:{_dp:+.1%}"
-                    if abs(_dp) > 0.05:
-                        final_edge = min(final_edge * 1.06, EDGE_CAP)
-            except Exception:
-                _logger.debug("Silent except at line 12372")
-                pass
+        # Confirmed real dead code (2026-08-10): sharpapi_line_drops is
+        # always [] -- SharpAPI was removed Aug 1 2026, _pf_sharpapi_drops
+        # is a stub that unconditionally returns []. This scanned an
+        # always-empty list every prop for a guaranteed no-op. Removed.
 
         # ── Defense ranking adjustment ─────────────────────────────────────
         if final_edge > 0 and p.get("Matchup"):
