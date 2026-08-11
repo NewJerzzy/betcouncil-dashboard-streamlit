@@ -8245,10 +8245,14 @@ with tabs[7]:
                 board_match = None
                 if board:
                     norm_player = normalize_name(player)
-                    for b in board:
-                        if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
-                            board_match = b
-                            break
+                    _sps_idx = score_pick_standalone._board_index_cache.get("_index", {})
+                    if score_pick_standalone._board_index_cache.get("_id") == id(board):
+                        board_match = _sps_idx.get((norm_player, stat.lower()))
+                    else:
+                        for b in board:
+                            if normalize_name(b.get("Player","")) == norm_player and                            b.get("Prop","").lower() == stat.lower():
+                                board_match = b
+                                break
                 if board_match:
                     better_line = board_match.get("BetterLineNote", "")
                     dk_note     = board_match.get("DKSalaryNote", "")
