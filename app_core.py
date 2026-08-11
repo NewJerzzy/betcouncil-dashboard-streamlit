@@ -17569,24 +17569,15 @@ def load_sport_data(sport):
     arb_opps = detect_arbitrage_opportunities(sport)
     st.session_state["arb_opportunities"] = arb_opps
     alt_line_upgrades = []
+    # Confirmed real dead-weight loop (2026-08-10): get_best_alt_line_
+    # recommendation is a stub (bc_utils.py) that unconditionally returns
+    # None -- every call here did real work (string parsing, tier check)
+    # for a guaranteed-same null result. Replaced with the direct
+    # equivalent of the else-branch that always ran anyway.
     for prop in enriched:
-        if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
-            continue
-        upgrade = get_best_alt_line_recommendation(
-            prop["Player"], prop["Prop"], prop["Line"], prop["Prob"],
-            float(str(prop.get("EV_2pick","0%")).replace("%","").replace("+","")) / 100,
-            prop["Avg"], prop.get("StdDev"), sport, st.session_state.get("bankroll", DEFAULT_BANKROLL),
-        )
-        if upgrade:
-            alt_line_upgrades.append(upgrade)
-            prop["AltLineUpgrade"] = upgrade
-            prop["BestAltLine"] = upgrade["best_line"]
-            prop["BestAltEV"] = f"{upgrade['best_ev']:+.1%}"
-            prop["BestAltPayout"] = upgrade["best_payout"]
-        else:
-            prop["AltLineUpgrade"] = None
-            prop["BestAltLine"] = None
-            prop["BestAltEV"] = None
+        prop["AltLineUpgrade"] = None
+        prop["BestAltLine"] = None
+        prop["BestAltEV"] = None
     st.session_state["alt_line_upgrades"] = alt_line_upgrades
     # Sort by LockScore first, then ProjConfidence as tiebreaker
     enriched.sort(key=lambda x: (
