@@ -17757,6 +17757,7 @@ def load_sport_data(sport):
     # ═══════════════════════════════════════════════════════════
     _today_month = date.today().month
     _is_late_season = _today_month in [3, 4, 6, 9]  # NBA/NHL playoffs, NFL preseason end, MLB late
+    _team_games_cache = {}
     for prop in enriched:
         if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
             continue
@@ -17772,22 +17773,23 @@ def load_sport_data(sport):
         # Check 1: Clinched/Eliminated — team has nothing to play for
         # Proxy: late season + heavy favorite spread (team resting starters)
         if _is_late_season and _team and _games:
-            for game in _games:
-                matchup = game.get("Matchup","")
-                if _team in matchup:
-                    try:
-                        spread_raw = str(game.get("Spread","0")).replace("+","")
-                        spread_val = abs(float(spread_raw)) if spread_raw not in ("—","") else 0
-                        if spread_val >= 12 and _stat in ("Points","Pts+Reb+Ast","Rebounds","Assists"):
-                            _overrides.append(f"🗓️ Late season + large spread ({spread_raw}) — possible rest/load management situation. Starters may play limited minutes.")
-                            if _original_tier == "SOVEREIGN":
-                                prop["Tier"] = "ELITE"
-                                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
-                            elif _original_tier == "ELITE":
-                                prop["Tier"] = "APPROVED"
-                                prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
-                    except (ValueError, TypeError):
-                        pass
+            if _team not in _team_games_cache:
+                _team_games_cache[_team] = [g for g in _games if _team in g.get("Matchup","")]
+            for game in _team_games_cache[_team]:
+                try:
+                    spread_raw = str(game.get("Spread","0")).replace("+","")
+                    spread_val = abs(float(spread_raw)) if spread_raw not in ("—","") else 0
+                    if spread_val >= 12 and _stat in ("Points","Pts+Reb+Ast","Rebounds","Assists"):
+                        _overrides.append(f"🗓️ Late season + large spread ({spread_raw}) — possible rest/load management situation. Starters may play limited minutes.")
+                        if _original_tier == "SOVEREIGN":
+                            prop["Tier"] = "ELITE"
+                            prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
+                        elif _original_tier == "ELITE":
+                            prop["Tier"] = "APPROVED"
+                            prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: late season load mgmt risk"
+                except (ValueError, TypeError):
+                    pass
+
 
         # Check 2: Recent low minutes — player averaging far less than baseline
         _sample_size = prop.get("SampleSize", 0)
