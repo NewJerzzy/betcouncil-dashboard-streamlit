@@ -14031,7 +14031,12 @@ def load_sport_data(sport):
         if result:
             st.session_state[_parlayapi_arb_key] = result
         return result
-    def _pf_unabated():       return fetch_unabated_lines(sport.lower())
+    def _pf_unabated():
+        try:
+            _ub_data, _ = fetch_unabated_from_gist(sport)
+            return _ub_data
+        except Exception:
+            return []
 
     @st.cache_data(ttl=300, show_spinner=False)
     def _get_parallel_results(_cache_sport):
