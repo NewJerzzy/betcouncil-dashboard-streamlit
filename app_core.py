@@ -17324,17 +17324,9 @@ def load_sport_data(sport):
                 prop["CoversConsensus"] = None
 
     # ── Unabated sharp line validation ─────────────────────────────────────
-    # Unabated provides Pinnacle-derived no-vig fair lines for game totals/spreads.
-    # If our prop edge aligns with Unabated's fair value direction, boost confidence.
-    _unabated = st.session_state.get("unabated_lines", [])
-    if _unabated:
-        _unabated_lookup = {}
-        for _u in _unabated:
-            _gm = normalize_name(_u.get("game", ""))
-            if _gm:
-                _unabated_lookup[_gm] = _u
-        for prop in enriched:
-            prop["UnabatedNote"] = ""
+    # Confirmed real dead code (2026-08-10): both the lookup build AND the
+    # "UnabatedNote" field it wrote were never read anywhere in the
+    # codebase. Removed entirely -- zero observable behavior change.
 
     # ── SharpAPI +EV signal ────────────────────────────────────────────────────
     # SharpAPI pre-computes Pinnacle no-vig EV on every prop.
