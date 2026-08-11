@@ -13033,11 +13033,12 @@ with tabs[2]:
     # ══════════════════════════════════════════════════════════════════
     _pred_gl_items = []
 
-    for _pred_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER"):
-        if not _pred_sport_match(_pred_sport):
-            continue
+    _pred_bl_sports = [s for s in ("MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER") if _pred_sport_match(s)]
+    _pred_bl_fns = [(lambda _s=_s: fetch_betslib_predictions(_s)) for _s in _pred_bl_sports]
+    _pred_bl_results = _fetch_parallel(_pred_bl_fns, show_progress=False)
+    for _pred_sport, _bl_preds_for_sport in zip(_pred_bl_sports, _pred_bl_results):
         try:
-            for p in fetch_betslib_predictions(_pred_sport):
+            for p in (_bl_preds_for_sport or []):
                 _pick = p.get("pick", "")
                 if _pick and _pick in (p.get("home", ""), p.get("away", "")):
                     _pred_gl_items.append({
@@ -13061,11 +13062,23 @@ with tabs[2]:
     except Exception:
         pass
 
-    for _pred_sport in ("MLB", "NBA", "NFL", "NHL"):
-        if not _pred_sport_match(_pred_sport):
-            continue
+    _pred_glp_sports = [s for s in ("MLB", "NBA", "NFL", "NHL") if _pred_sport_match(s)]
+    _pred_glp_sources = [
+        ("BetQL", fetch_betql_from_gist),
+        ("Pickswise", fetch_pickswise_picks_from_gist),
+        ("WiseGuyTeam", fetch_wiseguyteam_from_gist),
+    ]
+    _pred_glp_keys = [(src_name, sp) for src_name, _ in _pred_glp_sources for sp in _pred_glp_sports]
+    _pred_glp_fns = [
+        (lambda _fn=fn, _sp=sp: _fn(_sp))
+        for src_name, fn in _pred_glp_sources for sp in _pred_glp_sports
+    ]
+    _pred_glp_results = _fetch_parallel(_pred_glp_fns, show_progress=False)
+    _pred_glp_lookup = dict(zip(_pred_glp_keys, _pred_glp_results))
+
+    for _pred_sport in _pred_glp_sports:
         try:
-            for g in fetch_betql_from_gist(_pred_sport):
+            for g in (_pred_glp_lookup.get(("BetQL", _pred_sport)) or []):
                 _comm = g.get("community", [])
                 _ml = next((c for c in _comm if c.get("bet_type") == "moneyline"), None)
                 if _ml:
@@ -13081,7 +13094,7 @@ with tabs[2]:
             pass
 
         try:
-            for g in fetch_pickswise_picks_from_gist(_pred_sport):
+            for g in (_pred_glp_lookup.get(("Pickswise", _pred_sport)) or []):
                 if g.get("pick_side"):
                     _pred_gl_items.append({
                         "sport": _pred_sport, "away": g.get("away_team", ""), "home": g.get("home_team", ""),
@@ -13092,7 +13105,7 @@ with tabs[2]:
             pass
 
         try:
-            for g in fetch_wiseguyteam_from_gist(_pred_sport):
+            for g in (_pred_glp_lookup.get(("WiseGuyTeam", _pred_sport)) or []):
                 if g.get("has_sharp"):
                     _away, _home = g.get("away_team", ""), g.get("home_team", "")
                     _flag_labels = {
@@ -13196,11 +13209,12 @@ with tabs[2]:
         except Exception:
             pass
 
-    for _pred_sport in ("MLB", "NBA", "NFL", "NHL", "WNBA"):
-        if not _pred_sport_match(_pred_sport):
-            continue
+    _pred_bp_sports = [s for s in ("MLB", "NBA", "NFL", "NHL", "WNBA") if _pred_sport_match(s)]
+    _pred_bp_fns = [(lambda _s=_s: fetch_bettingpros_props(_s)) for _s in _pred_bp_sports]
+    _pred_bp_results = _fetch_parallel(_pred_bp_fns, show_progress=False)
+    for _pred_sport, _bp_props_for_sport in zip(_pred_bp_sports, _pred_bp_results):
         try:
-            for p in fetch_bettingpros_props(_pred_sport):
+            for p in (_bp_props_for_sport or []):
                 _proj = p.get("projection", {}) or {}
                 if not _proj.get("recommended_side"):
                     continue
@@ -13223,11 +13237,12 @@ with tabs[2]:
         except Exception:
             pass
 
-    for _pred_sport in ("mlb", "nba", "wnba", "nfl", "nhl"):  # Bobby's Bets' real coverage (lowercase slugs)
-        if not _pred_sport_match(_pred_sport.upper()):
-            continue
+    _pred_bbp_sports = [s for s in ("mlb", "nba", "wnba", "nfl", "nhl") if _pred_sport_match(s.upper())]
+    _pred_bbp_fns = [(lambda _s=_s: fetch_bobbys_bets_picks(_s)) for _s in _pred_bbp_sports]
+    _pred_bbp_results = _fetch_parallel(_pred_bbp_fns, show_progress=False)
+    for _pred_sport, _bbp_picks_for_sport in zip(_pred_bbp_sports, _pred_bbp_results):
         try:
-            for p in fetch_bobbys_bets_picks(_pred_sport):
+            for p in (_bbp_picks_for_sport or []):
                 _pred_pp_items.append({
                     "sport": _pred_sport.upper(), "player": p.get("player_name", ""),
                     "line": p.get("line", ""), "prop": p.get("stat_category", ""),
@@ -13237,11 +13252,12 @@ with tabs[2]:
         except Exception:
             pass
 
-    for _pred_sport in ("MLB", "NBA", "NFL", "NHL"):
-        if not _pred_sport_match(_pred_sport):
-            continue
+    _pred_betql2_sports = [s for s in ("MLB", "NBA", "NFL", "NHL") if _pred_sport_match(s)]
+    _pred_betql2_fns = [(lambda _s=_s: fetch_betql_from_gist(_s)) for _s in _pred_betql2_sports]
+    _pred_betql2_results = _fetch_parallel(_pred_betql2_fns, show_progress=False)
+    for _pred_sport, _betql2_games_for_sport in zip(_pred_betql2_sports, _pred_betql2_results):
         try:
-            for g in fetch_betql_from_gist(_pred_sport):
+            for g in (_betql2_games_for_sport or []):
                 for pp in g.get("player_props", []):
                     _direction = "Over" if (pp.get("direction") or 0) > 0 else "Under"
                     _pred_pp_items.append({
