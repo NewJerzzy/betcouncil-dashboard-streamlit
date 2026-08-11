@@ -17300,14 +17300,18 @@ def load_sport_data(sport):
     # ── Covers.com consensus signal ──────────────────────────────────────────
     _covers = st.session_state.get("covers_raw", {})
     if _covers and isinstance(_covers, dict):
+        _covers_match_cache = {}
         for prop in enriched:
             _matchup = prop.get("Matchup", "")
-            _cov = _covers.get(_matchup, {})
-            if not _cov:
-                for _ck, _cv in _covers.items():
-                    if any(t in _matchup for t in _ck.split(" @ ")):
-                        _cov = _cv
-                        break
+            if _matchup not in _covers_match_cache:
+                _cov_found = _covers.get(_matchup, {})
+                if not _cov_found:
+                    for _ck, _cv in _covers.items():
+                        if any(t in _matchup for t in _ck.split(" @ ")):
+                            _cov_found = _cv
+                            break
+                _covers_match_cache[_matchup] = _cov_found
+            _cov = _covers_match_cache[_matchup]
             if _cov:
                 _side = prop.get("Side", "OVER")
                 _pct = float(_cov.get("over_pct") or 0) if _side=="OVER" else float(_cov.get("under_pct") or 0)
