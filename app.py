@@ -3434,9 +3434,18 @@ with tabs[3]:
             key=lambda v: v.get("timestamp", ""),
         )
 
+        _gl_per_sport_fetch_cache = {}
         for _gi, _g in enumerate(_fgames):
             _matchup = _g.get("matchup", _g.get("Matchup","—"))
             _gsport = _g.get("Sport",_sport2)
+            if _gsport not in _gl_per_sport_fetch_cache:
+                _gl_per_sport_fetch_cache[_gsport] = {
+                    "betql": fetch_betql_from_gist(_gsport),
+                    "pickswise": fetch_pickswise_picks_from_gist(_gsport),
+                    "wgt": fetch_wiseguyteam_from_gist(_gsport),
+                    "betslib": fetch_betslib_predictions(_gsport),
+                    "signalodds_arb": fetch_signalodds_arbitrage_from_gist(),
+                }
             _line_movement = get_line_movement_summary(_matchup, _gsport, _g)
             _gtime = _g.get("Time","—")
             _injury = _g.get("Injury","")
@@ -3626,20 +3635,21 @@ with tabs[3]:
                     if p.get("tier") not in (None, "—") and p.get("pick") not in (None, "", "—", "No Market", "No Edge")
                 ]
 
-                # Fetch each external source once per game (not per market)
-                _ext_betql = next((g2 for g2 in fetch_betql_from_gist(_gsport)
+                # Fetch each external source once per sport (cached above, not per game)
+                _gl_sport_cache = _gl_per_sport_fetch_cache[_gsport]
+                _ext_betql = next((g2 for g2 in _gl_sport_cache["betql"]
                                     if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
                                        _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
-                _ext_pickswise = next((g2 for g2 in fetch_pickswise_picks_from_gist(_gsport)
+                _ext_pickswise = next((g2 for g2 in _gl_sport_cache["pickswise"]
                                         if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
                                            _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
-                _ext_wgt = next((g2 for g2 in fetch_wiseguyteam_from_gist(_gsport)
+                _ext_wgt = next((g2 for g2 in _gl_sport_cache["wgt"]
                                   if _gl_teams_match(g2.get("home_team",""), _g.get("home","")) and
                                      _gl_teams_match(g2.get("away_team",""), _g.get("away",""))), None)
-                _ext_so_preds = [p2 for p2 in fetch_betslib_predictions(_gsport)
+                _ext_so_preds = [p2 for p2 in _gl_sport_cache["betslib"]
                                   if _gl_teams_match(p2.get("home",""), _g.get("home","")) and
                                      _gl_teams_match(p2.get("away",""), _g.get("away",""))]
-                _ext_so_arb = [a2 for a2 in fetch_signalodds_arbitrage_from_gist()
+                _ext_so_arb = [a2 for a2 in _gl_sport_cache["signalodds_arb"]
                                if not a2.get("locked") and
                                   _gl_teams_match(a2.get("home_team",""), _g.get("home","")) and
                                   _gl_teams_match(a2.get("away_team",""), _g.get("away",""))]
