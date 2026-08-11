@@ -12237,8 +12237,17 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
         _ps_conf_edge = 0.0
         _pn_norm = normalize_name(player_name)
         _ev_lookup_all = st.session_state.get("ev_signal_lookup", {})
-        for (_lk_p, _lk_prop), _lk_v in _ev_lookup_all.items():
-            if _lk_p == _pn_norm and isinstance(_lk_v, dict) and _lk_v.get("ps_ev_confirm"):
+        _cmse_cache = compute_multi_signal_edge._ev_by_player_cache
+        _ev_id = id(_ev_lookup_all)
+        if _cmse_cache.get("_id") != _ev_id:
+            _by_player = {}
+            for (_lk_p, _lk_prop), _lk_v in _ev_lookup_all.items():
+                _by_player.setdefault(_lk_p, []).append(_lk_v)
+            _cmse_cache.clear()
+            _cmse_cache["_id"] = _ev_id
+            _cmse_cache["_index"] = _by_player
+        for _lk_v in _cmse_cache["_index"].get(_pn_norm, []):
+            if isinstance(_lk_v, dict) and _lk_v.get("ps_ev_confirm"):
                 _ps_raw = safe_float(_lk_v.get("ps_ev_edge", 0))
                 _ps_conf_edge = max(_ps_conf_edge, max(-0.03, min(0.03, _ps_raw)))
         if _ps_conf_edge:
@@ -12255,6 +12264,8 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
     prob = base_prob + signal_adjustment
     prob = max(0.20, min(0.80, prob))
     return combined, prob, signals
+
+compute_multi_signal_edge._ev_by_player_cache = {}
 
 # make_display_df — moved to bc_utils.py
 # fetch_dk_salaries → fetchers.py
