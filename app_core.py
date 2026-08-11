@@ -17906,17 +17906,23 @@ def load_sport_data(sport):
     if sport == "MLB":
         _mlb_lineups_enriched = st.session_state.get("mlb_confirmed_lineups", {})
         if _mlb_lineups_enriched:
+            _lineup_names_cache = {}
             for _ep in enriched:
                 _pname = _ep.get("Player","")
                 _pteam = _ep.get("Team","")
                 _team_lineup = _mlb_lineups_enriched.get(_pteam, {})
                 if _team_lineup.get("confirmed"):
-                    _lineup_names = [normalize_name(pl["name"]) for pl in _team_lineup.get("players",[])]
-                    if normalize_name(_pname) not in _lineup_names:
+                    if _pteam not in _lineup_names_cache:
+                        _lineup_names_cache[_pteam] = {
+                            normalize_name(pl["name"]): pl.get("batting_order")
+                            for pl in _team_lineup.get("players",[])
+                        }
+                    _order_lookup = _lineup_names_cache[_pteam]
+                    _npname = normalize_name(_pname)
+                    if _npname not in _order_lookup:
                         _ep["LineupStatus"] = "⚠️ Not in confirmed lineup"
                     else:
-                        _bat_pos = next((pl["batting_order"] for pl in _team_lineup["players"]
-                                        if normalize_name(pl["name"]) == normalize_name(_pname)), None)
+                        _bat_pos = _order_lookup[_npname]
                         _ep["LineupStatus"] = f"✅ Batting #{_bat_pos}" if _bat_pos else "✅ In lineup"
     store_board_snapshot(enriched, sport)
     _curr_depth = st.session_state.get("espn_depth_charts", {})
