@@ -17103,22 +17103,35 @@ def load_sport_data(sport):
         enriched[-1]["KellyCalibProb"]        = _cal_prob
         enriched[-1]["KellyDecayedEdge"]      = _decayed_edge
     # Add H2H signal to each prop (uses cached game logs if available)
+    # Per-player logs cache within this loop: confirmed real redundant I/O
+    # -- multiple props per player were each independently re-reading and
+    # re-deserializing the same pickle file. Same data, same computation,
+    # just avoids reading a player's file more than once per board load.
+    _h2h_logs_cache = {}
     for prop in enriched:
         player = prop.get("Player","")
         opponent = prop.get("Opponent","")
         stat = prop.get("Prop","")
         line = prop.get("Line",0)
         if player and opponent and line > 0:
-            cache_key = f"bdl_logs_{normalize_name(player)}_2025"
-            cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-            if os.path.exists(cache_path):
+            _h2h_pkey = normalize_name(player)
+            if _h2h_pkey not in _h2h_logs_cache:
+                cache_key = f"bdl_logs_{_h2h_pkey}_2025"
+                cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+                _logs = None
+                if os.path.exists(cache_path):
+                    try:
+                        with open(cache_path, "rb") as cf:
+                            _logs = pickle.load(cf)
+                    except (ValueError, TypeError, EOFError, pickle.UnpicklingError, OSError):
+                        _logs = None
+                _h2h_logs_cache[_h2h_pkey] = _logs
+            logs = _h2h_logs_cache[_h2h_pkey]
+            if logs is not None:
                 try:
-                    with open(cache_path, "rb") as cf:
-                        logs = pickle.load(cf)
                     h2h_rate, h2h_n, h2h_str = compute_h2h_hit_rate(logs, opponent, stat, line)
                     if h2h_rate is not None and h2h_n >= 3:
                         prop["H2HRate"] = f"{h2h_rate:.0%} ({h2h_str})"
-                        # Boost edge if strong H2H hit rate
                         if h2h_rate >= 0.70:
                             prop["Edge"] = round(prop.get("Edge",0) + 0.02, 4)
                         elif h2h_rate <= 0.30:
@@ -17129,6 +17142,7 @@ def load_sport_data(sport):
                     prop["H2HRate"] = "—"
             else:
                 prop["H2HRate"] = "—"
+
         else:
             prop["H2HRate"] = "—"
 
