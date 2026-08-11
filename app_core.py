@@ -17274,14 +17274,18 @@ def load_sport_data(sport):
         for _pm in _poly:
             _q = normalize_name(_pm.get("question", ""))
             _poly_lookup[_q] = _pm
+        _poly_match_cache = {}
         for prop in enriched:
             _pname = normalize_name(prop.get("Player", ""))
             _pstat = str(prop.get("Prop", "")).lower()
-            _poly_match = None
-            for _pk, _pv in _poly_lookup.items():
-                if _pname and _pname in _pk:
-                    _poly_match = _pv
-                    break
+            if _pname not in _poly_match_cache:
+                _pm_match = None
+                for _pk, _pv in _poly_lookup.items():
+                    if _pname and _pname in _pk:
+                        _pm_match = _pv
+                        break
+                _poly_match_cache[_pname] = _pm_match
+            _poly_match = _poly_match_cache[_pname]
             if _poly_match:
                 try:
                     _yes_p = float(_poly_match.get("yes_price", 0) or 0)
