@@ -15872,6 +15872,7 @@ def load_sport_data(sport):
             )
 
         player_team = PLAYER_TEAM_MAP.get(player, "")
+        _cached_matchup, p2, _cached_game = None, None, None
         opp_def_rating = 112.0
         opp_team_abbrev = ""
         if player_team and games:
@@ -16008,16 +16009,13 @@ def load_sport_data(sport):
             except (ValueError, KeyError, TypeError, AttributeError):
                 pass
         game_total_adj = 0.0
-        if sport == "NBA" and player_team:
-            for game in games:
-                if player_team in game.get("Matchup", ""):
-                    total = game.get("Total", "N/A")
-                    if total and total != "N/A":
-                        try:
-                            game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
-                        except (ValueError, TypeError, ZeroDivisionError):
-                            pass
-                    break
+        if sport == "NBA" and player_team and _cached_game:
+            total = _cached_game.get("Total", "N/A")
+            if total and total != "N/A":
+                try:
+                    game_total_adj = (float(total) - 225.0) / 225.0 * 0.05
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
         weather_adj = 0.0
         weather_note = ""
         if sport == "MLB":
@@ -16380,14 +16378,14 @@ def load_sport_data(sport):
         if (an_grade in ("C", "D") and final_edge > 0.05):
             final_edge = final_edge * 0.90
         if sharp_flag and best_side == "OVER":
-            player_matchup = next((g["Matchup"] for g in games if player_team in g.get("Matchup","")), "")
+            player_matchup = _cached_matchup or ""
             sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
             if sharp_direction == "↑":
                 final_edge = min(final_edge * 1.10, EDGE_CAP)
             elif sharp_direction == "↓":
                 final_edge = final_edge * 0.90
         elif sharp_flag and best_side == "UNDER":
-            player_matchup = next((g["Matchup"] for g in games if player_team in g.get("Matchup","")), "")
+            player_matchup = _cached_matchup or ""
             sharp_direction = game_sharp_flags.get(player_matchup, {}).get("direction", "")
             if sharp_direction == "↓":
                 final_edge = min(final_edge * 1.10, EDGE_CAP)
@@ -16402,7 +16400,7 @@ def load_sport_data(sport):
         if clv_mult != 1.0:
             final_edge = max(-EDGE_CAP, min(EDGE_CAP, final_edge * clv_mult))
         # ── Scanbet Pinnacle line movement (GraphQL) ───────────────────────
-        _sb_matchup = next((g["Matchup"] for g in games if player_team and player_team in g.get("Matchup","")), "")
+        _sb_matchup = _cached_matchup or ""
         home_team = home_teams.get(_sb_matchup, "")
         away_team = away_teams.get(_sb_matchup, "")
         if home_team or away_team:
