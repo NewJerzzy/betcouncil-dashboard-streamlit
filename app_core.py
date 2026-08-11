@@ -12294,10 +12294,24 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
     pkey = (norm_player, stat.lower(), float(line))
     entry = props.get(pkey)
 
-    # Try fuzzy stat match
+    # Fuzzy stat match, scoped to this player only (confirmed real fix:
+    # the fallback always required k[0] == norm_player anyway, so a full
+    # scan of every player's entries was wasted work every call -- this
+    # builds a by-player index once per unique props dict and reuses it,
+    # same matching conditions, same result, just skips entries that
+    # would be rejected by the player check regardless).
     if not entry:
-        for k, v in props.items():
-            if k[0] == norm_player and abs(k[2] - float(line)) <= 0.5:
+        _pf_idx_cache = pinnacle_fair_value._by_player_cache
+        _props_id = id(props)
+        if _pf_idx_cache.get("_id") != _props_id:
+            _by_player = {}
+            for k, v in props.items():
+                _by_player.setdefault(k[0], []).append((k, v))
+            _pf_idx_cache.clear()
+            _pf_idx_cache["_id"] = _props_id
+            _pf_idx_cache["_index"] = _by_player
+        for k, v in _pf_idx_cache["_index"].get(norm_player, []):
+            if abs(k[2] - float(line)) <= 0.5:
                 stat_match = (
                     stat.lower()[:4] in k[1].lower() or
                     k[1].lower()[:4] in stat.lower()
@@ -12327,6 +12341,9 @@ def pinnacle_fair_value(player, stat, line, side="OVER", sport="NBA"):
         note = f"📌 Pinnacle neutral: {prob:.1%} true prob"
 
     return prob, confirms, note
+
+pinnacle_fair_value._by_player_cache = {}
+
 
 
 def pinnacle_game_fair_value(home_team, away_team, market, sport, model_side=None):
