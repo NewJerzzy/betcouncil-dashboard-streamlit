@@ -15946,55 +15946,49 @@ def load_sport_data(sport):
                 _rest_days = int(_cached_game.get("DaysRest", 2))
             days_rest = _rest_days
         blowout_adj = 0.0
-        if player_team and games:
-            for game in games:
-                matchup = game.get("Matchup", "")
-                if player_team in matchup:
-                    spread = game.get("Spread", "—")
-                    blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, matchup)
-                    break
+        if player_team and games and _cached_matchup and _cached_game:
+            spread = _cached_game.get("Spread", "—")
+            blowout_adj = blowout_risk_adjustment(spread, sport, player_team, home_teams, away_teams, _cached_matchup)
         referee_adj = 0.0
         ref_note = ""
         officials_data = st.session_state.get("officials_data", {})
         if officials_data and player_team:
-            for matchup, refs in officials_data.items():
-                if player_team in matchup:
-                    for ref in refs:
-                        if sport == "NBA":
-                            ref_data = NBA_REFEREE_TENDENCIES.get(ref, {})
-                            if ref_data and stat_norm == "PTS":
-                                referee_adj += ref_data.get("pts_adj", 0)
-                                foul_rate = ref_data.get("foul_rate", "")
-                                if foul_rate == "high":
-                                    ref_note = f"📋 {ref}: high foul rate"
-                                elif foul_rate == "low":
-                                    ref_note = f"📋 {ref}: physical game"
-                        elif sport == "MLB":
-                            ref_data = MLB_UMPIRE_TENDENCIES.get(ref, {})
-                            if ref_data and stat_norm == "SO":
-                                referee_adj += ref_data.get("so_adj", 0)
-                                zone = ref_data.get("zone", "")
-                                if zone == "large":
-                                    ref_note = f"⚾ {ref}: large zone"
-                                elif zone == "tight":
-                                    ref_note = f"⚾ {ref}: tight zone"
-                    break
+            _off_cache_key = ("_officials", player_team)
+            if _off_cache_key not in _team_matchup_cache:
+                _found_refs = None
+                for matchup, refs in officials_data.items():
+                    if player_team in matchup:
+                        _found_refs = refs
+                        break
+                _team_matchup_cache[_off_cache_key] = _found_refs
+            _refs_for_team = _team_matchup_cache[_off_cache_key]
+            if _refs_for_team:
+                for ref in _refs_for_team:
+                    if sport == "NBA":
+                        ref_data = NBA_REFEREE_TENDENCIES.get(ref, {})
+                        if ref_data and stat_norm == "PTS":
+                            referee_adj += ref_data.get("pts_adj", 0)
+                            foul_rate = ref_data.get("foul_rate", "")
+                            if foul_rate == "high":
+                                ref_note = f"📋 {ref}: high foul rate"
+                            elif foul_rate == "low":
+                                ref_note = f"📋 {ref}: physical game"
+                    elif sport == "MLB":
+                        ref_data = MLB_UMPIRE_TENDENCIES.get(ref, {})
+                        if ref_data and stat_norm == "SO":
+                            referee_adj += ref_data.get("so_adj", 0)
+                            zone = ref_data.get("zone", "")
+                            if zone == "large":
+                                ref_note = f"⚾ {ref}: large zone"
+                            elif zone == "tight":
+                                ref_note = f"⚾ {ref}: tight zone"
         pace_adj = 0.0
-        opp_abbr = ""
-        if player_team:
-            for game in games:
-                if player_team in game.get("Matchup", ""):
-                    parts = game["Matchup"].replace("@", "vs").split()
-                    for p2 in parts:
-                        if p2 != player_team and len(p2) <= 3 and p2.isalpha():
-                            opp_abbr = p2
-                            if sport == "NBA":
-                                player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
-                                opp_pace = NBA_TEAM_PACE.get(p2, 99.5)
-                                combined_pace = (player_pace + opp_pace) / 2
-                                pace_adj = (combined_pace - 99.5) / 99.5
-                            break
-                    break
+        opp_abbr = opp_team_abbrev
+        if player_team and opp_abbr and sport == "NBA":
+            player_pace = NBA_TEAM_PACE.get(player_team, 99.5)
+            opp_pace = NBA_TEAM_PACE.get(opp_abbr, 99.5)
+            combined_pace = (player_pace + opp_pace) / 2
+            pace_adj = (combined_pace - 99.5) / 99.5
 
         # S7 H2H Signal — hit rate vs this specific opponent
         h2h_adj = 0.0
