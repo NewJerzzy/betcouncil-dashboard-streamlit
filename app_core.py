@@ -17384,17 +17384,20 @@ def load_sport_data(sport):
     # Low public % + our model edge = sharp-side lean.
     _an_public = st.session_state.get("public_betting_data", {})
     if _an_public:
+        _an_match_cache = {}
         for prop in enriched:
             matchup = prop.get("Matchup", "")
             if not matchup:
                 continue
-            _pub = _an_public.get(matchup, {})
-            if not _pub:
-                # Try fuzzy match
-                for _mk, _mv in _an_public.items():
-                    if any(t in matchup for t in _mk.split(" @ ")):
-                        _pub = _mv
-                        break
+            if matchup not in _an_match_cache:
+                _pub_found = _an_public.get(matchup, {})
+                if not _pub_found:
+                    for _mk, _mv in _an_public.items():
+                        if any(t in matchup for t in _mk.split(" @ ")):
+                            _pub_found = _mv
+                            break
+                _an_match_cache[matchup] = _pub_found
+            _pub = _an_match_cache[matchup]
             if _pub:
                 side = prop.get("Side", "OVER")
                 if side == "OVER":
