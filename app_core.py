@@ -9669,9 +9669,22 @@ def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
     stat_lower = stat.lower().replace(" ","").replace("+","")
     best_match = None
     best_line_diff = 999
-    for entry in alt_lines_data:
-        if normalize_name(entry.get("player","")) != norm_player:
-            continue
+
+    # Index by player once per unique alt_lines_data object (confirmed
+    # real fix: every entry was scanned on every call even though the
+    # player check always ran first and rejected non-matches -- same
+    # conditions, same result, just scoped to this player's own entries).
+    _fddk_cache = get_fanduel_dk_validation._by_player_cache
+    _alt_id = id(alt_lines_data)
+    if _fddk_cache.get("_id") != _alt_id:
+        _by_player = {}
+        for entry in alt_lines_data:
+            _by_player.setdefault(normalize_name(entry.get("player","")), []).append(entry)
+        _fddk_cache.clear()
+        _fddk_cache["_id"] = _alt_id
+        _fddk_cache["_index"] = _by_player
+
+    for entry in _fddk_cache["_index"].get(norm_player, []):
         entry_stat = entry.get("stat","").lower().replace(" ","").replace("+","")
         if entry_stat not in stat_lower and stat_lower not in entry_stat:
             continue
@@ -9695,6 +9708,7 @@ def get_fanduel_dk_validation(player, stat, line, sport, alt_lines_data):
                 "fades": prob < 0.45,
             }
     return None
+get_fanduel_dk_validation._by_player_cache = {}
 
 def detect_arbitrage_opportunities(sport):
     cache_path = os.path.join(CACHE_DIR, f"odds_api_props_{sport}.pkl")
