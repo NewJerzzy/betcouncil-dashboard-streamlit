@@ -17432,6 +17432,12 @@ def load_sport_data(sport):
     _bankroll_mult_data = compute_bankroll_multiplier()
     _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
     _cal_history = st.session_state.get("history", [])
+    # Memoize adaptive_kelly_fraction by its real varying inputs (confirmed
+    # pure function, no side effects, _cal_history fixed for this whole
+    # loop) -- this was recomputing the full Brier score from ~630+ history
+    # entries on every prop that lacked a pre-computed KellyAdaptiveFraction,
+    # the single most expensive call found in this whole enrichment pass.
+    _adapt_frac_cache = {}
     for prop in enriched:
         _tier      = prop.get("Tier", "APPROVED")
         _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
@@ -17440,10 +17446,17 @@ def load_sport_data(sport):
         _prop_market = prop.get("Prop", "GENERAL")
 
         # Use pre-computed adaptive fraction if available (set during enrichment)
-        # otherwise compute it here
-        _adapt_frac = prop.get("KellyAdaptiveFraction") or adaptive_kelly_fraction(
-            _tier_frac, _cal_history, sport=_prop_sport, market=_prop_market
-        )
+        # otherwise compute it here (memoized -- same inputs give same output)
+        _precomputed = prop.get("KellyAdaptiveFraction")
+        if _precomputed:
+            _adapt_frac = _precomputed
+        else:
+            _afkey = (_tier_frac, _prop_sport, _prop_market)
+            if _afkey not in _adapt_frac_cache:
+                _adapt_frac_cache[_afkey] = adaptive_kelly_fraction(
+                    _tier_frac, _cal_history, sport=_prop_sport, market=_prop_market
+                )
+            _adapt_frac = _adapt_frac_cache[_afkey]
         # Use pre-computed decayed edge if available, otherwise apply decay now
         _eff_edge = prop.get("KellyDecayedEdge") or time_decay_edge_factor(_edge)
 
