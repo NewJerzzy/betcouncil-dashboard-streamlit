@@ -11242,8 +11242,19 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
     board = st.session_state.get("board", [])
     if board:
         norm_p = normalize_name(player)
-        for b in board:
-            if normalize_name(b.get("Player", "")) == norm_p and b.get("Prop", "").lower() == stat.lower():
+        _sps_cache = score_pick_standalone._board_index_cache
+        _board_id = id(board)
+        if _sps_cache.get("_id") != _board_id:
+            _idx = {}
+            for _b in board:
+                _idx.setdefault((normalize_name(_b.get("Player","")), _b.get("Prop","").lower()), _b)
+            _sps_cache.clear()
+            _sps_cache["_id"] = _board_id
+            _sps_cache["_index"] = _idx
+        _b_match = _sps_cache["_index"].get((norm_p, stat.lower()))
+        if _b_match is not None:
+            b = _b_match
+            if True:
                 board_line = float(b.get("Line", line) or line)
                 edge = float(b.get("Edge", 0) or 0)
                 prob = float(b.get("Prob", 0.5) or 0.5)
@@ -11614,6 +11625,8 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
         "smart_signal_data": compute_player_prop_smart_signal(player, stat, sport, edge),
     }
 
+
+score_pick_standalone._board_index_cache = {}
 
 # ═══════════════════════════════════════════════════════════
 # MODULE: OCR — bet screenshot parsing
