@@ -1939,22 +1939,24 @@ with tabs[4]:
             _poly_prob   = ""
 
             _pname_lower = normalize_name(_player)
+            _pname_tokens = set(_pname_lower.split())
+            _kalshi_matches = []
             for _km in _kalshi:
                 _kt = set(normalize_name(_km.get("event","")).split())
-                _pt = set(_pname_lower.split())
-                if len(_pt) >= 2 and _pt.issubset(_kt):
-                    _kalshi_prob = f"{_km['implied_prob']:.0%}"
-                    break
+                if len(_pname_tokens) >= 2 and _pname_tokens.issubset(_kt):
+                    _kalshi_matches.append(_km)
+            if _kalshi_matches:
+                _kalshi_prob = f"{_kalshi_matches[0]['implied_prob']:.0%}"
+            _poly_matches = []
             for _pm in _poly:
                 _qt = set(normalize_name(_pm.get("question","")).split())
-                if len(set(_pname_lower.split())) >= 2 and set(_pname_lower.split()).issubset(_qt):
-                    _poly_prob = f"{_pm['implied_prob']:.0%}"
-                    break
+                if len(_pname_tokens) >= 2 and _pname_tokens.issubset(_qt):
+                    _poly_matches.append(_pm)
+            if _poly_matches:
+                _poly_prob = f"{_poly_matches[0]['implied_prob']:.0%}"
 
-            _market_vals = [float(_km["implied_prob"]) for _km in _kalshi
-                            if set(_pname_lower.split()).issubset(set(normalize_name(_km.get("event","")).split()))]
-            _market_vals += [float(_pm["implied_prob"]) for _pm in _poly
-                             if set(_pname_lower.split()).issubset(set(normalize_name(_pm.get("question","")).split()))]
+            _market_vals = [float(_km["implied_prob"]) for _km in _kalshi_matches]
+            _market_vals += [float(_pm["implied_prob"]) for _pm in _poly_matches]
             if _market_vals:
                 _mkt_avg = sum(_market_vals) / len(_market_vals)
                 _div = _model_prob/100 - _mkt_avg
@@ -2334,12 +2336,15 @@ with tabs[4]:
                     save_to_gist("spotlight_log", _sp_log)
 
                 _sp_resolved_matches = []
+                _sp_history_all = st.session_state.get("history", [])
+                _sp_hist_idx = {}
+                for _h in _sp_history_all:
+                    if _h.get("outcome") in ("WIN", "LOSS"):
+                        _sp_hist_idx.setdefault((normalize_name(_h.get("player", "")), _h.get("prop", "")), []).append(_h)
                 for _entry in _sp_log:
-                    for _h in st.session_state.get("history", []):
-                        if (_h.get("outcome") in ("WIN", "LOSS")
-                                and normalize_name(_h.get("player", "")) == normalize_name(_entry["player"])
-                                and _h.get("prop", "") == _entry["prop"]
-                                and _h.get("timestamp", "")[:10] >= _entry["date"]):
+                    _sp_key = (normalize_name(_entry["player"]), _entry["prop"])
+                    for _h in _sp_hist_idx.get(_sp_key, []):
+                        if _h.get("timestamp", "")[:10] >= _entry["date"]:
                             _sp_resolved_matches.append(_h)
                             break
 
