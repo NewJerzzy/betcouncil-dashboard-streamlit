@@ -16475,12 +16475,15 @@ def load_sport_data(sport):
         # ── EVBets +EV signal overlay ────────────────────────────────────────
         if home_team or away_team:
             try:
-                _evb = st.session_state.get("evbets_ev_picks",[]) + st.session_state.get("evbets_prop_picks",[])
-                _evb_hit = next((e for e in _evb
-                    if normalize_name(home_team or "") in normalize_name(e.get("event",""))
-                    or normalize_name(away_team or "") in normalize_name(e.get("event",""))
-                    or normalize_name(player or "") in normalize_name(e.get("event",""))
-                ), None)
+                _evb_key = ("_evbets", home_team, away_team, normalize_name(player or ""))
+                if _evb_key not in _team_matchup_cache:
+                    _evb = st.session_state.get("evbets_ev_picks",[]) + st.session_state.get("evbets_prop_picks",[])
+                    _team_matchup_cache[_evb_key] = next((e for e in _evb
+                        if normalize_name(home_team or "") in normalize_name(e.get("event",""))
+                        or normalize_name(away_team or "") in normalize_name(e.get("event",""))
+                        or normalize_name(player or "") in normalize_name(e.get("event",""))
+                    ), None)
+                _evb_hit = _team_matchup_cache[_evb_key]
                 if _evb_hit:
                     _ev_pct = _evb_hit.get("ev_pct",0)
                     _ev_book = _evb_hit.get("book","")
@@ -16497,10 +16500,13 @@ def load_sport_data(sport):
         # ── Signal Odds / BetsLib AI prediction overlay ────────────────────
         if home_team or away_team:
             try:
-                _bl_preds = st.session_state.get("betslib_predictions", [])
-                _bl_hit   = next((p for p in _bl_preds
-                    if (home_team and normalize_name(home_team) in normalize_name(p.get("home","")))
-                    or (away_team and normalize_name(away_team) in normalize_name(p.get("away","")))),None)
+                _bl_key = ("_betslib", home_team, away_team)
+                if _bl_key not in _team_matchup_cache:
+                    _bl_preds = st.session_state.get("betslib_predictions", [])
+                    _team_matchup_cache[_bl_key] = next((p for p in _bl_preds
+                        if (home_team and normalize_name(home_team) in normalize_name(p.get("home","")))
+                        or (away_team and normalize_name(away_team) in normalize_name(p.get("away","")))),None)
+                _bl_hit = _team_matchup_cache[_bl_key]
                 if _bl_hit:
                     _bl_conf = _bl_hit.get("confidence",0)
                     _bl_ev   = _bl_hit.get("ev",0)
@@ -16522,8 +16528,13 @@ def load_sport_data(sport):
             try:
                 _gf_props = st.session_state.get("gamblingforecast_props", [])
                 _gf_norm = normalize_name(player)
-                _gf_hit = next((gp for gp in _gf_props
-                    if normalize_name(str(gp.get("name",""))) == _gf_norm), None)
+                _gf_key = ("_gf_index", id(_gf_props))
+                if _gf_key not in _team_matchup_cache:
+                    _gf_idx = {}
+                    for gp in _gf_props:
+                        _gf_idx.setdefault(normalize_name(str(gp.get("name",""))), gp)
+                    _team_matchup_cache[_gf_key] = _gf_idx
+                _gf_hit = _team_matchup_cache[_gf_key].get(_gf_norm)
                 if _gf_hit:
                     _gf_call = str(_gf_hit.get("overUnder","")).upper()
                     _gf_diff = _gf_hit.get("projDiff", 0)
@@ -16550,11 +16561,14 @@ def load_sport_data(sport):
             try:
                 _bp_props = st.session_state.get("bettingpros_props", [])
                 _bp_norm = normalize_name(player)
-                _bp_candidates = [
-                    bp for bp in _bp_props
-                    if normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("last_name", ""))) 
-                    in _bp_norm or normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("short_name", ""))).replace(".", "") in _bp_norm
-                ]
+                _bp_cand_key = ("_bp_candidates", _bp_norm, id(_bp_props))
+                if _bp_cand_key not in _team_matchup_cache:
+                    _team_matchup_cache[_bp_cand_key] = [
+                        bp for bp in _bp_props
+                        if normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("last_name", "")))
+                        in _bp_norm or normalize_name(str((bp.get("participant", {}) or {}).get("player", {}).get("short_name", ""))).replace(".", "") in _bp_norm
+                    ]
+                _bp_candidates = _team_matchup_cache[_bp_cand_key]
                 _bp_hit = None
                 if len(_bp_candidates) == 1:
                     _bp_hit = _bp_candidates[0]
@@ -16603,10 +16617,13 @@ def load_sport_data(sport):
             try:
                 _bbp_props = st.session_state.get("bobbys_bets_props", [])
                 _bbp_norm = normalize_name(player)
-                _bbp_candidates = [
-                    bp for bp in _bbp_props
-                    if normalize_name(str(bp.get("player_name", ""))) == _bbp_norm
-                ]
+                _bbp_cand_key = ("_bbp_candidates", _bbp_norm, id(_bbp_props))
+                if _bbp_cand_key not in _team_matchup_cache:
+                    _team_matchup_cache[_bbp_cand_key] = [
+                        bp for bp in _bbp_props
+                        if normalize_name(str(bp.get("player_name", ""))) == _bbp_norm
+                    ]
+                _bbp_candidates = _team_matchup_cache[_bbp_cand_key]
                 _bbp_hit = None
                 if len(_bbp_candidates) == 1:
                     _bbp_hit = _bbp_candidates[0]
