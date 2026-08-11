@@ -5464,6 +5464,42 @@ with tabs[10]:
                 def _norm_team(s):
                     return normalize_name(s or "")
 
+                # Pre-fetch every (sport, date) scoreboard combination in
+                # parallel -- was making these calls one at a time,
+                # sequentially, inside the loop below. The FETCH has no
+                # ordering dependency (each call is independent), only the
+                # PROCESSING of results does (exact dates must be applied
+                # before padding dates for lock-resolution correctness, per
+                # the comment above) -- so this parallelizes the network
+                # calls while leaving the processing loop's order and logic
+                # completely untouched below.
+                _espn_sb_fetch_keys = []
+                for _sk, (_es, _el) in espn_sm.items():
+                    _sk_locks = [l for l in game_locks if (l.get("sport","") or "").upper() == _sk]
+                    if not _sk_locks:
+                        continue
+                    for _ds in dates_to_check:
+                        _espn_sb_fetch_keys.append((_sk, _es, _el, _ds))
+
+                def _espn_sb_fetch_one(_es, _el, _ds):
+                    _params = {"dates": _ds} if _ds else {}
+                    try:
+                        _r = _http.get(
+                            f"https://site.api.espn.com/apis/site/v2/sports/{_es}/{_el}/scoreboard",
+                            headers={"User-Agent":"Mozilla/5.0"}, params=_params, timeout=8
+                        )
+                        return (_r.status_code, _r)
+                    except Exception as _e:
+                        return (None, _e)
+
+                _espn_sb_fns = [(lambda _es=_es, _el=_el, _ds=_ds: _espn_sb_fetch_one(_es, _el, _ds))
+                                for _sk, _es, _el, _ds in _espn_sb_fetch_keys]
+                _espn_sb_results = _fetch_parallel(_espn_sb_fns, show_progress=False)
+                _espn_sb_lookup = {
+                    (_sk, _ds): _result
+                    for (_sk, _es, _el, _ds), _result in zip(_espn_sb_fetch_keys, _espn_sb_results)
+                }
+
                 for sport_key, (es, el) in espn_sm.items():
                     # Only bother querying this sport's scoreboard if we actually
                     # have a lock for it. This also prevents cross-sport false
@@ -5473,11 +5509,14 @@ with tabs[10]:
                         continue
                     for date_str in dates_to_check:
                         try:
-                            params = {"dates": date_str} if date_str else {}
-                            sb = _http.get(
-                                f"https://site.api.espn.com/apis/site/v2/sports/{es}/{el}/scoreboard",
-                                headers={"User-Agent":"Mozilla/5.0"}, params=params, timeout=8
-                            )
+                            _fetched = _espn_sb_lookup.get((sport_key, date_str))
+                            if _fetched is None:
+                                _scoreboard_fetch_failures.append(f"{sport_key} {date_str or 'today'}: no result")
+                                continue
+                            _status, sb = _fetched
+                            if _status is None:
+                                _scoreboard_fetch_failures.append(f"{sport_key} {date_str or 'today'}: {sb}")
+                                continue
                             if sb.status_code != 200:
                                 _scoreboard_fetch_failures.append(f"{sport_key} {date_str or 'today'}: HTTP {sb.status_code}")
                                 continue
