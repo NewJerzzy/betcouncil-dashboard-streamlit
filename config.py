@@ -757,7 +757,7 @@ MLB_BALLPARKS = {
     "Colorado Rockies": {"city": "Denver", "outdoor": True},
     "Arizona Diamondbacks": {"city": "Phoenix", "outdoor": False},
     "San Diego Padres": {"city": "San Diego", "outdoor": True},
-    "Oakland Athletics": {"city": "Oakland", "outdoor": True},
+    "Athletics": {"city": "Sacramento", "outdoor": True},
 }
 
 MLB_PLAYER_TEAM_MAP = {
@@ -926,7 +926,7 @@ MLB_POWER_RATINGS = {
     "Boston Red Sox": 103.5, "Tampa Bay Rays": 103.0,
     "Texas Rangers": 102.5, "Miami Marlins": 100.0,
     "Colorado Rockies": 97.0, "Chicago White Sox": 98.0,
-    "Oakland Athletics": 97.5, "Kansas City Royals": 101.0,
+    "Athletics": 97.5, "Kansas City Royals": 101.0,
     "Toronto Blue Jays": 102.0, "Chicago Cubs": 103.0,
     "St. Louis Cardinals": 102.5, "Milwaukee Brewers": 104.0,
     "Pittsburgh Pirates": 99.0, "Cincinnati Reds": 100.5,
@@ -1060,7 +1060,7 @@ MLB_TEAM_WOBA_VS_RHP = {
     "Cincinnati Reds": 0.315, "Chicago Cubs": 0.320, "San Francisco Giants": 0.309,
     "St. Louis Cardinals": 0.313, "Milwaukee Brewers": 0.317, "Detroit Tigers": 0.308,
     "Kansas City Royals": 0.314, "Pittsburgh Pirates": 0.306, "Miami Marlins": 0.299,
-    "New York Mets": 0.325, "Los Angeles Angels": 0.303, "Oakland Athletics": 0.297,
+    "New York Mets": 0.325, "Los Angeles Angels": 0.303, "Athletics": 0.297,
     "Washington Nationals": 0.302, "Colorado Rockies": 0.311, "Chicago White Sox": 0.296,
 }
 
@@ -1073,7 +1073,7 @@ MLB_TEAM_WOBA_VS_LHP = {
     "Cincinnati Reds": 0.308, "Chicago Cubs": 0.313, "San Francisco Giants": 0.302,
     "St. Louis Cardinals": 0.306, "Milwaukee Brewers": 0.310, "Detroit Tigers": 0.301,
     "Kansas City Royals": 0.307, "Pittsburgh Pirates": 0.299, "Miami Marlins": 0.292,
-    "New York Mets": 0.318, "Los Angeles Angels": 0.296, "Oakland Athletics": 0.290,
+    "New York Mets": 0.318, "Los Angeles Angels": 0.296, "Athletics": 0.290,
     "Washington Nationals": 0.295, "Colorado Rockies": 0.304, "Chicago White Sox": 0.289,
 }
 
@@ -1087,6 +1087,17 @@ MLB_WOBA_LEAGUE_AVG = 0.318
 MLB_PARK_FACTORS = {
     # Hitter-friendly
     "Colorado Rockies":      1.15,  # Coors altitude — extreme outlier
+    # Real fix (2026-08-12): was "Oakland Athletics" -> 1.00, but that key
+    # never matches the current real team name ("Athletics", confirmed via
+    # this same function's own team-name map at app_core.py ~7784), so
+    # every Athletics home game silently fell back to the neutral 1.00
+    # default. Real, current data confirms Sutter Health Park (their
+    # temporary Sacramento home) is the 2nd-highest run-scoring park in
+    # MLB -- "doesn't have much on Coors Field when it comes to inflating
+    # run-scoring." Set just below Coors (1.15) rather than matching it
+    # exactly -- defensible given "2nd-highest," not overclaiming
+    # precision on a genuinely unusual park with limited MLB-level history.
+    "Athletics":             1.12,
     "Cincinnati Reds":       1.08,  # Great American Ball Park
     "Texas Rangers":         1.06,  # Globe Life Field — hot/humid air
     "Chicago Cubs":          1.05,  # Wrigley — wind-dependent but avg hitter
@@ -1114,7 +1125,6 @@ MLB_PARK_FACTORS = {
     "San Francisco Giants":  0.96,  # Oracle Park — marine layer, deepest CF in NL
     "Milwaukee Brewers":     0.96,  # American Family Field — dome helps pitchers
     "Los Angeles Angels":    0.95,  # Angel Stadium — spacious outfield
-    "Oakland Athletics":     0.95,  # Oakland Coliseum — foul territory, marine layer
     "Miami Marlins":         0.95,  # loanDepot Park — dome, very pitcher-friendly
     "Seattle Mariners":      0.94,  # T-Mobile Park — marine layer + large dimensions
 }
