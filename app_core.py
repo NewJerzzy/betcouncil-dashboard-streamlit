@@ -18487,6 +18487,44 @@ with st.sidebar:
     except Exception:
         pass
 
+    # Props-only calibration -- mirrors the game-line card above (same
+    # Brier math, same thresholds), filtered to bet_type=="prop" instead
+    # of "game". Added so the two can be compared side by side directly,
+    # instead of only ever seeing the blended overall number above.
+    try:
+        _pr_history = [h for h in st.session_state.get("history", []) if h.get("bet_type") == "prop"]
+        _pr_brier_data = compute_brier_score(_pr_history)
+        _pr_brier_life = (_pr_brier_data.get("lifetime") or {})
+        _pr_bs_val = _pr_brier_life.get("brier_score", 0.25)
+        _pr_bs_n = _pr_brier_life.get("n", 0)
+        if _pr_bs_n >= 20:
+            if _pr_bs_val <= 0.20:
+                _pr_integrity = 100 - (_pr_bs_val / 0.20) * 15
+            elif _pr_bs_val <= 0.22:
+                _pr_integrity = 85 - ((_pr_bs_val - 0.20) / 0.02) * 10
+            elif _pr_bs_val <= 0.25:
+                _pr_integrity = 75 - ((_pr_bs_val - 0.22) / 0.03) * 15
+            else:
+                _pr_integrity = 60 - ((_pr_bs_val - 0.25) / 0.08) * 60
+            _pr_integrity = max(0, min(100, int(round(_pr_integrity))))
+            _pr_cal_grade = "ELITE" if _pr_bs_val < 0.20 else "GOOD" if _pr_bs_val < 0.22 else "FAIR" if _pr_bs_val < 0.25 else "NEEDS WORK"
+            _pr_cal_color = "#22c55e" if _pr_cal_grade in ("ELITE", "GOOD") else ("#e8a020" if _pr_cal_grade == "FAIR" else "#e04040")
+            st.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;'
+                f'padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
+                f'title="Same calibration measure as above, filtered to player-prop bets only, '
+                f'so you can see whether props specifically are well-calibrated separate from game lines.">'
+                f'↗ PROP CALIBRATION</div>'
+                f'<div style="font-size:20px;font-weight:800;color:{_pr_cal_color};">{_pr_integrity}'
+                f'<span style="font-size:12px;color:#4a6a8a;font-weight:400;"> /100 (n={_pr_bs_n}) · {_pr_cal_grade}</span></div>'
+                f'</div>', unsafe_allow_html=True
+            )
+    except Exception:
+        pass
+    except Exception:
+        pass
+
     # Verdict badge accuracy -- grades pending logged verdicts against
     # real final scores (real ESPN calls, so cached hourly rather than
     # run on every render) and shows whether "sources agree" has
