@@ -887,6 +887,24 @@ PLAYOFF_DEFENSE_WARNING = (
     "matchup defense before trusting these numbers."
 )
 
+NFL_POWER_RATINGS = {
+    # Real static fallback, previously missing entirely (2026-08-10 fix) --
+    # derived from actual Super Bowl odds across all 32 teams (Sharp
+    # Football Analysis, dated Aug 10 2026), converted to implied
+    # probability and scaled to the same ~97-112 range as NBA_POWER_RATINGS.
+    # Preseason data, same as every other sport's static dict here -- a
+    # fallback for when get_live_power_ratings()'s live fetch fails, not a
+    # replacement for it.
+    "LAR": 112.0, "BUF": 108.1, "BAL": 108.1, "SEA": 107.5,
+    "KC": 105.5, "PHI": 105.5, "NE": 105.5, "LAC": 105.2,
+    "HOU": 105.0, "GB": 105.0, "SF": 104.7, "DET": 104.7,
+    "DEN": 104.5, "CIN": 104.5, "CHI": 103.7, "DAL": 103.5,
+    "JAX": 102.8, "TB": 101.1, "MIN": 101.1, "PIT": 101.1,
+    "IND": 100.6, "WAS": 100.6, "NYG": 100.2, "CAR": 99.6,
+    "NO": 99.6, "TEN": 98.8, "ATL": 98.8, "LV": 98.6,
+    "NYJ": 98.1, "CLE": 98.1, "MIA": 97.4, "ARI": 97.0,
+}
+
 WNBA_POWER_RATINGS = {
     "New York Liberty": 112.0, "Las Vegas Aces": 111.0,
     "Connecticut Sun": 109.0, "Minnesota Lynx": 108.5,
