@@ -13269,6 +13269,12 @@ with tabs[2]:
         if not _placed:
             _pred_gl_groups.append({"away": _item["away"], "home": _item["home"], "sport": _item["sport"], "items": [_item]})
 
+    # Sort by real cross-source agreement (most-confirmed matchups first) --
+    # was previously unsorted, displaying in whatever order sources
+    # happened to run and append, not prioritized by the actual signal
+    # this section is built around.
+    _pred_gl_groups.sort(key=lambda g: len(set(it["source"] for it in g["items"])), reverse=True)
+
     # ══════════════════════════════════════════════════════════════════
     # RENDER — Game Lines: one card per matchup, each source's pick as a
     # row inside, consensus line when 2+ sources agree.
@@ -13425,6 +13431,9 @@ with tabs[2]:
         unsafe_allow_html=True
     )
     _pred_pp_groups = list(_pred_pp_by_player.values())
+    # Sort by real cross-source agreement (most-confirmed players first),
+    # same fix and same reasoning as the game-line groups above.
+    _pred_pp_groups.sort(key=lambda g: len(set(p["source"] for p in g["props"])), reverse=True)
     if _pred_pp_groups:
         _pp_per_row = 3
         for _pi in range(0, len(_pred_pp_groups), _pp_per_row):
