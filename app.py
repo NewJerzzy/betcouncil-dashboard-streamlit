@@ -11007,6 +11007,53 @@ with tabs[14]:
     except Exception as _hh_err:
         st.caption(f"Harvester health check unavailable this load: {str(_hh_err)[:100]}")
 
+    # ── Full-Board Accuracy (daily grading, separate from personal bets) ──
+    # Runs automatically every day via GitHub Actions (daily_board_grading.py),
+    # grading the model's FULL recommendation set -- 30-50+ picks/day -- against
+    # real final scores, regardless of what you actually bet. Kept completely
+    # separate from your bankroll/ROI ledger. Surfaced here because it answers
+    # a real question that wasn't visible anywhere before: is the model's
+    # accuracy being checked on picks you didn't place, not just the ones you did.
+    st.markdown("### 📅 Full-Board Accuracy (daily, all picks — not just bets placed)")
+    try:
+        _fba_props = load_from_gist("board_grading_history", None) or {}
+        _fba_games = load_from_gist("game_board_grading_history", None) or {}
+
+        def _fba_summarize(daily_dict):
+            all_picks = []
+            for _d, _p in daily_dict.items():
+                if isinstance(_p, list):
+                    all_picks.extend(_p)
+            graded = [p for p in all_picks if p.get("outcome") in ("WIN", "LOSS")]
+            wins = sum(1 for p in graded if p.get("outcome") == "WIN")
+            return len(all_picks), len(graded), (wins / len(graded) * 100) if graded else 0, graded
+
+        _fba_p_total, _fba_p_graded, _fba_p_hr, _fba_p_recs = _fba_summarize(_fba_props)
+        _fba_g_total, _fba_g_graded, _fba_g_hr, _fba_g_recs = _fba_summarize(_fba_games)
+
+        _fba_col1, _fba_col2 = st.columns(2)
+        with _fba_col1:
+            st.metric("Props hit rate", f"{_fba_p_hr:.1f}%" if _fba_p_graded else "—",
+                       help=f"{_fba_p_graded} graded picks across {len(_fba_props)} days")
+        with _fba_col2:
+            st.metric("Game lines hit rate", f"{_fba_g_hr:.1f}%" if _fba_g_graded else "—",
+                       help=f"{_fba_g_graded} graded picks across {len(_fba_games)} days")
+
+        with st.expander("Breakdown by tier"):
+            for _label, _recs in [("Props", _fba_p_recs), ("Game Lines", _fba_g_recs)]:
+                st.caption(f"**{_label}**")
+                _tier_stats = {}
+                for p in _recs:
+                    t = p.get("tier", "?")
+                    _tier_stats.setdefault(t, {"w": 0, "n": 0})
+                    _tier_stats[t]["n"] += 1
+                    if p.get("outcome") == "WIN":
+                        _tier_stats[t]["w"] += 1
+                for t, s in sorted(_tier_stats.items(), key=lambda x: -x[1]["n"]):
+                    st.caption(f"　{t}: {s['w']}/{s['n']} = {s['w']/s['n']*100:.1f}%")
+    except Exception as _fba_err:
+        st.caption(f"Full-board accuracy unavailable this load: {str(_fba_err)[:100]}")
+
     # ── Line Shop source availability (moved here 2026-07-12 — was a
     # developer-facing debug caption on the Line Shop tab itself, which
     # made a normal night look broken to a bettor just comparing prices) ──
