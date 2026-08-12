@@ -13114,16 +13114,48 @@ def store_board_snapshot(board, sport):
         # LATEST snapshot for a given date+sport rather than assuming a
         # single entry, so this doesn't conflict with that use case.
         snap_key = f"{today_key}_{sport}_{datetime.now().strftime('%H:%M')}"
-        # Cap at 30 picks/sport: current real grading coverage (ESPN_ATHLETE_IDS)
-        # is only ~15-20 players/sport, so 30 gives headroom without bloating
-        # the Gist or the grading job's runtime. Prioritize best-bet tiers
-        # first, then edge size, so a cap never drops the picks that matter
-        # most for calibration.
+        # Cap at 50 picks/sport, with a guaranteed APPROVED floor. Raised
+        # from 30 (2026-08-10): the original 30-cap was sized around a
+        # player-ID coverage limit closed back on 2026-07-11 (full-roster
+        # lookups), so that constraint is stale. More importantly, pure
+        # tier-priority sorting let SOVEREIGN/ELITE consistently consume
+        # the entire cap -- confirmed via 23 real days of grading history:
+        # only 6 APPROVED picks captured vs 754 SOVEREIGN/ELITE, despite
+        # APPROVED being ~94% of what users actually place real bets on.
+        # A grading system that can't measure the tier people actually bet
+        # isn't giving the calibration/weight-learning system what it
+        # needs. Reserve a real floor for APPROVED instead of letting it
+        # get crowded out by pure tier-then-edge priority.
         _tier_rank = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3, "PASS": 4}
-        capped_board = sorted(
-            board,
+        _total_cap = 50
+        _approved_floor = 20
+        _sov_elite = sorted(
+            [p for p in board if p.get("Tier") in ("SOVEREIGN", "ELITE")],
             key=lambda p: (_tier_rank.get(p.get("Tier", ""), 5), -abs(p.get("Edge", 0) or 0)),
-        )[:30]
+        )
+        _approved = sorted(
+            [p for p in board if p.get("Tier") == "APPROVED"],
+            key=lambda p: -abs(p.get("Edge", 0) or 0),
+        )
+        _other = sorted(
+            [p for p in board if p.get("Tier") not in ("SOVEREIGN", "ELITE", "APPROVED")],
+            key=lambda p: -abs(p.get("Edge", 0) or 0),
+        )
+        _remaining_after_approved_floor = max(0, _total_cap - min(len(_approved), _approved_floor))
+        capped_board = (
+            _sov_elite[:_remaining_after_approved_floor]
+            + _approved[:_approved_floor]
+        )
+        _leftover = _total_cap - len(capped_board)
+        if _leftover > 0:
+            capped_board += _sov_elite[_remaining_after_approved_floor:_remaining_after_approved_floor+_leftover]
+        _leftover2 = _total_cap - len(capped_board)
+        if _leftover2 > 0:
+            capped_board += _approved[_approved_floor:_approved_floor+_leftover2]
+        _leftover3 = _total_cap - len(capped_board)
+        if _leftover3 > 0:
+            capped_board += _other[:_leftover3]
+        capped_board = capped_board[:_total_cap]
         stored[snap_key] = {
             "sport": sport,
             "date": today_key,
