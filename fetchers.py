@@ -7165,24 +7165,21 @@ def scrape_prizepicks(sport):
         }
 
     # ── GIST-FIRST: Gist is the primary reliable source when ScrapeOps is exhausted ──
-    # fetch_auto_scraped_props() fetches the auto_scraped_props.json file from the
-    # configured GitHub Gist (pushed by the background auto-scraper).  It validates
-    # freshness (same-day date check) and filters by sport before returning.  This is
-    # much faster than the URL loop below and avoids burning curl_cffi retries on
-    # endpoints that have been 403-ing consistently.
+    # Real fix (2026-08-12): this used to call fetch_auto_scraped_props(),
+    # which reads auto_scraped_props.json -- the LOCAL, manually-run PC
+    # scraper's output file, confirmed missing from the Gist entirely (that
+    # scraper isn't run regularly). That meant gist-first ALWAYS failed,
+    # silently falling through to curl_cffi + ScrapeOps on every board
+    # load, regardless of prizepicks_refresh.yml's real, automated, fresh
+    # data sitting in a completely different file this whole time. Now
+    # correctly reads that real file, reusing the exact same parse logic
+    # fetch_prizepicks_from_gist already uses successfully elsewhere.
     try:
-        _gist_early = fetch_auto_scraped_props(sport)
-        if _gist_early:
-            _pp_early = [p for p in _gist_early
-                         if "prizepicks" in str(p.get("source", "")).lower()
-                         or p.get("Book", "") == "PrizePicks"]
-            if not _pp_early:
-                # Accept any source from Gist if no PrizePicks-tagged rows
-                _pp_early = _gist_early
-            _norm_early = [
-                _normalize_pp_gist(p) for p in _pp_early
-                if p.get("Player") or p.get("player") or p.get("name")
-            ]
+        _gist_early_combined = _read_gist_file("betcouncil_prizepicks_combined.json", cache_minutes=5)
+        _gist_early_data = (_gist_early_combined or {}).get(str(sport).upper(), {})
+        if _gist_early_data and _is_fresh(_gist_early_data, max_age_minutes=100):
+            _gist_early_raw = _gist_early_data.get("data", {})
+            _norm_early = _parse_prizepicks_harvested(_gist_early_raw, sport) if _gist_early_raw else []
             if _norm_early:
                 log_error_to_session(
                     "scrape_prizepicks",
