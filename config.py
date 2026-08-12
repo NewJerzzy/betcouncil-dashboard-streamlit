@@ -324,10 +324,17 @@ SPORT_SIGNAL_WEIGHTS = {
     # location is meaningful (~3pt HCA), rest is critical on B2B
     "NBA":  {"base": 0.42, "defense": 0.28, "location": 0.13, "rest": 0.09, "pace": 0.08, "usage": 0.74},
 
-    # MLB HR: platoon-adjusted S1 now does heavy lifting, pitcher (S2) is the
-    # second-strongest signal, location matters (park factors already in S12),
-    # rest is minimal (baseball plays every day)
-    "MLB":  {"base": 0.45, "defense": 0.20, "location": 0.08, "rest": 0.04, "pace": 0.00, "pitcher": 0.15, "weather": 0.08, "usage": 0.74},
+    # MLB HR: platoon-adjusted S1 now does heavy lifting, location matters
+    # (park factors already in S12), rest is minimal (baseball plays every
+    # day). Pitcher quality is already applied directly via ERA/xwOBA
+    # overrides to base/defense (see compute_multi_signal_edge S1/S2), and
+    # weather is a separately-calibrated additive term (weather_edge_
+    # adjustment, 0.02-0.15 range) -- neither reads a weight from this dict,
+    # so no "pitcher"/"weather" keys belong here. Renormalized 2026-08-10:
+    # the 5 real active weights previously summed to 0.77, not 1.0 like
+    # every other sport, systematically under-weighting MLB's combined
+    # edge by 23%. Proportions preserved, just correctly normalized now.
+    "MLB":  {"base": 0.584, "defense": 0.260, "location": 0.104, "rest": 0.052, "pace": 0.00, "usage": 0.74},
 
     # NFL: defense is the dominant signal (passing/rushing D rank),
     # location (home field) is the most significant HCA in pro sports,
@@ -351,7 +358,7 @@ SPORT_SIGNAL_WEIGHTS = {
     # base rate (serve/return stat history) and rest (travel, back-to-back
     # tournament days) carry almost all the signal. Location is meaningful
     # for surface specialists at home tournaments but minor overall.
-    "Tennis": {"base": 0.75, "defense": 0.00, "location": 0.08, "rest": 0.12, "pace": 0.00, "usage": 0.05},
+    "Tennis": {"base": 0.789, "defense": 0.00, "location": 0.084, "rest": 0.126, "pace": 0.00, "usage": 0.05},
 }
 
 SIGNAL_RELIABILITY = {
