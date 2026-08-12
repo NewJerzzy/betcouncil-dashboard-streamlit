@@ -204,52 +204,89 @@ def get_power_ratings(sport: str) -> dict:
     return merged
 
 
-def fetch_bovada_moneylines(sport: str) -> list:
-    """Returns [{"matchup", "home_guess", "away_guess", "home_ml", "away_ml"}]
-    parsed from scrape_bovada_lines() raw output. Bovada's coupon
-    description format is "Away @ Home" -- team name matching against the
-    power-ratings dict is fuzzy (normalize_name + substring), since
-    Bovada's naming doesn't always exactly match config.py's team keys.
-    """
-    from betcouncil_auto_scraper import scrape_bovada_lines
-    from utils import normalize_name
+BOVADA_BASE = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
+BOVADA_SPORT_MAP = {
+    "NBA": "basketball/nba", "NFL": "football/nfl",
+    "MLB": "baseball/mlb",   "NHL": "hockey/nhl", "WNBA": "basketball/wnba",
+}
+BOVADA_HEADERS = {
+    "Accept": "application/json", "Origin": "https://www.bovada.lv",
+    "Referer": "https://www.bovada.lv/sports",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "x-channel": "desktop", "x-sport-context": "BASE",
+    "cookie": "LANG=en; Device-Type=Desktop|false; odds_format=AMERICAN;",
+}
 
-    raw = scrape_bovada_lines(sport)
-    by_matchup = {}
-    for line in raw:
-        market = (line.get("market") or "").lower()
-        if "moneyline" not in market:
-            continue
-        matchup = line.get("matchup", "")
-        if not matchup:
-            continue
-        by_matchup.setdefault(matchup, {})[line.get("outcome", "")] = line.get("american")
+
+def fetch_bovada_moneylines(sport: str) -> list:
+    """Returns [{"matchup", "home_guess", "away_guess", "home_ml", "away_ml"}].
+
+    Real fix (2026-08-12): the prior version imported scrape_bovada_lines
+    from betcouncil_auto_scraper.py, which never actually contained that
+    function (confirmed via exhaustive grep -- zero Bovada functions
+    anywhere in that file). Every headless run since at least Aug 9 was
+    silently catching this ImportError in build_snapshot_picks' try/except
+    and returning [] -- reporting "success" while writing zero real data.
+    This is a self-contained, headless-safe direct scrape of the same
+    real, confirmed-working endpoint used elsewhere in this codebase
+    (fetchers.py fetch_bovada_lines), with no Streamlit dependency (no
+    st.warning, no session-state cache fallback) since this runs outside
+    any Streamlit runtime. Bovada's own event data gives clean home/away
+    team names directly, so no fuzzy string-matching is needed at all.
+    """
+    sport_path = BOVADA_SPORT_MAP.get(sport)
+    if not sport_path:
+        return []
+    try:
+        r = requests.get(
+            f"{BOVADA_BASE}/{sport_path}", headers=BOVADA_HEADERS,
+            params={"lang": "en", "eventsLimit": 50, "preMatchOnly": "true"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            log(f"{sport}: Bovada HTTP {r.status_code}")
+            return []
+        raw = r.json()
+        if not isinstance(raw, list) or not raw:
+            return []
+    except Exception as e:
+        log(f"{sport}: Bovada fetch failed ({e})")
+        return []
 
     games = []
-    for matchup, sides in by_matchup.items():
-        if len(sides) != 2:
-            continue
-        (team_a, ml_a), (team_b, ml_b) = list(sides.items())
-        if ml_a is None or ml_b is None:
-            continue
-        parts = [p.strip() for p in matchup.split("@")]
-        away_guess, home_guess = (parts[0], parts[1]) if len(parts) == 2 else (team_a, team_b)
-        # Map team_a/team_b (Bovada's own outcome labels) onto home/away by
-        # normalized substring match against the matchup's own two halves,
-        # since Bovada's outcome label and matchup-string team name aren't
-        # always identically formatted.
-        na, nb = normalize_name(team_a), normalize_name(team_b)
-        nh, nw = normalize_name(home_guess), normalize_name(away_guess)
-        if na in nh or nh in na:
-            home_ml, away_ml = ml_a, ml_b
-        elif nb in nh or nh in nb:
-            home_ml, away_ml = ml_b, ml_a
-        else:
-            continue  # can't confidently assign home/away -- skip rather than guess
-        games.append({
-            "matchup": matchup, "home_guess": home_guess, "away_guess": away_guess,
-            "home_ml": home_ml, "away_ml": away_ml,
-        })
+    for section in raw:
+        for event in section.get("events", []):
+            if event.get("type") != "GAMEEVENT" or event.get("live"):
+                continue
+            competitors = event.get("competitors", [])
+            home_team = next((c["name"] for c in competitors if c.get("home")), "")
+            away_team = next((c["name"] for c in competitors if not c.get("home")), "")
+            if not home_team or not away_team:
+                continue
+            game_lines_grp = next(
+                (g for g in event.get("displayGroups", []) if g.get("description") == "Game Lines"),
+                None,
+            )
+            if not game_lines_grp:
+                continue
+            ml_home = ml_away = None
+            for mkt in game_lines_grp.get("markets", []):
+                if mkt.get("key") != "2W-12":  # Moneyline
+                    continue
+                for out in mkt.get("outcomes", []):
+                    price = out.get("price", {})
+                    if out.get("type") == "H":
+                        ml_home = price.get("american", "")
+                    elif out.get("type") == "A":
+                        ml_away = price.get("american", "")
+                break
+            if ml_home is None or ml_away is None:
+                continue
+            games.append({
+                "matchup": f"{away_team} @ {home_team}",
+                "home_guess": home_team, "away_guess": away_team,
+                "home_ml": ml_home, "away_ml": ml_away,
+            })
     return games
 
 
