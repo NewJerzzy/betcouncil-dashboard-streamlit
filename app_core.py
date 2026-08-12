@@ -99,7 +99,7 @@ from config import (
     PLAYER_TEAM_MAP, POSITIVE_CORRELATIONS, SAME_PLAYER_STAT_CORRELATION, MLB_BALLPARKS,
     MLB_PLAYER_TEAM_MAP, WNBA_PLAYER_IDS, MLB_PLAYER_IDS, NHL_PLAYER_IDS,
     NBA_TEAM_PACE, NBA_POWER_RATINGS, NBA_POSITION_DEFENSE, PLAYOFF_DEFENSE_WARNING,
-    WNBA_POWER_RATINGS, MLB_POWER_RATINGS, NHL_POWER_RATINGS, NBA_PLAYER_POSITIONS,
+    WNBA_POWER_RATINGS, MLB_POWER_RATINGS, NHL_POWER_RATINGS, NFL_POWER_RATINGS, NBA_PLAYER_POSITIONS,
     NBA_REFEREE_TENDENCIES, MLB_UMPIRE_TENDENCIES, MLB_PITCHER_ERA, MLB_PITCHER_FIP,
     MLB_PITCHER_HANDEDNESS, MLB_TEAM_WOBA_VS_RHP, MLB_TEAM_WOBA_VS_LHP, MLB_WOBA_LEAGUE_AVG,
     MLB_PARK_FACTORS,
@@ -8619,7 +8619,7 @@ def get_live_power_ratings(sport, fallback_ratings):
 @st.cache_data(ttl=900, show_spinner=False)
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
-    power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS}
+    power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS, "NFL": NFL_POWER_RATINGS}
     power_ratings = power_map.get(sport, {})
     if sport in ("MLB", "WNBA", "NHL", "NBA", "NFL"):
         power_ratings, _pr_source = get_live_power_ratings(sport, power_ratings)
