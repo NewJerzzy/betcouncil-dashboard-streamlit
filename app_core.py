@@ -6729,7 +6729,12 @@ def compute_optimized_weights(sport):
     return optimized
 
 def get_active_weights(sport):
-    optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+    # Real bug fix (2026-08-10): this only ever read the ephemeral /tmp
+    # local cache, never the Gist -- compute_optimized_weights() saves to
+    # BOTH, but on Streamlit Cloud /tmp is wiped on every restart/redeploy,
+    # silently discarding all learned weights and permanently falling back
+    # to hardcoded assumptions regardless of real bet history size.
+    optimizer_data = load_from_gist("optimized_weights", None) or load_json_data(WEIGHT_OPTIMIZER_PATH, {})
     sport_data = optimizer_data.get(sport, {})
     if sport_data and sport_data.get("weights"):
         n_bets = sport_data.get("n_bets", 0)
@@ -11928,7 +11933,7 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
         # Avoids 50+ disk reads per board load (one per prop)
         _cache_key = f"_opt_weights_{sport}"
         if _cache_key not in st.session_state:
-            from_optimizer = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
+            from_optimizer = load_from_gist("optimized_weights", None) or load_json_data(WEIGHT_OPTIMIZER_PATH, {})
             sport_optimizer = from_optimizer.get(sport, {})
             if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
                 _base_w = sport_optimizer["weights"]
@@ -13533,7 +13538,7 @@ def load_sport_data(sport):
                 "Sport": sport, "Avg": avg,
                 "Injury": "", "SEM": scored["confidence"], "SEM_n": 0,
                 "SignalBase": edge, "SignalDefense": 0, "SignalLocation": 0,
-                "SignalUsage": 0, "SignalRest": 0, "SignalPace": 0,
+                "SignalUsage": 0, "SignalRest": 0, "SignalPace": 0, "SignalWeather": 0,
                 "SignalBlowout": 0, "WeatherNote": "",
                 "Movement": "", "OddsTypeFlip": "", "Efficiency": "—", "EffScore": 0,
                 "SharpFlag": "",
@@ -17054,6 +17059,7 @@ def load_sport_data(sport):
             "SignalLocation": best_signals.get("location", 0), "SignalUsage": best_signals.get("usage", 0),
             "SignalRest": best_signals.get("rest", 0), "SignalPace": best_signals.get("pace", 0),
             "SignalBlowout": blowout_adj, "SignalH2H": h2h_adj, "H2HNote": h2h_note,
+            "SignalWeather": weather_adj,
             "WeatherNote": weather_note, "Movement": "", "OddsTypeFlip": "",
             "Efficiency": eff_label, "EffScore": eff_score, "SharpFlag": sharp_flag,
             "source": p.get("source", ""), "Source": p.get("source","").title() or "Unknown",  # uppercase for Audit 3
