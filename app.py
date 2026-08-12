@@ -9643,6 +9643,20 @@ with tabs[9]:
                             _parsed = _mb
                             _detected_src = "MyBookie"
 
+                    # 5. DraftKings.
+                    if not _parsed:
+                        _dk = parse_draftkings_slip_text(pasted_slip)
+                        if _dk:
+                            _parsed = _dk
+                            _detected_src = "DraftKings"
+
+                    # 6. FanDuel.
+                    if not _parsed:
+                        _fd = parse_fanduel_slip_text(pasted_slip)
+                        if _fd:
+                            _parsed = _fd
+                            _detected_src = "FanDuel"
+
                     if _parsed:
                         st.session_state["parsed_bets"] = _parsed
                         st.success(f"✅ Found {len(_parsed)} bet(s) — detected as {_detected_src} — review below")
