@@ -6645,6 +6645,7 @@ def compute_optimized_weights(sport):
     if not lifts or all(v == 0 for v in lifts.values()):
         return None
     optimized = {}
+    _prev_weights_all = (load_from_gist("optimized_weights", None) or load_json_data(WEIGHT_OPTIMIZER_PATH, {})).get(sport, {}).get("weights", {})
     for key, base in base_weights.items():
         lift = lifts.get(key, 0)
         # Anti-overfitting measures:
@@ -6659,9 +6660,10 @@ def compute_optimized_weights(sport):
         new_weight = base + adjustment
         # 4. Bounds: no weight below 1% or above 55%
         new_weight = max(0.01, min(0.55, new_weight))
-        # 5. Load previous optimized weights for decay blend
-        prev_weights = load_json_data(WEIGHT_OPTIMIZER_PATH, {}).get(sport, {}).get("weights", {})
-        prev_weight = prev_weights.get(key, base)
+        # 5. Previous optimized weights for decay blend (fetched once above,
+        # not per signal key -- was reading local-only, same ephemeral-
+        # storage bug found elsewhere in this pipeline, now checks Gist too)
+        prev_weight = _prev_weights_all.get(key, base)
         # 6. Exponential decay blend — 30% new signal, 70% prior weights
         # Prevents single hot/cold streak from dominating
         decay_rate = 0.30
