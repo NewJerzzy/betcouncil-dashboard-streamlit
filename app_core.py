@@ -13250,10 +13250,35 @@ def store_game_board_snapshot(game_analysis, sport):
                 })
 
         _tier_rank = {"SOVEREIGN": 0, "ELITE": 1, "APPROVED": 2, "LEAN": 3, "PASS": 4}
-        capped_picks = sorted(
-            picks,
+        # Same fix as store_board_snapshot (2026-08-10): guaranteed APPROVED
+        # floor instead of pure tier-priority, which can crowd APPROVED out
+        # entirely if SOVEREIGN+ELITE alone exceed the cap.
+        _total_cap = 50
+        _approved_floor = 20
+        _gl_sov_elite = sorted(
+            [p for p in picks if p.get("tier") in ("SOVEREIGN", "ELITE")],
             key=lambda p: (_tier_rank.get(p.get("tier", ""), 5), -abs(p.get("edge", 0) or 0)),
-        )[:30]
+        )
+        _gl_approved = sorted(
+            [p for p in picks if p.get("tier") == "APPROVED"],
+            key=lambda p: -abs(p.get("edge", 0) or 0),
+        )
+        _gl_other = sorted(
+            [p for p in picks if p.get("tier") not in ("SOVEREIGN", "ELITE", "APPROVED")],
+            key=lambda p: -abs(p.get("edge", 0) or 0),
+        )
+        _gl_remaining = max(0, _total_cap - min(len(_gl_approved), _approved_floor))
+        capped_picks = _gl_sov_elite[:_gl_remaining] + _gl_approved[:_approved_floor]
+        _gl_leftover = _total_cap - len(capped_picks)
+        if _gl_leftover > 0:
+            capped_picks += _gl_sov_elite[_gl_remaining:_gl_remaining+_gl_leftover]
+        _gl_leftover2 = _total_cap - len(capped_picks)
+        if _gl_leftover2 > 0:
+            capped_picks += _gl_approved[_approved_floor:_approved_floor+_gl_leftover2]
+        _gl_leftover3 = _total_cap - len(capped_picks)
+        if _gl_leftover3 > 0:
+            capped_picks += _gl_other[:_gl_leftover3]
+        capped_picks = capped_picks[:_total_cap]
 
         stored[snap_key] = {
             "sport": sport,
