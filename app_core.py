@@ -18579,6 +18579,45 @@ with st.sidebar:
             )
     except Exception:
         pass
+
+    # Daily Board Grading summary -- surfaces the daily automated full-board
+    # grading system (scripts/daily_board_grading.py) that most people don't
+    # know exists: it grades the model's entire board (30-50+ picks/sport/
+    # day) against real results the next day, regardless of what was
+    # actually bet, completely separate from the personal bet-ledger
+    # numbers above. Kept to one compact card, not a raw data dump.
+    try:
+        _dbg_prop_hist = load_from_gist("board_grading_history", None) or {}
+        _dbg_game_hist = load_from_gist("game_board_grading_history", None) or {}
+        _dbg_prop_picks, _dbg_game_picks = [], []
+        for _d, _p in _dbg_prop_hist.items():
+            if isinstance(_p, list):
+                _dbg_prop_picks.extend(_p)
+        for _d, _p in _dbg_game_hist.items():
+            if isinstance(_p, list):
+                _dbg_game_picks.extend(_p)
+        _dbg_prop_graded = [p for p in _dbg_prop_picks if p.get("outcome") in ("WIN", "LOSS")]
+        _dbg_game_graded = [p for p in _dbg_game_picks if p.get("outcome") in ("WIN", "LOSS")]
+        _dbg_prop_wr = (sum(1 for p in _dbg_prop_graded if p.get("outcome")=="WIN") / len(_dbg_prop_graded) * 100) if _dbg_prop_graded else None
+        _dbg_game_wr = (sum(1 for p in _dbg_game_graded if p.get("outcome")=="WIN") / len(_dbg_game_graded) * 100) if _dbg_game_graded else None
+        if _dbg_prop_graded or _dbg_game_graded:
+            _dbg_days = len(set(list(_dbg_prop_hist.keys()) + list(_dbg_game_hist.keys())))
+            st.markdown(
+                f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;'
+                f'padding:10px 14px;margin-bottom:10px;">'
+                f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;" '
+                f'title="Runs automatically every day, grading the models entire board (not just what you bet) '
+                f'against real results. Feeds the weight-learning system with far more volume than placed bets alone.">'
+                f'📋 DAILY BOARD GRADING ({_dbg_days} days tracked)</div>'
+                f'<div style="font-size:13px;color:#b8c6d6;margin-top:2px;">'
+                f'Props: {f"{_dbg_prop_wr:.1f}%" if _dbg_prop_wr is not None else "—"} '
+                f'({len(_dbg_prop_graded)} graded) &nbsp;·&nbsp; '
+                f'Game Lines: {f"{_dbg_game_wr:.1f}%" if _dbg_game_wr is not None else "—"} '
+                f'({len(_dbg_game_graded)} graded)'
+                f'</div>'
+                f'<div style="font-size:11px;color:#4a6a8a;margin-top:4px;">Separate from your personal bet ledger — grades every board pick daily, whether you bet it or not.</div>'
+                f'</div>', unsafe_allow_html=True
+            )
     except Exception:
         pass
 
