@@ -789,84 +789,158 @@ def parse_mybookie_slip_text(text: str) -> list:
 
 
 def parse_draftkings_slip_text(text: str) -> list:
-    """Parse DraftKings pasted slip text. Handles props, game lines, SGP."""
+    """Parse DraftKings pasted slip text. Handles props, game lines, SGP.
+
+    Real fix (2026-08-12): output schema corrected to match every other
+    real parser in this file (player/prop/line/side/sport/outcome/wager/
+    pick_count/bet_type/source/date -- the same fields log_manual_bet
+    expects). The prior version used Player/Direction/Stat/Book/BetType,
+    an entirely different, incompatible shape -- functionally unusable
+    downstream even once wired in. Also added sport inference (was never
+    attempted at all), same keyword-hint pattern as parse_bovada_slip_text.
+    """
     import re
     bets = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-    bet_type = "single"
+    tl = text.lower()
+    _SPORT_HINTS = [
+        (["nba", "basketball"], "NBA"),
+        (["wnba"], "WNBA"),
+        (["nfl", "football"], "NFL"),
+        (["nhl", "hockey"], "NHL"),
+        (["mlb", "baseball"], "MLB"),
+        (["soccer", "mls", "epl", "premier league"], "SOCCER"),
+        (["tennis"], "TENNIS"),
+        (["ufc", "mma"], "MMA"),
+    ]
+    sport = "MLB"
+    for hints, sp in _SPORT_HINTS:
+        if any(h in tl for h in hints):
+            sport = sp
+            break
+    bet_type_hint = "prop"
     for i, line in enumerate(lines):
         if re.search(r"same.game parlay|sgp|parlay", line, re.I):
-            bet_type = "parlay"
+            bet_type_hint = "parlay"
         prop_m = re.match(r"^(.+?)\s*[-\u2013]\s*(Over|Under)\s*([\d.]+)\s+(.+)$", line, re.I)
         if prop_m:
-            player, direction = prop_m.group(1).strip(), prop_m.group(2).capitalize()
+            player, direction = prop_m.group(1).strip(), prop_m.group(2).upper()
             line_val, stat = prop_m.group(3), prop_m.group(4).strip()
-            odds = stake = result = None
+            odds = stake = None
+            outcome = "PENDING"
             for j in range(i+1, min(i+5, len(lines))):
                 om = re.search(r"([+-]\d{3,4})", lines[j])
-                if om and not odds: odds = int(om.group(1))
+                if om and not odds: odds = om.group(1)
                 sm = re.search(r"\$([0-9,.]+)\s+to win", lines[j], re.I)
                 if sm and not stake: stake = float(sm.group(1).replace(",",""))
                 if re.search(r"won|loss|settled|push|void", lines[j], re.I):
-                    result = ("Win" if re.search(r"\bwon\b", lines[j], re.I)
-                              else "Loss" if re.search(r"\blost?\b", lines[j], re.I)
-                              else "Push" if "push" in lines[j].lower() else "Pending")
-            bets.append({"Player":player,"Direction":direction,"Line":float(line_val),
-                         "Stat":stat,"Odds":odds,"Stake":stake,"Result":result or "Pending",
-                         "Book":"DraftKings","BetType":bet_type,"RawLine":line})
+                    outcome = ("WIN" if re.search(r"\bwon\b", lines[j], re.I)
+                              else "LOSS" if re.search(r"\blost?\b", lines[j], re.I)
+                              else "PUSH" if "push" in lines[j].lower() else "PENDING")
+            try:
+                line_f = float(line_val)
+            except (TypeError, ValueError):
+                continue
+            bets.append({
+                "player": player, "prop": stat, "line": line_f, "side": direction,
+                "sport": sport, "outcome": outcome, "wager": stake or 0.0,
+                "pick_count": 1, "bet_type": "prop", "source": "DraftKings",
+                "date": "", "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5,
+            })
         game_m = re.match(r"^(.+?)\s+(?:vs\.?|@)\s+(.+?)\s*[-\u2013]\s*(.+)$", line, re.I)
         if game_m and not prop_m:
             away, home, market = game_m.group(1).strip(), game_m.group(2).strip(), game_m.group(3).strip()
-            odds = stake = result = None
+            odds = stake = None
+            outcome = "PENDING"
             for j in range(i+1, min(i+5, len(lines))):
                 om = re.search(r"([+-]\d{3,4})", lines[j])
-                if om and not odds: odds = int(om.group(1))
+                if om and not odds: odds = om.group(1)
                 sm = re.search(r"\$([0-9,.]+)\s+to win", lines[j], re.I)
                 if sm and not stake: stake = float(sm.group(1).replace(",",""))
                 if re.search(r"won|loss|settled|push", lines[j], re.I):
-                    result = "Win" if re.search(r"\bwon\b", lines[j], re.I) else "Loss"
-            bets.append({"Player":f"{away} @ {home}","Direction":"Game Line","Line":market,
-                         "Stat":"Game","Odds":odds,"Stake":stake,"Result":result or "Pending",
-                         "Book":"DraftKings","BetType":bet_type,"RawLine":line})
+                    outcome = "WIN" if re.search(r"\bwon\b", lines[j], re.I) else "LOSS"
+            bets.append({
+                "player": f"{away} @ {home}", "prop": market, "line": 0,
+                "side": market, "sport": sport, "outcome": outcome,
+                "wager": stake or 0.0, "pick_count": 1, "bet_type": "game",
+                "source": "DraftKings", "date": "", "odds": odds,
+                "tier": "LEAN", "edge": 0, "prob": 0.5,
+            })
     return bets
 
 
 def parse_fanduel_slip_text(text: str) -> list:
-    """Parse FanDuel pasted slip text. Handles props and game lines."""
+    """Parse FanDuel pasted slip text. Handles props and game lines.
+
+    Real fix (2026-08-12): output schema corrected to match every other
+    real parser in this file, same issue and same fix as
+    parse_draftkings_slip_text -- see that function's docstring.
+    """
     import re
     bets = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    tl = text.lower()
+    _SPORT_HINTS = [
+        (["nba", "basketball"], "NBA"),
+        (["wnba"], "WNBA"),
+        (["nfl", "football"], "NFL"),
+        (["nhl", "hockey"], "NHL"),
+        (["mlb", "baseball"], "MLB"),
+        (["soccer", "mls", "epl", "premier league"], "SOCCER"),
+        (["tennis"], "TENNIS"),
+        (["ufc", "mma"], "MMA"),
+    ]
+    sport = "MLB"
+    for hints, sp in _SPORT_HINTS:
+        if any(h in tl for h in hints):
+            sport = sp
+            break
     for i, line in enumerate(lines):
         stat_m = re.match(r"^(.+?):\s*(Over|Under|More|Less)\s*([\d.]+)$", line, re.I)
         if stat_m:
             stat = stat_m.group(1).strip()
-            direction = "Over" if stat_m.group(2).lower() in ("over","more") else "Under"
+            direction = "OVER" if stat_m.group(2).lower() in ("over","more") else "UNDER"
             line_val = stat_m.group(3)
             player = lines[i-1] if i > 0 and not re.search(
                 r"odds|stake|status|winnings|parlay|single", lines[i-1], re.I) else ""
-            odds = stake = result = None
+            odds = stake = None
+            outcome = "PENDING"
             for j in range(i+1, min(i+6, len(lines))):
                 if re.search(r"odds", lines[j], re.I):
                     om = re.search(r"([+-]\d{3,4})", lines[j])
-                    if om: odds = int(om.group(1))
+                    if om: odds = om.group(1)
                 if re.search(r"stake", lines[j], re.I):
                     sm = re.search(r"\$?([\d,.]+)", lines[j])
                     if sm: stake = float(sm.group(1).replace(",",""))
                 if re.search(r"status|result", lines[j], re.I):
-                    result = ("Win" if re.search(r"won|win", lines[j], re.I)
-                              else "Loss" if re.search(r"lost?|loss", lines[j], re.I)
-                              else "Push" if "push" in lines[j].lower() else "Pending")
-            bets.append({"Player":player,"Direction":direction,"Line":float(line_val),
-                         "Stat":stat,"Odds":odds,"Stake":stake,"Result":result or "Pending",
-                         "Book":"FanDuel","BetType":"single","RawLine":line})
+                    outcome = ("WIN" if re.search(r"won|win", lines[j], re.I)
+                              else "LOSS" if re.search(r"lost?|loss", lines[j], re.I)
+                              else "PUSH" if "push" in lines[j].lower() else "PENDING")
+            try:
+                line_f = float(line_val)
+            except (TypeError, ValueError):
+                continue
+            bets.append({
+                "player": player, "prop": stat, "line": line_f, "side": direction,
+                "sport": sport, "outcome": outcome, "wager": stake or 0.0,
+                "pick_count": 1, "bet_type": "prop", "source": "FanDuel",
+                "date": "", "odds": odds, "tier": "LEAN", "edge": 0, "prob": 0.5,
+            })
             continue
         game_m = re.match(r"^(.+?)\s+([+-][\d.]+)\s*\(([+-]\d+)\)$", line)
         if game_m:
-            bets.append({"Player":game_m.group(1).strip(),
-                         "Direction":"Spread" if float(game_m.group(2))!=0 else "ML",
-                         "Line":float(game_m.group(2)),"Stat":"Game",
-                         "Odds":int(game_m.group(3)),"Stake":None,
-                         "Result":"Pending","Book":"FanDuel","BetType":"single","RawLine":line})
+            try:
+                line_f = float(game_m.group(2))
+            except (TypeError, ValueError):
+                continue
+            bets.append({
+                "player": game_m.group(1).strip(),
+                "prop": "Spread" if line_f != 0 else "ML",
+                "line": line_f, "side": game_m.group(1).strip(),
+                "sport": sport, "outcome": "PENDING", "wager": 0.0,
+                "pick_count": 1, "bet_type": "game", "source": "FanDuel",
+                "date": "", "odds": game_m.group(3), "tier": "LEAN", "edge": 0, "prob": 0.5,
+            })
     return bets
 
 
