@@ -74,7 +74,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     build_game_line_consensus, classify_book_role,
     compute_market_anchored_fair_line, recalibrate_pricer_bias, PRICER_COMPONENT_BIAS,
     )
-from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text, parse_pp_board_paste
+from slip_parser import _parse_pp_ocr_inline, parse_bovada_slip_text, parse_mybookie_slip_text, parse_pp_board_paste, parse_draftkings_slip_text, parse_fanduel_slip_text
 from styles import TIER_COLORS, global_css, skeleton_rows_html, empty_state_html, line_movement_html
 from app_fixes import fetch_vsin_intelligence
 try:
