@@ -6612,6 +6612,11 @@ def get_effective_signal_weights(sport):
 
 
 def compute_optimized_weights(sport):
+    # Cut from active use 2026-08-12 -- confirmed redundant with
+    # weekly_audit.py, which computes and applies the real scoring
+    # weights. This function only ever fed a separate, decorative
+    # dashboard display; zero real callers remain. Left in place
+    # (not deleted) since nothing calls it -- harmless either way.
     performance = load_json_data(SIGNAL_PERFORMANCE_PATH, [], mem_ttl=60)
     sport_data = [p for p in performance if p.get("sport") == sport and p.get("outcome") in ("WIN", "LOSS")]
     if len(sport_data) < WEIGHT_OPTIMIZER_MIN_BETS:
@@ -11143,18 +11148,6 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
                 save_json_data(CLV_PATH, _clv_data)
         except (ValueError, KeyError, TypeError, AttributeError):
             pass
-    # ── Optimizer guard — only run when bet count changes ──
-    # Prevents running 10x per session when board reloads.
-    # Key: {sport}_{n_resolved_bets} — changes only when a
-    # new resolved bet (WIN/LOSS) is logged.
-    if not defer_gist_flush:
-        _n_resolved = sum(1 for h in st.session_state.get("history", [])
-                          if h.get("outcome") in ("WIN","LOSS"))
-        _opt_key = f"_opt_last_run_{sport}"
-        _last_run = st.session_state.get(_opt_key, -1)
-        if _n_resolved != _last_run and _n_resolved >= WEIGHT_OPTIMIZER_MIN_BETS:
-            compute_optimized_weights(sport)
-            st.session_state[_opt_key] = _n_resolved
     return record
 
 
