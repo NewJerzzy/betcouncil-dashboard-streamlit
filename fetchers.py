@@ -19171,14 +19171,14 @@ def fetch_odds_api_props(sport):
         markets_str = ",".join(markets)
         all_props = []
         seen = set()
-        for event in today_events[:5]:
+        for event in today_events[:2]:
             event_id = event.get("id", "")
             if not event_id:
                 continue
-            props_url = f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds?apiKey={ODDS_API_KEY}&regions=us,us2&markets={markets_str}&oddsFormat=american&bookmakers={ODDS_API_BOOKS_PROPS}"
+            props_url = f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds?apiKey={ODDS_API_KEY}&regions=us&markets={markets_str}&oddsFormat=american&bookmakers={ODDS_API_BOOKS_PROPS}"
             try:
                 props_resp = _http.get(props_url, headers=HEADERS, timeout=15)
-                api_budget_increment("ODDS_API", amount=10 * len(markets) * 2)  # 10 x N markets x 2 regions
+                api_budget_increment("ODDS_API", amount=10 * len(markets))  # 10 x N markets x 1 region
                 if props_resp.status_code != 200:
                     continue
                 event_data = props_resp.json()
