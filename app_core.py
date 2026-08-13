@@ -8224,7 +8224,18 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 total_edge_pct = max(-0.20, min(0.20, total_edge_pct))
                 # Apply steam signal to total edge
                 try:
-                    _total_steam = _steam_signals.get("betonline_total", {}) if '_steam_signals' in dir() else {}
+                    # Real fix (2026-08-13): _steam_signals was referenced
+                    # here before it existed in this function's execution
+                    # order (the real init + detection loop sits ~140 lines
+                    # later) -- the dir() check always failed, so this
+                    # multiplier never actually applied, for any game, ever.
+                    # Targeted early check instead of moving the whole later
+                    # block, which has its own dependency on spread_edge
+                    # (computed even later) -- detect_steam_move reads
+                    # persisted state, safe to call here too.
+                    from bc_utils import detect_steam_move
+                    _game_key_early = f"{away_team}@{home_team}"
+                    _total_steam = detect_steam_move("betonline", _game_key_early, "total")
                     if _total_steam.get("is_steam"):
                         _t_mult = min(1.15, 1 + _total_steam.get("confidence", 0) * 0.15)
                         total_edge_pct *= _t_mult
