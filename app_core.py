@@ -10482,19 +10482,10 @@ def generate_gem_summary():
         for r in signal_results[:5]:
             lines.append(f"{r['Signal']}: WR {r['Win Rate With']} ({r['Bets With']} bets) | Lift: {r['Lift']} | {r['Status']}")
         lines.append("")
-    optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-    sport_opt = optimizer_data.get(sport, {})
-    if sport_opt.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS:
-        weights = sport_opt.get("weights", {})
-        lines.append(f"=== {sport} WEIGHTS (DATA-DRIVEN — {sport_opt['n_bets']} bets) ===")
-        for k, v in weights.items():
-            lines.append(f"{k}: {v:.1%}")
-        lines.append(f"Win Rate: {sport_opt.get('overall_win_rate', 0):.1%}")
-    else:
-        lines.append(f"=== {sport} WEIGHTS (HARDCODED) ===")
-        weights = SPORT_SIGNAL_WEIGHTS.get(sport, {})
-        for k, v in weights.items():
-            lines.append(f"{k}: {v:.1%}")
+    weights = get_effective_signal_weights(sport)
+    lines.append(f"=== {sport} WEIGHTS (real, weekly-audit derived) ===")
+    for k, v in weights.items():
+        lines.append(f"{k}: {v:.1%}")
     lines.append("")
     sovereign_elite = [p for p in board if p["Tier"] in ("SOVEREIGN", "ELITE")] if board else []
     approved = [p for p in board if p["Tier"] == "APPROVED"] if board else []
@@ -11885,16 +11876,11 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
     signals = {}
     league_avg_def = 112.0
     if weights is None:
-        # Load optimizer weights once per session — cached in session_state
+        # Load weights once per session — cached in session_state
         # Avoids 50+ disk reads per board load (one per prop)
         _cache_key = f"_opt_weights_{sport}"
         if _cache_key not in st.session_state:
-            from_optimizer = load_from_gist("optimized_weights", None) or load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-            sport_optimizer = from_optimizer.get(sport, {})
-            if (sport_optimizer.get("weights") and sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
-                _base_w = sport_optimizer["weights"]
-            else:
-                _base_w = get_effective_signal_weights(sport)
+            _base_w = get_effective_signal_weights(sport)
             # Apply online feature importance adjustment
             _hist_for_adj = st.session_state.get("history", [])
             if len(_hist_for_adj) >= 15:
@@ -15734,13 +15720,7 @@ def load_sport_data(sport):
     _pace_ratings  = _static["pace"]
 
     # Pre-load signal weights once — avoids disk read on every prop iteration
-    _optimizer_data = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-    _sport_optimizer = _optimizer_data.get(sport, {})
-    if (_sport_optimizer.get("weights") and
-            _sport_optimizer.get("n_bets", 0) >= WEIGHT_OPTIMIZER_MIN_BETS):
-        _preloaded_weights = _sport_optimizer["weights"]
-    else:
-        _preloaded_weights = get_effective_signal_weights(sport)
+    _preloaded_weights = get_effective_signal_weights(sport)
 
     # Pre-build game analysis lookup by matchup for game total routing
     _game_analysis_by_matchup = {}
