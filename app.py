@@ -9491,12 +9491,6 @@ with tabs[9]:
                         st.caption(f"⚠️ {_pkl['player']}: {str(_e)[:50]}")
                 if _logged_pk:
                     _flush_batch_gist(st.session_state.get("gist_dirty", {}))
-                    _n_resolved_pk = sum(1 for h in st.session_state.get("history", [])
-                                          if h.get("outcome") in ("WIN","LOSS"))
-                    _opt_key_pk = f"_opt_last_run_{_pk_sport}"
-                    if _n_resolved_pk != st.session_state.get(_opt_key_pk, -1) and _n_resolved_pk >= WEIGHT_OPTIMIZER_MIN_BETS:
-                        compute_optimized_weights(_pk_sport)
-                        st.session_state[_opt_key_pk] = _n_resolved_pk
                     st.success(f"✅ Logged {_logged_pk}-pick parlay (${_pk_stake:.2f} stake) → {_pk_outcome}")
                     st.rerun()
             else:
@@ -9720,12 +9714,6 @@ with tabs[9]:
                         continue
                 if submitted > 0:
                     _flush_batch_gist(st.session_state.get("gist_dirty", {}))
-                    _n_resolved_final = sum(1 for h in st.session_state.get("history", [])
-                                             if h.get("outcome") in ("WIN","LOSS"))
-                    _opt_key_final = f"_opt_last_run_{bet.get('sport','NBA')}"
-                    if _n_resolved_final != st.session_state.get(_opt_key_final, -1) and _n_resolved_final >= WEIGHT_OPTIMIZER_MIN_BETS:
-                        compute_optimized_weights(bet.get("sport","NBA"))
-                        st.session_state[_opt_key_final] = _n_resolved_final
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
                     st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}")
                     st.session_state["parsed_bets"] = []
@@ -12013,23 +12001,7 @@ with tabs[14]:
         _scol2.metric("Overlap Warnings", "—", help=f"Need {20-len(_sys_resolved)} more bets")
         _scol3.metric("Negative Signals", "—", help=f"Need {30-len(_sys_resolved)} more bets")
     st.markdown("---")
-    st.markdown("### \u2696\ufe0f Signal Weights Status")
-    weight_rows = []
-    for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
-        weights_s, status_s, weight_type_s = get_active_weights(sp)
-        optimizer_data_s = load_json_data(WEIGHT_OPTIMIZER_PATH, {})
-        sport_data_s = optimizer_data_s.get(sp, {})
-        n_bets_s = sport_data_s.get("n_bets", 0)
-        wr_s = sport_data_s.get("overall_win_rate", 0)
-        weight_rows.append({"Sport": sp, "Status": status_s, "Base": f"{weights_s.get('base',0):.0%}", "Defense": f"{weights_s.get('defense',0):.0%}", "Location": f"{weights_s.get('location',0):.0%}", "Rest": f"{weights_s.get('rest',0):.0%}", "Pace": f"{weights_s.get('pace',0):.0%}", "Bets": n_bets_s, "Win Rate": f"{wr_s:.1%}" if wr_s > 0 else "\u2014", "Type": weight_type_s})
-    st.markdown(_bc_df_html(pd.DataFrame(weight_rows)), unsafe_allow_html=True)
-    if st.button("Force Recalculate Weights"):
-        for sp in ["NBA","MLB","NHL","NFL","WNBA"]:
-            compute_optimized_weights(sp)
-        st.success("Weights recalculated")
-        st.rerun()
-    st.markdown("---")
-    st.markdown("### \U0001f4ca SEM Calibration")
+    st.markdown("### 📊 SEM Calibration")
     tier_stats_s = compute_tier_stats(st.session_state.get("history", []))
     if tier_stats_s:
         sem_df = pd.DataFrame([{"Tier": tier, "Bets": s["n"], "Hit Rate": f"{s['hit_rate']:.1%}", "Predicted": f"{s['avg_predicted']:.1%}", "SEM": f"\u00b1{s['sem']:.3f}" if s['sem'] else "\u2014"} for tier, s in tier_stats_s.items()])
