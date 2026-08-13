@@ -11834,7 +11834,9 @@ def parse_prizepicks_text(raw_text):
             outcome = "PENDING"
         else:
             # For UNDER picks, winning means result < line
-            if side == "UNDER":
+            if result_val == line_val:
+                outcome = "PUSH"
+            elif side == "UNDER":
                 outcome = "WIN" if result_val < line_val else "LOSS"
             else:
                 outcome = "WIN" if result_val > line_val else "LOSS"
