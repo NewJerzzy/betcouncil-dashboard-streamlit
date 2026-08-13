@@ -5337,8 +5337,11 @@ with tabs[10]:
                                         skipped.append(f"{player} (stat '{prop}' not found)")
                                         continue
 
-                                outcome = "WIN" if (side=="OVER" and actual > line) or (side=="UNDER" and actual < line) else "LOSS"
-                                icon = "✅" if outcome == "WIN" else "❌"
+                                if actual == line:
+                                    outcome = "PUSH"
+                                else:
+                                    outcome = "WIN" if (side=="OVER" and actual > line) or (side=="UNDER" and actual < line) else "LOSS"
+                                icon = "✅" if outcome == "WIN" else ("➖" if outcome == "PUSH" else "❌")
                                 st.markdown(f"{icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
 
                                 log_manual_bet(
