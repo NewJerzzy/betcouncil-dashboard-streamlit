@@ -9007,15 +9007,6 @@ def build_market_comparison(shortlist):
             if matched_player:
                 result["dk_props"].append({**row, "matches_shortlist": True, "matched_player": matched_player})
 
-    # ── FanDuel Parlay Hub: whatever the harvester has, per sport ───────
-    for sport in list(sports_needed) + ["ALL"]:
-        try:
-            fdph = fetch_fanduel_parlayhub_from_gist(sport)
-        except Exception:
-            fdph = []
-        if fdph:
-            result["fd_parlayhub"][sport] = fdph
-
     # ── FavoredProps: match against shortlist prop players, both dfs
     # (PrizePicks/Underdog-style) and sportsbook variants ───────────────
     for sport in sports_needed:
@@ -9041,38 +9032,8 @@ def build_market_comparison(shortlist):
             if player_l in shortlist_players:
                 result["draftedge"].append({**row, "sport": sport})
 
-    # ── WagerBird: match against shortlist game matchups (MLB only) ────
+    # ── shortlist_matchups needed below for BettingPros + Covers ────────
     shortlist_matchups = [g["Matchup"] for g in shortlist.get("games", [])]
-    for matchup in shortlist_matchups:
-        try:
-            wb_pick = get_wagerbird_pick(matchup)
-        except Exception:
-            wb_pick = {}
-        if wb_pick and wb_pick.get("pick_text"):
-            result["wagerbird"].append({"matchup": matchup, **wb_pick})
-
-    # ── LineTerminal: match against shortlist prop players ─────────────
-    for sport in sports_needed:
-        for player_l in shortlist_players:
-            try:
-                lt_rows = fetch_lineterminal_player_props(player_l, sport=sport)
-            except Exception:
-                lt_rows = []
-            for row in lt_rows:
-                if row.get("recommend"):
-                    result["lineterminal"].append({**row, "player": player_l, "sport": sport})
-
-    # ── PropsMadness: match against shortlist prop players (mostly
-    # paywall-locked — usually near-empty, real when a line is unlocked) ──
-    for sport in sports_needed:
-        try:
-            pm_offers = fetch_propsmadness_from_gist(sport)
-        except Exception:
-            pm_offers = []
-        for row in pm_offers:
-            player_l = str(row.get("player_name", "")).lower()
-            if player_l in shortlist_players:
-                result["propsmadness"].append({**row, "sport": sport})
 
     # ── BettingPros + Covers: match against shortlist game matchups ─────
     bp_data = st.session_state.get("bettingpros_data", {})
