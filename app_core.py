@@ -14343,7 +14343,6 @@ def load_sport_data(sport):
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
-        ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
     ]
     if sport == "MLB" and baseballpress2_raw:
