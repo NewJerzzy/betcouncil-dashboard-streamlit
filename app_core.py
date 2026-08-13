@@ -14342,13 +14342,9 @@ def load_sport_data(sport):
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
-        ("fetch_prizepicks_from_gist",       "prizepicks_props_h",     "prizepicks_src"),
-        ("fetch_prophetx_game_lines_from_gist","prophetx_lines_h",       "prophetx_lines_src"),
-        ("fetch_prophetx_props_from_gist",     "prophetx_props_h",       "prophetx_props_src"),
         ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_scoresandodds_from_gist",      "scoresandodds_data",     "scoresandodds_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
-        ("fetch_linestar_salaries_from_gist",  "linestar_salaries_data","linestar_salaries_src"),
     ]
     if sport == "MLB" and baseballpress2_raw:
         _bp_data, _bp_src = baseballpress2_raw
