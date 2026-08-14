@@ -462,6 +462,9 @@ def main() -> int:
     # isolated so a wrong guess here doesn't take down what already runs.
     log("Trying CDN endpoint for MLB straight lines (lg5)...")
     cdn_mlb = fetch_cdn_league_odds(5)
+    files_payload["betcouncil_unabated_cdn_debug.json"] = {
+        "content": json.dumps({"captured_at": now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
+    }
     if cdn_mlb:
         cdn_rows = flatten_cdn_straight_lines(cdn_mlb, 5)
         log(f"  CDN: {len(cdn_rows)} MLB straight-line rows extracted")
