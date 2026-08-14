@@ -82,38 +82,47 @@ def fetch_cdn_league_odds(league_id: int, timeout: int = 45):
 
 
 def flatten_cdn_straight_lines(data, league_id: int) -> list:
-    """Defensive parse of the CDN v2 odds file into flat straight-line
-    rows. Real structure unconfirmed -- tries the shape described
-    (pt1 = full game, nested by book/market source), logs and returns []
-    on anything unexpected rather than crashing."""
+    """Parse the CDN v2 odds file into flat straight-line rows. Real
+    structure confirmed via live job log (2026-08-14):
+      data["odds"]["lg{N}:pt1:pregame"] = [
+        {eventId, eventStart, eventTeams: {"0":{id}, "1":{id}},
+         sides: {"si{sideId}:tid{teamId}": {"ms{bookId}": {price,
+         americanPrice, points, modifiedOn, isBlurred, ...}, ...}}}
+      ]
+    Honest limitation: teams are numeric IDs only, no names in this
+    response -- stored as-is rather than guessing team names wrong.
+    """
     rows = []
     if not isinstance(data, dict):
         log("CDN response not a dict -- unexpected structure")
         return rows
     try:
-        events = data.get("events") or data.get("data", {}).get("events") or []
-        if not events and isinstance(data.get("data"), list):
-            events = data["data"]
+        odds = data.get("odds", {})
+        key = f"lg{league_id}:pt1:pregame"
+        events = odds.get(key, [])
         for event in events:
             if not isinstance(event, dict):
                 continue
-            event_id = event.get("eventId") or event.get("id")
-            event_start = event.get("eventStart") or event.get("start", "")
-            home = event.get("homeTeam") or event.get("home", "")
-            away = event.get("awayTeam") or event.get("away", "")
-            periods = event.get("periods") or event.get("periodTypes") or {}
-            pt1 = periods.get("pt1") if isinstance(periods, dict) else None
-            if not pt1:
-                continue
-            sources = pt1.get("marketSourceLines") or pt1.get("sources") or {}
-            for src_id, src_data in (sources.items() if isinstance(sources, dict) else []):
-                if not isinstance(src_data, dict):
+            event_id = event.get("eventId")
+            event_start = event.get("eventStart", "")
+            teams = event.get("eventTeams", {})
+            away_id = (teams.get("0") or {}).get("id")
+            home_id = (teams.get("1") or {}).get("id")
+            sides = event.get("sides", {})
+            for side_key, books in (sides.items() if isinstance(sides, dict) else []):
+                if not isinstance(books, dict):
                     continue
-                rows.append({
-                    "event_id": event_id, "event_start": event_start,
-                    "home": home, "away": away, "league_id": league_id,
-                    "source_id": src_id, "raw": src_data,
-                })
+                for book_key, line in books.items():
+                    if not isinstance(line, dict) or line.get("isBlurred"):
+                        continue
+                    rows.append({
+                        "event_id": event_id, "event_start": event_start,
+                        "home_team_id": home_id, "away_team_id": away_id,
+                        "league_id": league_id, "side": side_key,
+                        "book": book_key, "price": line.get("americanPrice"),
+                        "points": line.get("points"),
+                        "modified_on": line.get("modifiedOn"),
+                    })
     except Exception as e:
         log(f"CDN parse error: {e}")
         DEBUG_LOG.append({"note": "cdn_parse_error", "error": str(e)})
