@@ -441,6 +441,22 @@ def main() -> int:
         return 1
     atexit.register(lambda: release_lock(GIST_ID, github_token, "sharp_feeds", _lock_token))
 
+    # Real diagnostic (2026-08-14): standalone write to isolate whether
+    # _rate_limit_ok below is the actual blocker, without touching its
+    # real behavior. Direct PATCH, not through push_files/files_payload,
+    # so it lands regardless of anything later in this function.
+    try:
+        requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": {"betcouncil_unabated_reached_main.json": {
+                "content": json.dumps({"reached": "before rate_limit_ok check", "at": datetime.now(timezone.utc).isoformat()})
+            }}},
+            timeout=15,
+        )
+    except Exception:
+        pass
+
     if not _rate_limit_ok(github_token):
         return 0
 
