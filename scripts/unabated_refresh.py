@@ -55,6 +55,71 @@ def log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
+def fetch_cdn_league_odds(league_id: int, timeout: int = 45):
+    """Real fix attempt (2026-08-14): old data.unabated.com confirmed dead
+    (401, matches the live failing workflow this was written to fix).
+    Targets the CDN endpoint reported as open/no-auth. Could not verify
+    from the environment that wrote this (network-blocked to this
+    domain) -- defensively parsed so a wrong structure logs and returns
+    None rather than crashing the whole run."""
+    url = f"https://content.unabated.com/markets/v2/league/{league_id}/odds.json"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+    except Exception as e:
+        log(f"CDN request error {url}: {e}")
+        DEBUG_LOG.append({"url": url, "error": str(e)})
+        return None
+    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:300]})
+    if r.status_code != 200:
+        log(f"CDN HTTP {r.status_code} for {url}: {r.text[:200]}")
+        return None
+    try:
+        return r.json()
+    except Exception as e:
+        log(f"CDN JSON parse error {url}: {e}")
+        DEBUG_LOG.append({"url": url, "note": "json_parse_error", "error": str(e)})
+        return None
+
+
+def flatten_cdn_straight_lines(data, league_id: int) -> list:
+    """Defensive parse of the CDN v2 odds file into flat straight-line
+    rows. Real structure unconfirmed -- tries the shape described
+    (pt1 = full game, nested by book/market source), logs and returns []
+    on anything unexpected rather than crashing."""
+    rows = []
+    if not isinstance(data, dict):
+        log("CDN response not a dict -- unexpected structure")
+        return rows
+    try:
+        events = data.get("events") or data.get("data", {}).get("events") or []
+        if not events and isinstance(data.get("data"), list):
+            events = data["data"]
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_id = event.get("eventId") or event.get("id")
+            event_start = event.get("eventStart") or event.get("start", "")
+            home = event.get("homeTeam") or event.get("home", "")
+            away = event.get("awayTeam") or event.get("away", "")
+            periods = event.get("periods") or event.get("periodTypes") or {}
+            pt1 = periods.get("pt1") if isinstance(periods, dict) else None
+            if not pt1:
+                continue
+            sources = pt1.get("marketSourceLines") or pt1.get("sources") or {}
+            for src_id, src_data in (sources.items() if isinstance(sources, dict) else []):
+                if not isinstance(src_data, dict):
+                    continue
+                rows.append({
+                    "event_id": event_id, "event_start": event_start,
+                    "home": home, "away": away, "league_id": league_id,
+                    "source_id": src_id, "raw": src_data,
+                })
+    except Exception as e:
+        log(f"CDN parse error: {e}")
+        DEBUG_LOG.append({"note": "cdn_parse_error", "error": str(e)})
+    return rows
+
+
 def fetch_json(url: str, timeout: int = 45):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout)
@@ -390,6 +455,28 @@ def main() -> int:
     files_payload: dict = {}
     total_props_rows = 0
     total_straight_rows = 0
+
+    # Real fix attempt (2026-08-14): try the CDN endpoint for MLB (lg5)
+    # straight lines. Separate file, separate from the existing (broken)
+    # flow below -- this is a genuine test of an unverified claim, kept
+    # isolated so a wrong guess here doesn't take down what already runs.
+    log("Trying CDN endpoint for MLB straight lines (lg5)...")
+    cdn_mlb = fetch_cdn_league_odds(5)
+    if cdn_mlb:
+        cdn_rows = flatten_cdn_straight_lines(cdn_mlb, 5)
+        log(f"  CDN: {len(cdn_rows)} MLB straight-line rows extracted")
+        if cdn_rows:
+            if len(cdn_rows) > MAX_ROWS_PER_FILE:
+                cdn_rows = cdn_rows[:MAX_ROWS_PER_FILE]
+            files_payload["betcouncil_unabated_cdn_mlb.json"] = {
+                "content": json.dumps({
+                    "source": "unabated_cdn", "sport": "mlb",
+                    "captured_at": now_iso, "total": len(cdn_rows),
+                    "rows": cdn_rows,
+                }, default=str)
+            }
+    else:
+        log("  CDN endpoint did not return usable data")
 
     for sport in SPORTS:
         # Step 2: player names (per sport)
