@@ -69,7 +69,7 @@ def fetch_cdn_league_odds(league_id: int, timeout: int = 45):
         log(f"CDN request error {url}: {e}")
         DEBUG_LOG.append({"url": url, "error": str(e)})
         return None
-    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:300]})
+    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:4000]})
     if r.status_code != 200:
         log(f"CDN HTTP {r.status_code} for {url}: {r.text[:200]}")
         return None
