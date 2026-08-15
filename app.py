@@ -11192,21 +11192,6 @@ with tabs[14]:
         st.caption("⏱️ Performance telemetry activates after first board load.")
     st.markdown("---")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Configuration**")
-        st.write(f"Bankroll: ${st.session_state.get('bankroll', DEFAULT_BANKROLL):.2f}")
-        st.write(f"Min Edge: {st.session_state.get('min_edge', MIN_EDGE_DEFAULT)*100:.0f}%")
-        st.write(f"Skip unknown players: {st.session_state.get('skip_defaults', True)}")
-        st.write(f"Kelly fraction: {KELLY_FRACTION}")
-    with c2:
-        st.markdown("**Session Stats**")
-        st.write(f"Active locks: {len(st.session_state.get('locks', []))}")
-        st.write(f"History entries: {len(st.session_state.get('history', []))}")
-        st.write(f"Props loaded: {len(st.session_state.get('board_data', []))}")
-        st.write(f"Session time: {get_session_time()}")
-    st.markdown("---")
-
     # ── VSiN Intelligence Panel ───────────────────────────────
     st.markdown("### 🎯 VSiN Intelligence")
     _sport_vsin = st.session_state.get("last_sport", "MLB")
@@ -11214,7 +11199,7 @@ with tabs[14]:
     _vsin_ts = _vsin.get("timestamp")
 
     if not _vsin.get("merged") and not _vsin.get("power_ratings"):
-        st.caption("No VSiN data yet — run `python betcouncil_auto_scraper.py --all` to populate.")
+        st.caption("No VSiN data yet for this sport — the automated VSiN Splits workflow runs on its own schedule; check back after its next run.")
     else:
         _v1, _v2, _v3, _v4 = st.columns(4)
         with _v1:
