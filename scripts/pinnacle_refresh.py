@@ -182,6 +182,37 @@ def push_files(files_payload: dict, github_token: str) -> int:
     return len(files_payload)
 
 
+def detect_movement(prev_rows: list, curr_rows: list) -> list:
+    """Real, Gist-persisted line-movement detector for the headless
+    context -- the existing detect_steam_move (bc_utils.py) only works
+    within a single long-running Streamlit session via an in-memory
+    dict, which doesn't survive across separate GitHub Actions runs.
+    This compares the previous run's snapshot (read from the Gist)
+    against the current one directly."""
+    prev_by_id = {str(r.get("MatchupId")): r for r in prev_rows}
+    movements = []
+    for curr in curr_rows:
+        mid = str(curr.get("MatchupId"))
+        prev = prev_by_id.get(mid)
+        if not prev:
+            continue
+        for field, label in [("HomeML", "moneyline"), ("Spread", "spread"), ("Total", "total")]:
+            pv, cv = prev.get(field), curr.get(field)
+            if pv is None or cv is None:
+                continue
+            try:
+                diff = float(cv) - float(pv)
+            except (TypeError, ValueError):
+                continue
+            if abs(diff) >= (10 if label == "moneyline" else 0.5):
+                movements.append({
+                    "MatchupId": mid, "Matchup": curr.get("Matchup"),
+                    "Market": label, "PrevValue": pv, "CurrValue": cv,
+                    "Diff": diff, "DetectedAt": datetime.now(timezone.utc).isoformat(),
+                })
+    return movements
+
+
 def main() -> int:
     github_token = os.environ.get("GITHUB_TOKEN")
     if not github_token:
@@ -199,6 +230,24 @@ def main() -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
     total_rows = 0
     all_closing_rows = []
+    all_movements = []
+
+    # Read previous snapshots before they get overwritten below, for
+    # real cross-run movement comparison.
+    prev_snapshots = {}
+    try:
+        existing_resp = requests.get(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}"}, timeout=15,
+        )
+        existing_files = existing_resp.json().get("files", {})
+        for sport in SPORT_LEAGUE_IDS:
+            fname = f"betcouncil_pinnacle_{sport}.json"
+            f = existing_files.get(fname)
+            if f and f.get("content"):
+                prev_snapshots[sport] = json.loads(f["content"]).get("data", [])
+    except Exception as e:
+        log(f"Could not read previous snapshots for movement detection: {e}")
 
     for sport, league_id in SPORT_LEAGUE_IDS.items():
         rows = fetch_sport(sport, league_id)
@@ -215,7 +264,23 @@ def main() -> int:
             for r in closing_now:
                 r["Sport"] = sport
             all_closing_rows.extend(closing_now)
+
+            if sport in prev_snapshots:
+                moves = detect_movement(prev_snapshots[sport], rows)
+                for m in moves:
+                    m["Sport"] = sport
+                all_movements.extend(moves)
+                if moves:
+                    log(f"{sport}: {len(moves)} line movements detected")
         time.sleep(1)
+
+    if all_movements:
+        files_payload["betcouncil_pinnacle_movements.json"] = {
+            "content": json.dumps({
+                "source": "pinnacle_movement_detector", "captured_at": now_iso,
+                "total": len(all_movements), "movements": all_movements,
+            }, default=str)
+        }
 
     # Real closing-line accumulator: merge newly-closing games into whatever
     # was already captured, keyed by MatchupId, so a game captured on one
