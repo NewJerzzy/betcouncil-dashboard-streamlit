@@ -13714,7 +13714,7 @@ def load_sport_data(sport):
             return []
     def _pf_kalshi():
         try:
-            return fetch_kalshi_markets(sport)
+            return fetch_kalshi_from_gist(sport)
         except (requests.RequestException, ValueError, KeyError, AttributeError):
             return []
     def _pf_polymarket():
