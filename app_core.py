@@ -10939,7 +10939,15 @@ def log_manual_bet(player, prop, line, side, sport, outcome, wager, pick_count, 
     multiplier = PRIZEPICKS_MULTIPLIERS.get(pick_count, 3.0)
     if outcome == "WIN":
         if bet_type == "prop":
-            profit = round(wager * multiplier, 2)
+            # Real fix (2026-08-15): multiplier is TOTAL RETURN (confirmed
+            # via external verification -- PrizePicks' own payout structure
+            # "includes the user's entry fee", e.g. 2-pick 3x = +200 American
+            # odds = $200 profit + $100 stake back on a $100 entry). Was
+            # computing profit = wager * multiplier, counting the returned
+            # stake as profit on every single prop win -- inconsistent with
+            # this same function's own correct game-line convention two
+            # lines below (0.909 = net profit only, stake excluded).
+            profit = round(wager * (multiplier - 1), 2)
         else:
             profit = round(wager * 0.909, 2)
         net = profit
