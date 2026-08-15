@@ -73,6 +73,7 @@ def fetch_sport(sport: str, league_id: int) -> list:
         return []
 
     matchup_teams = {}
+    matchup_start = {}
     for mu in matchups_data:
         if mu.get("type") != "matchup":
             continue
@@ -88,6 +89,7 @@ def fetch_sport(sport: str, league_id: int) -> list:
             elif alignment == "away":
                 away = name
         matchup_teams[mid] = {"home": home, "away": away}
+        matchup_start[mid] = mu.get("startTime") or mu.get("cutoffAt")
 
     markets_data = arcadia_get(f"/leagues/{league_id}/markets/straight")
     if not markets_data:
@@ -144,13 +146,24 @@ def fetch_sport(sport: str, league_id: int) -> list:
             continue
         mkts = game_markets.get(mid, {})
         ml, sp, tot = mkts.get("moneyline", {}), mkts.get("spread", {}), mkts.get("total", {})
+        is_closing = False
+        start_raw = matchup_start.get(mid)
+        if start_raw:
+            try:
+                start_dt = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+                minutes_to_start = (start_dt - datetime.now(timezone.utc)).total_seconds() / 60
+                is_closing = 0 <= minutes_to_start <= 30
+            except (ValueError, TypeError):
+                pass
         results.append({
+            "MatchupId": mid,
             "Matchup": f"{away} @ {home}", "Home": home, "Away": away,
             "HomeML": ml.get("home"), "AwayML": ml.get("away"),
             "Spread": sp.get("hdp"), "SpreadOdds": sp.get("home_price"),
             "Total": tot.get("points"), "TotalOver": tot.get("over_price"),
             "TotalUnder": tot.get("under_price"),
             "Book": "Pinnacle", "Sport": sport, "source": "pinnacle_lines",
+            "StartTime": start_raw, "IsClosing": is_closing,
         })
     return results
 
@@ -185,6 +198,7 @@ def main() -> int:
     files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
     total_rows = 0
+    all_closing_rows = []
 
     for sport, league_id in SPORT_LEAGUE_IDS.items():
         rows = fetch_sport(sport, league_id)
@@ -197,7 +211,42 @@ def main() -> int:
                     "captured_at": now_iso, "total": len(rows), "data": rows,
                 }, default=str)
             }
+            closing_now = [r for r in rows if r.get("IsClosing")]
+            for r in closing_now:
+                r["Sport"] = sport
+            all_closing_rows.extend(closing_now)
         time.sleep(1)
+
+    # Real closing-line accumulator: merge newly-closing games into whatever
+    # was already captured, keyed by MatchupId, so a game captured on one
+    # run isn't lost or overwritten by a later run once it's live/finished.
+    if all_closing_rows:
+        try:
+            existing_resp = requests.get(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}"}, timeout=15,
+            )
+            existing_files = existing_resp.json().get("files", {})
+            existing_content = {}
+            cl_file = existing_files.get("betcouncil_unabated_closing_lines.json")
+            if cl_file and cl_file.get("content"):
+                existing_content = json.loads(cl_file["content"]).get("by_matchup", {})
+        except Exception as e:
+            log(f"Could not read existing closing lines (starting fresh): {e}")
+            existing_content = {}
+
+        for r in all_closing_rows:
+            key = str(r.get("MatchupId"))
+            if key not in existing_content:
+                existing_content[key] = r
+
+        files_payload["betcouncil_pinnacle_closing_lines.json"] = {
+            "content": json.dumps({
+                "source": "pinnacle_arcadia_closing", "captured_at": now_iso,
+                "total": len(existing_content), "by_matchup": existing_content,
+            }, default=str)
+        }
+        log(f"Closing lines: {len(all_closing_rows)} new, {len(existing_content)} total accumulated")
 
     if not files_payload:
         log("No data from any sport -- nothing written")
