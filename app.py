@@ -46,11 +46,8 @@ del _name_copy_guard
 # depend on any other tab having loaded first).
 with st.sidebar:
     st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">Sport Focus</div>', unsafe_allow_html=True)
-    _sb_sports = ["MLB", "NBA", "NFL", "NHL", "WNBA", "Soccer", "UFC", "Golf", "Tennis"]
     _sb_current = st.session_state.get("last_sport", "MLB")
-    _sb_sel = st.selectbox("", _sb_sports, index=_sb_sports.index(_sb_current) if _sb_current in _sb_sports else 0, key="sidebar_sport_focus", label_visibility="collapsed")
-    if _sb_sel != _sb_current:
-        st.session_state["last_sport"] = _sb_sel
+    st.markdown(f'<div style="font-size:15px;font-weight:600;color:var(--bc-text);">{_sb_current}</div>', unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">🔥 Steam Moves</div>', unsafe_allow_html=True)
@@ -64,22 +61,25 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div style="font-size:11px;color:var(--bc-dim);text-transform:uppercase;letter-spacing:1px;">📊 Most Bet Tonight</div>', unsafe_allow_html=True)
     try:
-        _sb_betql_sport = _sb_sel.upper() if _sb_sel.upper() in ("MLB", "NBA", "NFL", "NHL") else "MLB"
-        _sb_games = fetch_betql_from_gist(_sb_betql_sport)
-        _sb_ranked = []
-        for _sg in _sb_games:
-            _sc = _sg.get("community", [])
-            _sml = next((c for c in _sc if c.get("bet_type") == "moneyline"), None)
-            if _sml:
-                _stot = _sml.get("home_count", 0) + _sml.get("away_count", 0)
-                if _stot:
-                    _sb_ranked.append((_stot, _sg.get("away_team",""), _sg.get("home_team","")))
-        _sb_ranked.sort(reverse=True)
-        if _sb_ranked:
-            for _stot, _saway, _shome in _sb_ranked[:4]:
-                st.caption(f"🎯 {_saway} @ {_shome} — {_stot} picks")
+        _sb_betql_sport = _sb_current.upper()
+        if _sb_betql_sport not in ("MLB", "NBA", "NFL", "NHL"):
+            st.caption(f"Not available for {_sb_current} right now.")
         else:
-            st.caption("No community data loaded for this sport right now.")
+            _sb_games = fetch_betql_from_gist(_sb_betql_sport)
+            _sb_ranked = []
+            for _sg in _sb_games:
+                _sc = _sg.get("community", [])
+                _sml = next((c for c in _sc if c.get("bet_type") == "moneyline"), None)
+                if _sml:
+                    _stot = _sml.get("home_count", 0) + _sml.get("away_count", 0)
+                    if _stot:
+                        _sb_ranked.append((_stot, _sg.get("away_team",""), _sg.get("home_team","")))
+            _sb_ranked.sort(reverse=True)
+            if _sb_ranked:
+                for _stot, _saway, _shome in _sb_ranked[:4]:
+                    st.caption(f"🎯 {_saway} @ {_shome} — {_stot} picks")
+            else:
+                st.caption("No community data loaded for this sport right now.")
     except Exception:
         st.caption("Unavailable right now.")
 
