@@ -5095,11 +5095,19 @@ with tabs[10]:
             btn_col2, btn_col3, btn_col4 = st.columns(3)
             with btn_col2:
                 if st.button("✅ WIN SLIP", key=f"win_{slip_key}", use_container_width=True):
-                    for lock in slip_locks:
+                    for _lki, lock in enumerate(slip_locks):
                         log_manual_bet(
                             lock.get("player",""), lock.get("prop",""), lock.get("line",0),
                             lock.get("side","OVER"), lock.get("sport",""), "WIN",
-                            float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
+                            # Real fix (2026-08-15): only the first lock in the
+                            # slip carries the real wager -- was passing each
+                            # lock's own full unit-size wager, so an N-pick
+                            # slip's real profit was recorded N times, summing
+                            # to N times the real bankroll impact. Confirmed
+                            # via real history data (identical per-leg profits
+                            # in N-sized groups).
+                            (float(lock.get("wager") or 0) if _lki == 0 else 0.0),
+                            n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
                             tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
                             signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
@@ -5114,11 +5122,14 @@ with tabs[10]:
                     st.rerun()
             with btn_col3:
                 if st.button("❌ LOSS SLIP", key=f"loss_{slip_key}", use_container_width=True):
-                    for lock in slip_locks:
+                    for _lki, lock in enumerate(slip_locks):
                         log_manual_bet(
                             lock.get("player",""), lock.get("prop",""), lock.get("line",0),
                             lock.get("side","OVER"), lock.get("sport",""), "LOSS",
-                            float(lock.get("wager") or 0), n_pick, "prop", "PrizePicks",
+                            # Same real fix as WIN SLIP above -- a loss should
+                            # deduct the real stake once, not once per leg.
+                            (float(lock.get("wager") or 0) if _lki == 0 else 0.0),
+                            n_pick, "prop", "PrizePicks",
                             lock.get("timestamp","")[:10],
                             tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
                             signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
@@ -9473,7 +9484,7 @@ with tabs[9]:
                 _pk_date_str = datetime.combine(_pk_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
                 _logged_pk = 0
                 _pk_snap_cache = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
-                for _pkl in _pk_players:
+                for _pki_leg, _pkl in enumerate(_pk_players):
                     try:
                         _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
                             _pkl["player"], _pkl["prop"], _pk_sport, _pk_date_str,
@@ -9483,7 +9494,15 @@ with tabs[9]:
                             player=_pkl["player"], prop=_pkl["prop"],
                             line=float(_pkl["line"]), side=_pkl["side"],
                             sport=_pk_sport, outcome=_pk_outcome,
-                            wager=_pk_stake,          # ← total stake per entry, not per player
+                            # Real fix (2026-08-15): only the first leg carries
+                            # the real stake -- was passing the FULL stake to
+                            # every leg, so each leg's log_manual_bet call
+                            # independently computed the full parlay profit,
+                            # summing to pick_count x the real bankroll impact.
+                            # Zero-wager legs still record player/prop/outcome
+                            # for per-player tracking, just contribute nothing
+                            # to bankroll totals.
+                            wager=(_pk_stake if _pki_leg == 0 else 0.0),
                             pick_count=int(_pk_picks), bet_type="prop",
                             source=_pk_source, bet_date=_pk_date_str,
                             tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals,
