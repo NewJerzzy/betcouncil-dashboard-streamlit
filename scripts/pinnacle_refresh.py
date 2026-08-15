@@ -204,7 +204,7 @@ def detect_movement(prev_rows: list, curr_rows: list) -> list:
                 diff = float(cv) - float(pv)
             except (TypeError, ValueError):
                 continue
-            if abs(diff) >= (10 if label == "moneyline" else 0.5):
+            if abs(diff) >= 0.001:
                 movements.append({
                     "MatchupId": mid, "Matchup": curr.get("Matchup"),
                     "Market": label, "PrevValue": pv, "CurrValue": cv,
