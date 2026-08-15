@@ -11332,436 +11332,447 @@ with tabs[14]:
     if not _audit_board:
         st.info("Load the board first to run audits.")
     else:
-        # ── AUDIT 1: Board Consistency ──────────────────────────
-        # Checks that the same player+prop shows the same edge
-        # across Full Board, Best Bet Queue, and Lock of Day.
-        _consistency_failures = []
-        _board_lookup = {}
-        for p in _audit_board:
-            _key = (normalize_name(p.get("Player","")), p.get("Prop",""), p.get("Side",""))
-            _board_lookup[_key] = round(float(p.get("Edge",0) or 0), 3)
-
-        # Check queue top picks against board
-        _queue_top = [p for p in _audit_board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
-        for qp in _queue_top:
-            _qk = (normalize_name(qp.get("Player","")), qp.get("Prop",""), qp.get("Side",""))
-            _board_edge = _board_lookup.get(_qk, 0)
-            _queue_edge = round(float(qp.get("Edge",0) or 0), 3)
-            if abs(_board_edge - _queue_edge) > 0.005:
-                _consistency_failures.append(
-                    f"{qp.get('Player','')} {qp.get('Prop','')}: Queue={_queue_edge:.1%} Board={_board_edge:.1%}"
-                )
-
-        # Check today's locked picks against board
-        _today_str = date.today().strftime("%Y-%m-%d")
-        _today_locks_a = [l for l in _audit_locks if l.get("timestamp","").startswith(_today_str)]
-        for lk in _today_locks_a:
-            _lk = (normalize_name(lk.get("player","")), lk.get("prop",""), lk.get("side","OVER"))
-            _board_edge = _board_lookup.get(_lk)
-            _lock_edge  = round(float(lk.get("edge",0) or 0), 3)
-            if _board_edge is not None and abs(_board_edge - _lock_edge) > 0.01:
-                _consistency_failures.append(
-                    f"LOCK: {lk.get('player','')} {lk.get('prop','')}: Lock={_lock_edge:.1%} Board={_board_edge:.1%}"
-                )
-
-        if _consistency_failures:
-            _audit_results.append(_audit_fail(
-                "Audit 1 — Board Consistency",
-                f"{len(_consistency_failures)} mismatch(es): " + " | ".join(_consistency_failures[:3])
-            ))
+        _audit_cache_key = (id(_audit_board), len(_audit_board), len(_audit_games), len(_audit_locks), _audit_sport)
+        _audit_cached = st.session_state.get("_audit_results_cache")
+        if _audit_cached and _audit_cached.get("key") == _audit_cache_key:
+            # Real fix (Copilot recommendation, verified accurate): these 13
+            # audits previously recomputed unconditionally on every rerun
+            # (Streamlit executes every tab block every rerun, regardless of
+            # which tab is visually active). Now only recompute when the
+            # underlying board/game/lock data has actually changed.
+            _audit_results = _audit_cached["results"]
         else:
-            _audit_results.append(_audit_pass(
-                "Audit 1 — Board Consistency",
-                f"All {len(_queue_top)} queue picks + {len(_today_locks_a)} locks match board edges"
-            ))
+            # ── AUDIT 1: Board Consistency ──────────────────────────
+            # Checks that the same player+prop shows the same edge
+            # across Full Board, Best Bet Queue, and Lock of Day.
+            _consistency_failures = []
+            _board_lookup = {}
+            for p in _audit_board:
+                _key = (normalize_name(p.get("Player","")), p.get("Prop",""), p.get("Side",""))
+                _board_lookup[_key] = round(float(p.get("Edge",0) or 0), 3)
 
-        # ── AUDIT 2: Market Coverage ────────────────────────────
-        # Checks spread/total/ML coverage % for today's games.
-        # Uses all games (including those without edge) for accurate coverage.
-        # Flags if ML < 80% (likely routing failure like WNBA bug).
-        _all_games_raw = st.session_state.get("raw_games_today", _audit_games)
-        _cov_base = _all_games_raw if _all_games_raw else _audit_games
-        if _cov_base:
-            _n_games    = len(_cov_base)
-            def _has_market(g, mtype):
-                # Check recommendations array for this market type
-                for rec in g.get("recommendations", []):
-                    rt = (rec.get("type","") or "").upper()
-                    if mtype == "ML" and "MONEYLINE" in rt:
-                        return True
-                    if mtype == "SPREAD" and "SPREAD" in rt:
-                        return True
-                    if mtype == "TOTAL" and ("TOTAL" in rt or "OVER" in rt or "UNDER" in rt):
-                        return True
-                # Fallback: check direct keys
-                if mtype == "ML" and g.get("HomeML", g.get("home_ml", g.get("MLEdge","N/A"))) not in ("N/A",None,"",0):
-                    return True
-                if mtype == "SPREAD" and g.get("Spread", g.get("spread", g.get("SpreadEdge","N/A"))) not in ("N/A",None,"",0):
-                    return True
-                if mtype == "TOTAL" and g.get("Total", g.get("total", g.get("TotalEdge","N/A"))) not in ("N/A",None,"",0):
-                    return True
-                return False
-            _cov_spread = sum(1 for g in _cov_base if _has_market(g, "SPREAD")) / _n_games
-            _cov_total  = sum(1 for g in _cov_base if _has_market(g, "TOTAL")) / _n_games
-            _cov_ml     = sum(1 for g in _cov_base if _has_market(g, "ML")) / _n_games
-            # MLB has thinner odds coverage (15 games/day, not all markets liquid)
-            _spread_threshold = 0.70 if _audit_sport == "MLB" else 0.80
-            _total_threshold  = 0.70 if _audit_sport == "MLB" else 0.80
-            _ml_threshold     = 0.65 if _audit_sport == "MLB" else 0.80
-            _cov_issues = []
-            if _cov_spread < _spread_threshold: _cov_issues.append(f"Spread {_cov_spread:.0%}")
-            if _cov_total  < _total_threshold:  _cov_issues.append(f"Total {_cov_total:.0%}")
-            if _cov_ml     < _ml_threshold:     _cov_issues.append(f"ML {_cov_ml:.0%} ← routing suspect")
-            if _cov_issues:
-                _audit_results.append(_audit_fail(
-                    "Audit 2 — Market Coverage",
-                    f"{_n_games} games | Low: {', '.join(_cov_issues)} (threshold >80%)"
-                ))
-            else:
-                _audit_results.append(_audit_pass(
-                    "Audit 2 — Market Coverage",
-                    f"{_n_games} games | Spread {_cov_spread:.0%} Total {_cov_total:.0%} ML {_cov_ml:.0%}"
-                ))
-        else:
-            _audit_results.append(_audit_warn("Audit 2 — Market Coverage", "No game analysis data"))
-
-        # ── AUDIT 3: Source Health ──────────────────────────────
-        # Checks records returned per source and flags low counts.
-        _src_counts = {}
-        for p in _audit_board:
-            _src = p.get("Source") or p.get("source") or "Unknown"
-            _src_counts[_src] = _src_counts.get(_src, 0) + 1
-        _src_issues = []
-        _timings = st.session_state.get("fetch_timings", {})
-        _expected_failures = {"rw_injuries", "prizepicks"}  # blocked from cloud IPs
-        for src, info in _timings.items():
-            if info.get("status","").startswith("❌") and src not in _expected_failures:
-                _src_issues.append(f"{src}: {info['status'][:40]}")
-        _errors = st.session_state.get("errors",[])
-        _recent_errors = [e for e in _errors[-20:] if e.get("source") not in ("",None)]
-        if _src_issues or len(_recent_errors) > 3:
-            _audit_results.append(_audit_warn(
-                "Audit 3 — Source Health",
-                f"{len(_src_issues)} fetch failure(s) | {len(_recent_errors)} recent errors | Sources: {dict(list(_src_counts.items())[:4])}"
-            ))
-        else:
-            _audit_results.append(_audit_pass(
-                "Audit 3 — Source Health",
-                f"{len(_src_counts)} source(s) | {len(_audit_board)} total props | {len(_recent_errors)} errors"
-            ))
-
-        # ── AUDIT 4: Tier Integrity ─────────────────────────────
-        # Verifies each prop's tier matches what get_game_tier/get_tier
-        # would assign given its edge. Catches stale tier assignments.
-        _tier_mismatches = []
-        for p in _audit_board[:50]:
-            _p_edge = abs(float(p.get("Edge",0) or 0))
-            _p_sport = p.get("Sport", _audit_sport)
-            _p_tier = p.get("Tier","LEAN")
-            _expected = get_tier(_p_edge, _p_sport)
-            # Allow confidence-based downgrades — not a real mismatch
-            _conf = p.get("ProjConfidence", 100)
-            _conf_downgrade = (
-                (_conf < 40 and _expected in ("SOVEREIGN","ELITE") and _p_tier == "APPROVED") or
-                (_conf < 60 and _expected == "SOVEREIGN" and _p_tier == "ELITE")
-            )
-            if _expected != _p_tier and abs(_p_edge) > 0.005 and not _conf_downgrade:
-                _tier_mismatches.append(
-                    f"{p.get('Player','')} {p.get('Prop','')}: edge={_p_edge:.1%} tier={_p_tier} expected={_expected}"
-                )
-        if _tier_mismatches:
-            _audit_results.append(_audit_fail(
-                "Audit 4 — Tier Integrity",
-                f"{len(_tier_mismatches)} mismatch(es): " + " | ".join(_tier_mismatches[:2])
-            ))
-        else:
-            _audit_results.append(_audit_pass(
-                "Audit 4 — Tier Integrity",
-                f"All {min(50,len(_audit_board))} props have correct tier assignments"
-            ))
-
-        # ── AUDIT 5: Lock Selection ─────────────────────────────
-        # Verifies today's lock is the highest-edge available play.
-        # Flags if a higher-edge play was available but not locked.
-        if _today_locks_a and _audit_board:
-            _best_board_edge = max((float(p.get("Edge",0) or 0) for p in _audit_board), default=0)
-            _lock_edge_max   = max((float(l.get("edge",0) or 0) for l in _today_locks_a), default=0)
-            _gap = _best_board_edge - _lock_edge_max
-            if _gap > 0.05:
-                _better = next((p for p in _audit_board if abs(float(p.get("Edge",0) or 0) - _best_board_edge) < 0.001), None)
-                _audit_results.append(_audit_warn(
-                    "Audit 5 — Lock Selection",
-                    f"Lock edge {_lock_edge_max:.1%} vs best available {_best_board_edge:.1%} "
-                    f"(gap {_gap:.1%})"
-                    + (f" — {_better.get('Player','')} {_better.get('Prop','')} available" if _better else "")
-                ))
-            else:
-                _audit_results.append(_audit_pass(
-                    "Audit 5 — Lock Selection",
-                    f"Lock edge {_lock_edge_max:.1%} | Best available {_best_board_edge:.1%} | Gap {_gap:.1%} ✅"
-                ))
-        else:
-            _audit_results.append(_audit_pass(
-                "Audit 5 — Lock Selection",
-                "No locks today yet" if not _today_locks_a else "No board data to compare"
-            ))
-
-        # ── AUDIT 6: Data Routing ───────────────────────────────
-        # Compares OddsAPI raw data vs what the UI shows.
-        # Catches cases where data was fetched but not displayed.
-        _routing_failures = []
-        if _audit_games:
-            for g in _audit_games:
-                _oddsapi_ml  = g.get("OddsAPI ML Home","N/A")
-                _display_ml  = g.get("HomeML", g.get("Home ML","N/A"))
-                _oddsapi_sp  = g.get("OddsAPI Spread","N/A")
-                _display_sp  = g.get("Spread","N/A")
-                _matchup     = g.get("matchup","?")
-                # If OddsAPI has data but display shows N/A = routing failure
-                if _oddsapi_ml not in ("N/A",None,"") and _display_ml in ("N/A",None,""):
-                    _routing_failures.append(
-                        f"🚨 ML routing: {_matchup} OddsAPI={_oddsapi_ml} → UI=No Market"
+            # Check queue top picks against board
+            _queue_top = [p for p in _audit_board if p.get("Tier") in ("SOVEREIGN","ELITE")][:6]
+            for qp in _queue_top:
+                _qk = (normalize_name(qp.get("Player","")), qp.get("Prop",""), qp.get("Side",""))
+                _board_edge = _board_lookup.get(_qk, 0)
+                _queue_edge = round(float(qp.get("Edge",0) or 0), 3)
+                if abs(_board_edge - _queue_edge) > 0.005:
+                    _consistency_failures.append(
+                        f"{qp.get('Player','')} {qp.get('Prop','')}: Queue={_queue_edge:.1%} Board={_board_edge:.1%}"
                     )
-                if _oddsapi_sp not in ("N/A",None,"") and _display_sp in ("N/A",None,""):
-                    _routing_failures.append(
-                        f"🚨 Spread routing: {_matchup} OddsAPI={_oddsapi_sp} → UI=No Market"
-                    )
-        if _routing_failures:
-            _audit_results.append(_audit_fail(
-                "Audit 6 — Data Routing",
-                " | ".join(_routing_failures[:3])
-            ))
-        else:
-            _games_checked = len(_audit_games)
-            _audit_results.append(_audit_pass(
-                "Audit 6 — Data Routing",
-                f"{_games_checked} game(s) — all OddsAPI fields routed to UI correctly"
-            ))
 
-        # ── AUDIT 7: Injury Consensus ───────────────────────────
-        # Cross-checks all 4 injury sources for conflicts.
-        # If ESPN says OUT but CBS says QUESTIONABLE — flag it.
-        _inj_sources = {
-            "ESPN":     {normalize_name(i["player"]): i["status"] for i in st.session_state.get("espn_injuries",[]) if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
-            "CBS":      {normalize_name(i["player"]): i["status"] for i in st.session_state.get("cbs_injuries",[])  if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
-            "RotoWire": {normalize_name(i["player"]): i["status"] for i in st.session_state.get("rw_injuries",[])   if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
-            "Primary":  {normalize_name(p): v.get("status","") for p,v in (st.session_state.get("injuries_combined") or {}).items()},
-        }
-        _active_inj_sources = {k:v for k,v in _inj_sources.items() if v}
-        _inj_conflicts = []
-        if len(_active_inj_sources) >= 2:
-            # Find players where sources disagree on severity
-            _all_inj_players = set()
-            for src_data in _active_inj_sources.values():
-                _all_inj_players.update(src_data.keys())
-            for _player in _all_inj_players:
-                _statuses = {src: data.get(_player) for src, data in _active_inj_sources.items() if data.get(_player)}
-                if len(_statuses) >= 2:
-                    _unique_statuses = set(_statuses.values())
-                    # Conflict = sources disagree on OUT vs QUESTIONABLE (meaningful difference)
-                    if "OUT" in _unique_statuses and "QUESTIONABLE" in _unique_statuses:
-                        _inj_conflicts.append(f"{_player}: {dict(_statuses)}")
-            _total_inj = len(_all_inj_players)
-            _agree_pct = 1.0 - (len(_inj_conflicts) / max(1, _total_inj))
-            if len(_inj_conflicts) >= 3:
+            # Check today's locked picks against board
+            _today_str = date.today().strftime("%Y-%m-%d")
+            _today_locks_a = [l for l in _audit_locks if l.get("timestamp","").startswith(_today_str)]
+            for lk in _today_locks_a:
+                _lk = (normalize_name(lk.get("player","")), lk.get("prop",""), lk.get("side","OVER"))
+                _board_edge = _board_lookup.get(_lk)
+                _lock_edge  = round(float(lk.get("edge",0) or 0), 3)
+                if _board_edge is not None and abs(_board_edge - _lock_edge) > 0.01:
+                    _consistency_failures.append(
+                        f"LOCK: {lk.get('player','')} {lk.get('prop','')}: Lock={_lock_edge:.1%} Board={_board_edge:.1%}"
+                    )
+
+            if _consistency_failures:
                 _audit_results.append(_audit_fail(
-                    "Audit 7 — Injury Consensus",
-                    f"{len(_inj_conflicts)} status conflicts across {len(_active_inj_sources)} sources: {'; '.join(_inj_conflicts[:2])}"
-                ))
-            elif _inj_conflicts:
-                _audit_results.append(_audit_warn(
-                    "Audit 7 — Injury Consensus",
-                    f"{len(_inj_conflicts)} disagreement(s): {'; '.join(_inj_conflicts[:2])}"
+                    "Audit 1 — Board Consistency",
+                    f"{len(_consistency_failures)} mismatch(es): " + " | ".join(_consistency_failures[:3])
                 ))
             else:
                 _audit_results.append(_audit_pass(
-                    "Audit 7 — Injury Consensus",
-                    f"{len(_active_inj_sources)} source(s) agree on {_total_inj} injured player(s) — {_agree_pct:.0%} consensus"
+                    "Audit 1 — Board Consistency",
+                    f"All {len(_queue_top)} queue picks + {len(_today_locks_a)} locks match board edges"
                 ))
-        else:
-            _audit_results.append(_audit_warn(
-                "Audit 7 — Injury Consensus",
-                f"Only {len(_active_inj_sources)} injury source(s) active — need 2+ for consensus check"
-            ))
 
-        # ── AUDIT 9: Data Freshness ─────────────────────────────
-        # Checks age of key data sources.
-        # Stale weather or odds = wrong model inputs.
-        _now_ts = time.time()
-        _stale_items = []
-        _fresh_items = []
-        _freshness_checks = [
-            ("Odds (game lines)",  f"espn_ids_{_audit_sport}.pkl",         35 * 60),   # 35 min (cache TTL 30min + 5min buffer)
-            ("Props board",        f"pp_{_audit_sport.lower()}_props.pkl", 20 * 60),   # 20 min
-            ("Injury data",        f"ud_injuries_{_audit_sport}.pkl",       30 * 60),  # 30 min
-            ("Weather data",       None,                                    1440 * 60), # 24 hrs (daily refresh is fine for MLB)
-            ("DK Salaries",        "dk_salaries.pkl",                        90 * 60),  # 90 min
-        ]
-        for label, fname, max_age_secs in _freshness_checks:
-            if fname is None:
-                # Weather — check cache dir for any weather pkl
-                import glob as _glob
-                _weather_files = _glob.glob(os.path.join(CACHE_DIR, "*_weather.pkl"))
-                if _weather_files:
-                    _age = _now_ts - os.path.getmtime(max(_weather_files, key=os.path.getmtime))
+            # ── AUDIT 2: Market Coverage ────────────────────────────
+            # Checks spread/total/ML coverage % for today's games.
+            # Uses all games (including those without edge) for accurate coverage.
+            # Flags if ML < 80% (likely routing failure like WNBA bug).
+            _all_games_raw = st.session_state.get("raw_games_today", _audit_games)
+            _cov_base = _all_games_raw if _all_games_raw else _audit_games
+            if _cov_base:
+                _n_games    = len(_cov_base)
+                def _has_market(g, mtype):
+                    # Check recommendations array for this market type
+                    for rec in g.get("recommendations", []):
+                        rt = (rec.get("type","") or "").upper()
+                        if mtype == "ML" and "MONEYLINE" in rt:
+                            return True
+                        if mtype == "SPREAD" and "SPREAD" in rt:
+                            return True
+                        if mtype == "TOTAL" and ("TOTAL" in rt or "OVER" in rt or "UNDER" in rt):
+                            return True
+                    # Fallback: check direct keys
+                    if mtype == "ML" and g.get("HomeML", g.get("home_ml", g.get("MLEdge","N/A"))) not in ("N/A",None,"",0):
+                        return True
+                    if mtype == "SPREAD" and g.get("Spread", g.get("spread", g.get("SpreadEdge","N/A"))) not in ("N/A",None,"",0):
+                        return True
+                    if mtype == "TOTAL" and g.get("Total", g.get("total", g.get("TotalEdge","N/A"))) not in ("N/A",None,"",0):
+                        return True
+                    return False
+                _cov_spread = sum(1 for g in _cov_base if _has_market(g, "SPREAD")) / _n_games
+                _cov_total  = sum(1 for g in _cov_base if _has_market(g, "TOTAL")) / _n_games
+                _cov_ml     = sum(1 for g in _cov_base if _has_market(g, "ML")) / _n_games
+                # MLB has thinner odds coverage (15 games/day, not all markets liquid)
+                _spread_threshold = 0.70 if _audit_sport == "MLB" else 0.80
+                _total_threshold  = 0.70 if _audit_sport == "MLB" else 0.80
+                _ml_threshold     = 0.65 if _audit_sport == "MLB" else 0.80
+                _cov_issues = []
+                if _cov_spread < _spread_threshold: _cov_issues.append(f"Spread {_cov_spread:.0%}")
+                if _cov_total  < _total_threshold:  _cov_issues.append(f"Total {_cov_total:.0%}")
+                if _cov_ml     < _ml_threshold:     _cov_issues.append(f"ML {_cov_ml:.0%} ← routing suspect")
+                if _cov_issues:
+                    _audit_results.append(_audit_fail(
+                        "Audit 2 — Market Coverage",
+                        f"{_n_games} games | Low: {', '.join(_cov_issues)} (threshold >80%)"
+                    ))
+                else:
+                    _audit_results.append(_audit_pass(
+                        "Audit 2 — Market Coverage",
+                        f"{_n_games} games | Spread {_cov_spread:.0%} Total {_cov_total:.0%} ML {_cov_ml:.0%}"
+                    ))
+            else:
+                _audit_results.append(_audit_warn("Audit 2 — Market Coverage", "No game analysis data"))
+
+            # ── AUDIT 3: Source Health ──────────────────────────────
+            # Checks records returned per source and flags low counts.
+            _src_counts = {}
+            for p in _audit_board:
+                _src = p.get("Source") or p.get("source") or "Unknown"
+                _src_counts[_src] = _src_counts.get(_src, 0) + 1
+            _src_issues = []
+            _timings = st.session_state.get("fetch_timings", {})
+            _expected_failures = {"rw_injuries", "prizepicks"}  # blocked from cloud IPs
+            for src, info in _timings.items():
+                if info.get("status","").startswith("❌") and src not in _expected_failures:
+                    _src_issues.append(f"{src}: {info['status'][:40]}")
+            _errors = st.session_state.get("errors",[])
+            _recent_errors = [e for e in _errors[-20:] if e.get("source") not in ("",None)]
+            if _src_issues or len(_recent_errors) > 3:
+                _audit_results.append(_audit_warn(
+                    "Audit 3 — Source Health",
+                    f"{len(_src_issues)} fetch failure(s) | {len(_recent_errors)} recent errors | Sources: {dict(list(_src_counts.items())[:4])}"
+                ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 3 — Source Health",
+                    f"{len(_src_counts)} source(s) | {len(_audit_board)} total props | {len(_recent_errors)} errors"
+                ))
+
+            # ── AUDIT 4: Tier Integrity ─────────────────────────────
+            # Verifies each prop's tier matches what get_game_tier/get_tier
+            # would assign given its edge. Catches stale tier assignments.
+            _tier_mismatches = []
+            for p in _audit_board[:50]:
+                _p_edge = abs(float(p.get("Edge",0) or 0))
+                _p_sport = p.get("Sport", _audit_sport)
+                _p_tier = p.get("Tier","LEAN")
+                _expected = get_tier(_p_edge, _p_sport)
+                # Allow confidence-based downgrades — not a real mismatch
+                _conf = p.get("ProjConfidence", 100)
+                _conf_downgrade = (
+                    (_conf < 40 and _expected in ("SOVEREIGN","ELITE") and _p_tier == "APPROVED") or
+                    (_conf < 60 and _expected == "SOVEREIGN" and _p_tier == "ELITE")
+                )
+                if _expected != _p_tier and abs(_p_edge) > 0.005 and not _conf_downgrade:
+                    _tier_mismatches.append(
+                        f"{p.get('Player','')} {p.get('Prop','')}: edge={_p_edge:.1%} tier={_p_tier} expected={_expected}"
+                    )
+            if _tier_mismatches:
+                _audit_results.append(_audit_fail(
+                    "Audit 4 — Tier Integrity",
+                    f"{len(_tier_mismatches)} mismatch(es): " + " | ".join(_tier_mismatches[:2])
+                ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 4 — Tier Integrity",
+                    f"All {min(50,len(_audit_board))} props have correct tier assignments"
+                ))
+
+            # ── AUDIT 5: Lock Selection ─────────────────────────────
+            # Verifies today's lock is the highest-edge available play.
+            # Flags if a higher-edge play was available but not locked.
+            if _today_locks_a and _audit_board:
+                _best_board_edge = max((float(p.get("Edge",0) or 0) for p in _audit_board), default=0)
+                _lock_edge_max   = max((float(l.get("edge",0) or 0) for l in _today_locks_a), default=0)
+                _gap = _best_board_edge - _lock_edge_max
+                if _gap > 0.05:
+                    _better = next((p for p in _audit_board if abs(float(p.get("Edge",0) or 0) - _best_board_edge) < 0.001), None)
+                    _audit_results.append(_audit_warn(
+                        "Audit 5 — Lock Selection",
+                        f"Lock edge {_lock_edge_max:.1%} vs best available {_best_board_edge:.1%} "
+                        f"(gap {_gap:.1%})"
+                        + (f" — {_better.get('Player','')} {_better.get('Prop','')} available" if _better else "")
+                    ))
+                else:
+                    _audit_results.append(_audit_pass(
+                        "Audit 5 — Lock Selection",
+                        f"Lock edge {_lock_edge_max:.1%} | Best available {_best_board_edge:.1%} | Gap {_gap:.1%} ✅"
+                    ))
+            else:
+                _audit_results.append(_audit_pass(
+                    "Audit 5 — Lock Selection",
+                    "No locks today yet" if not _today_locks_a else "No board data to compare"
+                ))
+
+            # ── AUDIT 6: Data Routing ───────────────────────────────
+            # Compares OddsAPI raw data vs what the UI shows.
+            # Catches cases where data was fetched but not displayed.
+            _routing_failures = []
+            if _audit_games:
+                for g in _audit_games:
+                    _oddsapi_ml  = g.get("OddsAPI ML Home","N/A")
+                    _display_ml  = g.get("HomeML", g.get("Home ML","N/A"))
+                    _oddsapi_sp  = g.get("OddsAPI Spread","N/A")
+                    _display_sp  = g.get("Spread","N/A")
+                    _matchup     = g.get("matchup","?")
+                    # If OddsAPI has data but display shows N/A = routing failure
+                    if _oddsapi_ml not in ("N/A",None,"") and _display_ml in ("N/A",None,""):
+                        _routing_failures.append(
+                            f"🚨 ML routing: {_matchup} OddsAPI={_oddsapi_ml} → UI=No Market"
+                        )
+                    if _oddsapi_sp not in ("N/A",None,"") and _display_sp in ("N/A",None,""):
+                        _routing_failures.append(
+                            f"🚨 Spread routing: {_matchup} OddsAPI={_oddsapi_sp} → UI=No Market"
+                        )
+            if _routing_failures:
+                _audit_results.append(_audit_fail(
+                    "Audit 6 — Data Routing",
+                    " | ".join(_routing_failures[:3])
+                ))
+            else:
+                _games_checked = len(_audit_games)
+                _audit_results.append(_audit_pass(
+                    "Audit 6 — Data Routing",
+                    f"{_games_checked} game(s) — all OddsAPI fields routed to UI correctly"
+                ))
+
+            # ── AUDIT 7: Injury Consensus ───────────────────────────
+            # Cross-checks all 4 injury sources for conflicts.
+            # If ESPN says OUT but CBS says QUESTIONABLE — flag it.
+            _inj_sources = {
+                "ESPN":     {normalize_name(i["player"]): i["status"] for i in st.session_state.get("espn_injuries",[]) if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+                "CBS":      {normalize_name(i["player"]): i["status"] for i in st.session_state.get("cbs_injuries",[])  if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+                "RotoWire": {normalize_name(i["player"]): i["status"] for i in st.session_state.get("rw_injuries",[])   if i.get("status") in ("OUT","DOUBTFUL","QUESTIONABLE")},
+                "Primary":  {normalize_name(p): v.get("status","") for p,v in (st.session_state.get("injuries_combined") or {}).items()},
+            }
+            _active_inj_sources = {k:v for k,v in _inj_sources.items() if v}
+            _inj_conflicts = []
+            if len(_active_inj_sources) >= 2:
+                # Find players where sources disagree on severity
+                _all_inj_players = set()
+                for src_data in _active_inj_sources.values():
+                    _all_inj_players.update(src_data.keys())
+                for _player in _all_inj_players:
+                    _statuses = {src: data.get(_player) for src, data in _active_inj_sources.items() if data.get(_player)}
+                    if len(_statuses) >= 2:
+                        _unique_statuses = set(_statuses.values())
+                        # Conflict = sources disagree on OUT vs QUESTIONABLE (meaningful difference)
+                        if "OUT" in _unique_statuses and "QUESTIONABLE" in _unique_statuses:
+                            _inj_conflicts.append(f"{_player}: {dict(_statuses)}")
+                _total_inj = len(_all_inj_players)
+                _agree_pct = 1.0 - (len(_inj_conflicts) / max(1, _total_inj))
+                if len(_inj_conflicts) >= 3:
+                    _audit_results.append(_audit_fail(
+                        "Audit 7 — Injury Consensus",
+                        f"{len(_inj_conflicts)} status conflicts across {len(_active_inj_sources)} sources: {'; '.join(_inj_conflicts[:2])}"
+                    ))
+                elif _inj_conflicts:
+                    _audit_results.append(_audit_warn(
+                        "Audit 7 — Injury Consensus",
+                        f"{len(_inj_conflicts)} disagreement(s): {'; '.join(_inj_conflicts[:2])}"
+                    ))
+                else:
+                    _audit_results.append(_audit_pass(
+                        "Audit 7 — Injury Consensus",
+                        f"{len(_active_inj_sources)} source(s) agree on {_total_inj} injured player(s) — {_agree_pct:.0%} consensus"
+                    ))
+            else:
+                _audit_results.append(_audit_warn(
+                    "Audit 7 — Injury Consensus",
+                    f"Only {len(_active_inj_sources)} injury source(s) active — need 2+ for consensus check"
+                ))
+
+            # ── AUDIT 9: Data Freshness ─────────────────────────────
+            # Checks age of key data sources.
+            # Stale weather or odds = wrong model inputs.
+            _now_ts = time.time()
+            _stale_items = []
+            _fresh_items = []
+            _freshness_checks = [
+                ("Odds (game lines)",  f"espn_ids_{_audit_sport}.pkl",         35 * 60),   # 35 min (cache TTL 30min + 5min buffer)
+                ("Props board",        f"pp_{_audit_sport.lower()}_props.pkl", 20 * 60),   # 20 min
+                ("Injury data",        f"ud_injuries_{_audit_sport}.pkl",       30 * 60),  # 30 min
+                ("Weather data",       None,                                    1440 * 60), # 24 hrs (daily refresh is fine for MLB)
+                ("DK Salaries",        "dk_salaries.pkl",                        90 * 60),  # 90 min
+            ]
+            for label, fname, max_age_secs in _freshness_checks:
+                if fname is None:
+                    # Weather — check cache dir for any weather pkl
+                    import glob as _glob
+                    _weather_files = _glob.glob(os.path.join(CACHE_DIR, "*_weather.pkl"))
+                    if _weather_files:
+                        _age = _now_ts - os.path.getmtime(max(_weather_files, key=os.path.getmtime))
+                        if _age > max_age_secs:
+                            _stale_items.append(f"{label} ({_age/60:.0f}m old)")
+                        else:
+                            _fresh_items.append(f"{label} ({_age/60:.0f}m)")
+                    continue
+                _fpath = os.path.join(CACHE_DIR, fname)
+                if os.path.exists(_fpath):
+                    _age = _now_ts - os.path.getmtime(_fpath)
                     if _age > max_age_secs:
                         _stale_items.append(f"{label} ({_age/60:.0f}m old)")
                     else:
                         _fresh_items.append(f"{label} ({_age/60:.0f}m)")
-                continue
-            _fpath = os.path.join(CACHE_DIR, fname)
-            if os.path.exists(_fpath):
-                _age = _now_ts - os.path.getmtime(_fpath)
-                if _age > max_age_secs:
-                    _stale_items.append(f"{label} ({_age/60:.0f}m old)")
-                else:
-                    _fresh_items.append(f"{label} ({_age/60:.0f}m)")
-        if len(_stale_items) >= 2:
-            _audit_results.append(_audit_fail(
-                "Audit 9 — Data Freshness",
-                f"{len(_stale_items)} stale feed(s): {', '.join(_stale_items)}"
-            ))
-        elif _stale_items:
-            _audit_results.append(_audit_warn(
-                "Audit 9 — Data Freshness",
-                f"Stale: {', '.join(_stale_items)} | Fresh: {len(_fresh_items)} feed(s)"
-            ))
-        else:
-            _audit_results.append(_audit_pass(
-                "Audit 9 — Data Freshness",
-                f"All {len(_fresh_items)} feed(s) current"
-            ))
-
-        # ── AUDIT 10: Sharp Consensus ───────────────────────────
-        # Deduplicate game_analysis by normalized matchup to prevent
-        # same game appearing as both "NY @ SA" and full team names
-        _seen_matchups = set()
-        _deduped_games = []
-        for _sg in _audit_games:
-            _raw_m = _sg.get("matchup","").lower()
-            # Normalize: strip spaces, sort teams
-            _parts = sorted(_raw_m.replace(" @ "," vs ").split(" vs "))
-            _norm_m = " vs ".join(_parts)
-            if _norm_m not in _seen_matchups:
-                _seen_matchups.add(_norm_m)
-                _deduped_games.append(_sg)
-        _audit_games_deduped = _deduped_games
-        if _audit_games_deduped:
-            _sharp_divergences = []
-            _sharp_agreements  = []
-            for _sg in _audit_games_deduped[:10]:
-                _matchup = _sg.get("matchup","?")
-                # Only use OddsAPI/Pinnacle edges — NOT Bovada
-                # Bovada is a soft book and should not drive sharp consensus
-                _ml_edge  = safe_float(_sg.get("MLEdge", 0) or 0)
-                _tot_edge = safe_float(_sg.get("TotalEdge", 0) or 0)
-                _pin_ml   = safe_float(_sg.get("HomeML","") or 0)
-                # Skip if edge came purely from Bovada (no Pinnacle/OddsAPI data)
-                _has_sharp_data = (
-                    safe_float(_sg.get("PinnacleTotal", 0) or 0) != 0 or
-                    safe_float(_sg.get("PinnacleML", 0) or 0) != 0 or
-                    _sg.get("sharp_source","") not in ("bovada","Bovada","") or
-                    (abs(_ml_edge) > 0 and _sg.get("odds_source","") != "bovada")
-                )
-                _has_data = (_pin_ml != 0 or abs(_ml_edge) > 0 or abs(_tot_edge) > 0)
-                if _has_data and _has_sharp_data:
-                    if abs(_ml_edge) >= 0.05 or abs(_tot_edge) >= 0.05:
-                        _sharp_divergences.append(
-                            f"{_matchup}: ML edge {_ml_edge:+.1%} Total edge {_tot_edge:+.1%}"
-                        )
-                    else:
-                        _sharp_agreements.append(_matchup)
-            _clv_data = get_clv_summary(st.session_state.get("history", []))
-            _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
-            _n_books = (_clv_data or {}).get("n_sharp_books", 0)
-            if _sharp_divergences:
-                _audit_results.append(_audit_warn(
-                    "Audit 10 — Sharp Consensus",
-                    f"{len(_sharp_divergences)} line divergence(s): {'; '.join(_sharp_divergences[:2])}"
+            if len(_stale_items) >= 2:
+                _audit_results.append(_audit_fail(
+                    "Audit 9 — Data Freshness",
+                    f"{len(_stale_items)} stale feed(s): {', '.join(_stale_items)}"
                 ))
-            elif _n_books >= 2:
-                _audit_results.append(_audit_pass(
-                    "Audit 10 — Sharp Consensus",
-                    f"{_n_books} sharp books tracked | Consensus edge {_consensus_edge:+.1%} | {len(_sharp_agreements)} games aligned"
+            elif _stale_items:
+                _audit_results.append(_audit_warn(
+                    "Audit 9 — Data Freshness",
+                    f"Stale: {', '.join(_stale_items)} | Fresh: {len(_fresh_items)} feed(s)"
                 ))
             else:
-                # Check if OddsAPI is returning data (proxy for sharp book availability)
-                _has_oddsapi = any(
-                    safe_float(g.get("HomeML","") or 0) != 0 or
-                    safe_float(g.get("MLEdge", 0) or 0) != 0 or
-                    safe_float(g.get("TotalEdge", 0) or 0) != 0
-                    for g in _audit_games_deduped[:5]
-                ) if _audit_games_deduped else False
-                if _has_oddsapi:
-                    _audit_results.append(_audit_pass(
-                        "Audit 10 — Sharp Consensus",
-                        f"OddsAPI (Pinnacle/Circa/BetOnline) returning data | {len(_sharp_agreements)} games aligned | CLV history pending"
-                    ))
-                else:
+                _audit_results.append(_audit_pass(
+                    "Audit 9 — Data Freshness",
+                    f"All {len(_fresh_items)} feed(s) current"
+                ))
+
+            # ── AUDIT 10: Sharp Consensus ───────────────────────────
+            # Deduplicate game_analysis by normalized matchup to prevent
+            # same game appearing as both "NY @ SA" and full team names
+            _seen_matchups = set()
+            _deduped_games = []
+            for _sg in _audit_games:
+                _raw_m = _sg.get("matchup","").lower()
+                # Normalize: strip spaces, sort teams
+                _parts = sorted(_raw_m.replace(" @ "," vs ").split(" vs "))
+                _norm_m = " vs ".join(_parts)
+                if _norm_m not in _seen_matchups:
+                    _seen_matchups.add(_norm_m)
+                    _deduped_games.append(_sg)
+            _audit_games_deduped = _deduped_games
+            if _audit_games_deduped:
+                _sharp_divergences = []
+                _sharp_agreements  = []
+                for _sg in _audit_games_deduped[:10]:
+                    _matchup = _sg.get("matchup","?")
+                    # Only use OddsAPI/Pinnacle edges — NOT Bovada
+                    # Bovada is a soft book and should not drive sharp consensus
+                    _ml_edge  = safe_float(_sg.get("MLEdge", 0) or 0)
+                    _tot_edge = safe_float(_sg.get("TotalEdge", 0) or 0)
+                    _pin_ml   = safe_float(_sg.get("HomeML","") or 0)
+                    # Skip if edge came purely from Bovada (no Pinnacle/OddsAPI data)
+                    _has_sharp_data = (
+                        safe_float(_sg.get("PinnacleTotal", 0) or 0) != 0 or
+                        safe_float(_sg.get("PinnacleML", 0) or 0) != 0 or
+                        _sg.get("sharp_source","") not in ("bovada","Bovada","") or
+                        (abs(_ml_edge) > 0 and _sg.get("odds_source","") != "bovada")
+                    )
+                    _has_data = (_pin_ml != 0 or abs(_ml_edge) > 0 or abs(_tot_edge) > 0)
+                    if _has_data and _has_sharp_data:
+                        if abs(_ml_edge) >= 0.05 or abs(_tot_edge) >= 0.05:
+                            _sharp_divergences.append(
+                                f"{_matchup}: ML edge {_ml_edge:+.1%} Total edge {_tot_edge:+.1%}"
+                            )
+                        else:
+                            _sharp_agreements.append(_matchup)
+                _clv_data = get_clv_summary(st.session_state.get("history", []))
+                _consensus_edge = (_clv_data or {}).get("consensus_sharp_edge", 0)
+                _n_books = (_clv_data or {}).get("n_sharp_books", 0)
+                if _sharp_divergences:
                     _audit_results.append(_audit_warn(
                         "Audit 10 — Sharp Consensus",
-                        "Sharp books not returning odds data — check OddsAPI key"
+                        f"{len(_sharp_divergences)} line divergence(s): {'; '.join(_sharp_divergences[:2])}"
                     ))
-        else:
-            _audit_results.append(_audit_warn("Audit 10 — Sharp Consensus", "No game analysis data"))
-
-        # ── Audit 11: Prediction Stability ─────────────────────
-        _unstable = check_prediction_stability(_audit_board, _audit_sport)
-        if _unstable:
-            _audit_results.append(_audit_warn(
-                "Audit 11 — Prediction Stability",
-                f"{len(_unstable)} prop(s) edge drifted >5% unexplained: " +
-                " | ".join(f"{u['player']} {u['prop']} {u['prev']:.1%}→{u['curr']:.1%}" for u in _unstable[:2])
-            ))
-        else:
-            _snap_count = len(load_json_data(BOARD_SNAP_PATH, {}))
-            _audit_results.append(_audit_pass(
-                "Audit 11 — Prediction Stability",
-                f"No unexplained edge drift detected ({_snap_count} snapshot(s) on file)"
-            ))
-
-        # ── Audit 12: Depth Chart Changes ───────────────────────
-        _dc_changes = st.session_state.get("depth_chart_changes", [])
-        if _dc_changes:
-            _audit_results.append(_audit_warn(
-                "Audit 12 — Depth Chart Changes",
-                f"{len(_dc_changes)} starter change(s): " +
-                " | ".join(f"{c['team']} {c['position']}: {c['old']}→{c['new']}" for c in _dc_changes[:3])
-            ))
-        else:
-            _snap_dates = len(load_json_data(NFL_DEPTH_SNAP_PATH, {}))
-            _audit_results.append(_audit_pass(
-                "Audit 12 — Depth Chart Changes",
-                f"No depth chart starter changes detected ({_snap_dates} day(s) tracked)"
-            ))
-
-        # ── Audit 13: NFL Inactives Impact ──────────────────────
-        if _audit_sport == "NFL":
-            _inactives = st.session_state.get("nfl_inactives", {})
-            if _inactives:
-                # Check if any inactive player has active props on board
-                _inactive_names = set()
-                for team_list in _inactives.values():
-                    _inactive_names.update(normalize_name(n) for n in team_list)
-                _inactive_props = [p for p in _audit_board
-                                   if normalize_name(p.get("Player","")) in _inactive_names]
-                if _inactive_props:
-                    _audit_results.append(_audit_fail(
-                        "Audit 13 — NFL Inactives Impact",
-                        f"🚨 {len(_inactive_props)} active prop(s) for inactive player(s): " +
-                        ", ".join(p.get("Player","") for p in _inactive_props[:3])
+                elif _n_books >= 2:
+                    _audit_results.append(_audit_pass(
+                        "Audit 10 — Sharp Consensus",
+                        f"{_n_books} sharp books tracked | Consensus edge {_consensus_edge:+.1%} | {len(_sharp_agreements)} games aligned"
                     ))
+                else:
+                    # Check if OddsAPI is returning data (proxy for sharp book availability)
+                    _has_oddsapi = any(
+                        safe_float(g.get("HomeML","") or 0) != 0 or
+                        safe_float(g.get("MLEdge", 0) or 0) != 0 or
+                        safe_float(g.get("TotalEdge", 0) or 0) != 0
+                        for g in _audit_games_deduped[:5]
+                    ) if _audit_games_deduped else False
+                    if _has_oddsapi:
+                        _audit_results.append(_audit_pass(
+                            "Audit 10 — Sharp Consensus",
+                            f"OddsAPI (Pinnacle/Circa/BetOnline) returning data | {len(_sharp_agreements)} games aligned | CLV history pending"
+                        ))
+                    else:
+                        _audit_results.append(_audit_warn(
+                            "Audit 10 — Sharp Consensus",
+                            "Sharp books not returning odds data — check OddsAPI key"
+                        ))
+            else:
+                _audit_results.append(_audit_warn("Audit 10 — Sharp Consensus", "No game analysis data"))
+
+            # ── Audit 11: Prediction Stability ─────────────────────
+            _unstable = check_prediction_stability(_audit_board, _audit_sport)
+            if _unstable:
+                _audit_results.append(_audit_warn(
+                    "Audit 11 — Prediction Stability",
+                    f"{len(_unstable)} prop(s) edge drifted >5% unexplained: " +
+                    " | ".join(f"{u['player']} {u['prop']} {u['prev']:.1%}→{u['curr']:.1%}" for u in _unstable[:2])
+                ))
+            else:
+                _snap_count = len(load_json_data(BOARD_SNAP_PATH, {}))
+                _audit_results.append(_audit_pass(
+                    "Audit 11 — Prediction Stability",
+                    f"No unexplained edge drift detected ({_snap_count} snapshot(s) on file)"
+                ))
+
+            # ── Audit 12: Depth Chart Changes ───────────────────────
+            _dc_changes = st.session_state.get("depth_chart_changes", [])
+            if _dc_changes:
+                _audit_results.append(_audit_warn(
+                    "Audit 12 — Depth Chart Changes",
+                    f"{len(_dc_changes)} starter change(s): " +
+                    " | ".join(f"{c['team']} {c['position']}: {c['old']}→{c['new']}" for c in _dc_changes[:3])
+                ))
+            else:
+                _snap_dates = len(load_json_data(NFL_DEPTH_SNAP_PATH, {}))
+                _audit_results.append(_audit_pass(
+                    "Audit 12 — Depth Chart Changes",
+                    f"No depth chart starter changes detected ({_snap_dates} day(s) tracked)"
+                ))
+
+            # ── Audit 13: NFL Inactives Impact ──────────────────────
+            if _audit_sport == "NFL":
+                _inactives = st.session_state.get("nfl_inactives", {})
+                if _inactives:
+                    # Check if any inactive player has active props on board
+                    _inactive_names = set()
+                    for team_list in _inactives.values():
+                        _inactive_names.update(normalize_name(n) for n in team_list)
+                    _inactive_props = [p for p in _audit_board
+                                       if normalize_name(p.get("Player","")) in _inactive_names]
+                    if _inactive_props:
+                        _audit_results.append(_audit_fail(
+                            "Audit 13 — NFL Inactives Impact",
+                            f"🚨 {len(_inactive_props)} active prop(s) for inactive player(s): " +
+                            ", ".join(p.get("Player","") for p in _inactive_props[:3])
+                        ))
+                    else:
+                        _audit_results.append(_audit_pass(
+                            "Audit 13 — NFL Inactives Impact",
+                            f"All {len(_inactive_names)} inactive player(s) cleared from board"
+                        ))
                 else:
                     _audit_results.append(_audit_pass(
                         "Audit 13 — NFL Inactives Impact",
-                        f"All {len(_inactive_names)} inactive player(s) cleared from board"
+                        "Inactives not yet posted (typically 90 min before kickoff)"
                     ))
-            else:
-                _audit_results.append(_audit_pass(
-                    "Audit 13 — NFL Inactives Impact",
-                    "Inactives not yet posted (typically 90 min before kickoff)"
-                ))
 
+            st.session_state["_audit_results_cache"] = {"key": _audit_cache_key, "results": _audit_results}
         # ── Display audit results ───────────────────────────────
         _fails  = [r for r in _audit_results if r["status"] == "FAIL"]
         _warns  = [r for r in _audit_results if r["status"] == "WARN"]
