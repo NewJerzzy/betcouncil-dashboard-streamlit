@@ -10723,14 +10723,20 @@ with tabs[14]:
         _grouped[_src_role(s["Source"])].append(s)
 
     for _role, _rows in _grouped.items():
-        _unhealthy = [r for r in _rows if "🟢" not in r["Status"]]
-        _healthy   = [r for r in _rows if "🟢" in r["Status"]]
+        _pending   = [r for r in _rows if "⚪" in r["Status"]]
+        _attempted = [r for r in _rows if "⚪" not in r["Status"]]
+        _unhealthy = [r for r in _attempted if "🟢" not in r["Status"]]
+        _healthy   = [r for r in _attempted if "🟢" in r["Status"]]
         if not _rows:
             continue
-        st.markdown(f"**{_role}** ({len(_healthy)}/{len(_rows)} healthy)")
+        if _attempted:
+            st.markdown(f"**{_role}** ({len(_healthy)}/{len(_attempted)} healthy" +
+                        (f" · {len(_pending)} not yet tried" if _pending else "") + ")")
+        else:
+            st.markdown(f"**{_role}** (all {len(_pending)} not yet tried — load a board first)")
         if _unhealthy:
             st.markdown(_bc_df_html(pd.DataFrame([{k: str(v) for k, v in r.items()} for r in _unhealthy])), unsafe_allow_html=True)
-        else:
+        elif _attempted:
             st.caption("✅ All healthy")
         if _healthy:
             with st.expander(f"Show {len(_healthy)} healthy source(s) in this group"):
