@@ -13239,10 +13239,14 @@ with tabs[2]:
             for g in (_pred_glp_lookup.get(("WiseGuyTeam", _pred_sport)) or []):
                 if g.get("has_sharp"):
                     _away, _home = g.get("away_team", ""), g.get("home_team", "")
+                    _tot_line = (g.get("total") or {}).get("line")
+                    _sp_line = (g.get("spread") or {}).get("line")
+                    _tot_str = f" {_tot_line}" if _tot_line is not None else ""
+                    _sp_str = f" {_sp_line}" if _sp_line is not None else ""
                     _flag_labels = {
                         "ml_side1": f"ML {_away}", "ml_side2": f"ML {_home}",
-                        "sp_side1": f"Spread {_away}", "sp_side2": f"Spread {_home}",
-                        "tot_side1": "Total Over", "tot_side2": "Total Under",
+                        "sp_side1": f"Spread {_away}{_sp_str}", "sp_side2": f"Spread {_home}{_sp_str}",
+                        "tot_side1": f"Total Over{_tot_str}", "tot_side2": f"Total Under{_tot_str}",
                     }
                     _flags = ", ".join(_flag_labels.get(f, f) for f in g.get("sharp_flags", []))
                     _pred_gl_items.append({
