@@ -11954,12 +11954,14 @@ with tabs[14]:
     if _kal:
         st.markdown("**Kalshi Top Markets:**")
         _kal_sorted = sorted(_kal, key=lambda x: -x.get("volume",0))
-        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_sorted[:5]]
+        _kal_valid = [k for k in _kal_sorted if isinstance(k, dict) and "event" in k and "implied_prob" in k and "volume" in k]
+        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_valid[:5]]
         st.markdown(_bc_df_html(pd.DataFrame(_kal_rows)), unsafe_allow_html=True)
     if _poly:
         st.markdown("**Polymarket Top Markets:**")
         _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
-        _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_sorted[:5]]
+        _poly_valid = [p for p in _poly_sorted if isinstance(p, dict) and "question" in p and "implied_prob" in p and "volume" in p]
+        _poly_rows = [{"Question": p["question"][:50], "Implied %": f"{p['implied_prob']:.0%}", "Volume": f"${p['volume']:,.0f}"} for p in _poly_valid[:5]]
         st.markdown(_bc_df_html(pd.DataFrame(_poly_rows)), unsafe_allow_html=True)
     if _cov and isinstance(_cov, dict):
         st.markdown("**Public Consensus (Covers):**")
