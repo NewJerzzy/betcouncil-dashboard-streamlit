@@ -16588,8 +16588,12 @@ def fetch_covers_from_gist(sport: str) -> tuple:
 
 def fetch_draftkings_props_from_gist(sport: str) -> tuple:
     """PRIMARY: DK props from browser harvester.
-    SECONDARY: LineStar GetPropBets Source=1 (server-side, no auth, no Tampermonkey).
-    TERTIARY: Python scraper fallback."""
+    SECONDARY: auto_scraped_props.json (real fix 2026-08-14 -- confirmed
+    fresh, real DraftKings rows already present, but nothing ever read
+    this file; the only reader checked betcouncil_dk_props_{sport}.json,
+    which nothing writes).
+    TERTIARY: LineStar GetPropBets Source=1 (server-side, no auth).
+    QUATERNARY: Python scraper fallback."""
     data = _read_gist_file(f"betcouncil_dk_props_{sport}.json", cache_minutes=5)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
@@ -16598,13 +16602,19 @@ def fetch_draftkings_props_from_gist(sport: str) -> tuple:
             if props:
                 print(f"[DraftKings] PRIMARY: {len(props)} props from browser harvester")
                 return props, "browser_harvester"
-    # SECONDARY: LineStar GetPropBets contains DraftKings prop lines (Source=1) — fully
+    auto_scraped = _read_gist_file("auto_scraped_props.json", cache_minutes=5)
+    if auto_scraped and _is_fresh(auto_scraped, max_age_minutes=45):
+        props = _parse_auto_scraped_as_dk_props(auto_scraped, sport)
+        if props:
+            print(f"[DraftKings] SECONDARY: {len(props)} props from auto-scraper")
+            return props, "auto_scraper"
+    # TERTIARY: LineStar GetPropBets contains DraftKings prop lines (Source=1) — fully
     # server-side, no browser harvester or tokens needed. Provides equivalent prop lines.
     ls_props = _read_gist_file(f"betcouncil_linestar_props_{sport}.json", cache_minutes=5)
     if ls_props and _is_fresh(ls_props, max_age_minutes=70):
         props = _parse_linestar_as_dk_props(ls_props.get("data", {}), sport)
         if props:
-            print(f"[DraftKings] SECONDARY: {len(props)} props from LineStar GetPropBets")
+            print(f"[DraftKings] TERTIARY: {len(props)} props from LineStar GetPropBets")
             return props, "linestar_fallback"
     try:
         from fetchers import fetch_draftkings_direct as _fdk
@@ -16612,6 +16622,37 @@ def fetch_draftkings_props_from_gist(sport: str) -> tuple:
         if s: return s, "scraper_fallback"
     except Exception: pass
     return [], "unavailable"
+
+
+def _parse_auto_scraped_as_dk_props(payload: dict, sport: str) -> list:
+    """Parse auto_scraped_props.json's flat {Player,Prop,Line,Side,Book,Sport}
+    rows into the standard {Player,Prop,Line,OverOdds,UnderOdds,Book,Sport,
+    source} shape, filtered to DraftKings + this sport, merging OVER/UNDER
+    pairs into one row like every other real parser here does."""
+    results = []
+    try:
+        rows = payload.get("props", [])
+        merged = {}
+        for r in rows:
+            if r.get("Book") != "DraftKings" or str(r.get("Sport","")).upper() != sport.upper():
+                continue
+            key = (r.get("Player",""), r.get("Prop",""), r.get("Line"))
+            entry = merged.setdefault(key, {"Player": r.get("Player",""), "Prop": r.get("Prop",""),
+                                             "Line": r.get("Line"), "OverOdds": "N/A", "UnderOdds": "N/A"})
+            side = str(r.get("Side","")).upper()
+            odds = r.get("Odds", r.get("odds", "N/A"))
+            if side == "OVER":
+                entry["OverOdds"] = odds
+            elif side == "UNDER":
+                entry["UnderOdds"] = odds
+        for entry in merged.values():
+            entry["Book"] = "DraftKings"
+            entry["Sport"] = sport
+            entry["source"] = "auto_scraped_props"
+            results.append(entry)
+    except Exception as e:
+        print(f"[WARN] _parse_auto_scraped_as_dk_props: {e}")
+    return results
 
 
 def _parse_linestar_as_dk_props(pb_data: dict, sport: str) -> list:
