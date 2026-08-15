@@ -16169,7 +16169,7 @@ HARVESTER_REGISTRY = {
     "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
     "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
     "scoresandodds":   ("betcouncil_scoresandodds_{sport}.json",     15, "signal"),
-    "kalshi":          ("betcouncil_kalshi_{sport}.json",            30, "signal"),
+    "kalshi":          ("betcouncil_kalshi_markets.json",            30, "signal"),
     "pickswise":       ("betcouncil_pickswise_{sport}.json",         30, "signal"),
     "betus":           ("betcouncil_betus_{sport}.json",             25, "props"),
     "bet105":          ("betcouncil_bet105_{sport}.json",            25, "lines"),
