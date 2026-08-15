@@ -13306,6 +13306,11 @@ with tabs[2]:
         '<div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>',
         unsafe_allow_html=True
     )
+    _pred_source_domains = {
+        "Signal Odds": "signalodds.com", "BetQL": "betql.co",
+        "Pickswise": "pickswise.com", "WiseGuyTeam": "wiseguyteam.com",
+        "GameLinePicks": "gamelinepicks.com",
+    }
     if _pred_gl_groups:
         _pred_gl_per_row = 2
         for _gi in range(0, len(_pred_gl_groups), _pred_gl_per_row):
@@ -13313,8 +13318,11 @@ with tabs[2]:
             for _gj, _grp in enumerate(_pred_gl_groups[_gi:_gi + _pred_gl_per_row]):
                 with _gl_cols[_gj]:
                     _rows_html = "".join(
-                        f'<div style="padding:5px 0;border-top:1px solid var(--bc-bg2);font-size:12.5px;color:var(--bc-text);">'
-                        f'<b>{it["source"]}</b>: {it["text"]}</div>'
+                        f'<div style="padding:5px 0;border-top:1px solid var(--bc-bg2);font-size:12.5px;color:var(--bc-text);display:flex;align-items:center;gap:6px;">'
+                        + (f'<img src="https://www.google.com/s2/favicons?domain={_pred_source_domains[it["source"]]}&sz=32" '
+                           f'style="width:14px;height:14px;border-radius:3px;flex-shrink:0;" />'
+                           if it["source"] in _pred_source_domains else '')
+                        + f'<span><b>{it["source"]}</b>: {it["text"]}</span></div>'
                         for it in _grp["items"]
                     )
                     _n_sources = len(set(it["source"] for it in _grp["items"]))
