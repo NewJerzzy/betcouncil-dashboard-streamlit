@@ -5293,9 +5293,19 @@ with tabs[10]:
                             except (ValueError, TypeError):
                                 continue
 
-                        # Now resolve locks. Each lock is handled independently
-                        # so a bad value on one (e.g. an unparsable line) only
-                        # skips that lock, never the rest of the batch.
+                        # Now resolve locks. Each lock's OUTCOME is graded
+                        # independently (unchanged) so a bad value on one
+                        # (e.g. an unparsable line) only skips that lock.
+                        # Real fix (2026-08-15): the WAGER is a different
+                        # question -- locks from the same original slip
+                        # (same-minute timestamp, same sport) each carry
+                        # their own full unit-size wager, so if a slip gets
+                        # resolved through this auto-grader rather than the
+                        # WIN/LOSS SLIP buttons (which already had this same
+                        # fix applied), an N-pick slip's real profit/loss
+                        # would be counted N times. Only the first lock in
+                        # each same-slip group keeps its real wager here.
+                        _seen_slip_keys = set()
                         for lock in locks:
                             try:
                                 player = lock.get("player","")
@@ -5355,9 +5365,12 @@ with tabs[10]:
                                 icon = "✅" if outcome == "WIN" else ("➖" if outcome == "PUSH" else "❌")
                                 st.markdown(f"{icon} **{player}** {side} {line} {lock.get('prop','')} — actual: **{actual}** → **{outcome}**")
 
+                                _slip_grp_key = f"{lock.get('timestamp','')[:16]}_{sport}"
+                                _is_first_in_slip = _slip_grp_key not in _seen_slip_keys
+                                _seen_slip_keys.add(_slip_grp_key)
                                 log_manual_bet(
                                     player, lock.get("prop",""), line, side, sport, outcome,
-                                    float(lock.get("wager") or 0), 2, "prop", "PrizePicks",
+                                    (float(lock.get("wager") or 0) if _is_first_in_slip else 0.0), 2, "prop", "PrizePicks",
                                     lock.get("timestamp","")[:10],
                                     tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
                                     signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
@@ -8540,10 +8553,15 @@ with tabs[7]:
 
             if st.button(f"✅ Log all {len(results)} picks as one parlay", key="log_slip_as_bet"):
                 _ls_slip_id = st.session_state.get("current_slip_id") or datetime.now().strftime("%Y-%m-%d %H:%M")
-                for r in results:
+                for _lsi, r in enumerate(results):
                     log_manual_bet(
                         player=r["player"], prop=r["stat"], line=r["line"], side=r["side"],
-                        sport=r["sport"], outcome=_ls_outcome, wager=_ls_wager,
+                        sport=r["sport"], outcome=_ls_outcome,
+                        # Real fix (2026-08-15): only the first leg carries the
+                        # real wager -- same fix as Pick For You and Locks &
+                        # Ledger, same real bug (N-pick parlay's profit/loss
+                        # was being recorded N times).
+                        wager=(_ls_wager if _lsi == 0 else 0.0),
                         pick_count=len(results), bet_type="prop", source=f"{_ls_source} (via Slip Analyzer)",
                         bet_date=_ls_slip_id, tier=r["tier"], edge=r["edge"], prob=r["prob"],
                         signals=r.get("signal_values"),
