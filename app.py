@@ -7896,7 +7896,7 @@ with tabs[7]:
                             "stat": bet.get("prop", ""),
                             "line": float(bet.get("line", 0) or 0),
                             "side": bet.get("side", "OVER"),
-                            "sport": bet.get("sport", "MLB"),
+                            "sport": bet.get("sport") or "OTHER",
                         })
                     if analyzer_picks:
                         st.session_state["analyzer_picks"] = analyzer_picks
@@ -8306,7 +8306,7 @@ with tabs[7]:
                 stat = pick["stat"]
                 line = pick["line"]
                 side = pick["side"]
-                sport = pick.get("sport", "MLB")
+                sport = pick.get("sport") or "OTHER"
 
                 # Score via full standalone pipeline (board → rolling → BDL → table → baseline)
                 scored = score_pick_standalone(player, stat, line, side, sport)
@@ -9747,7 +9747,7 @@ with tabs[9]:
                             bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str,
                             _snapshots_cache=_snap_cache
                         )
-                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport","NBA"), outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals, defer_gist_flush=True)
+                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport") or "OTHER", outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals, defer_gist_flush=True)
                         submitted += 1
                     except (ValueError, TypeError) as _sbe:
                         _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
