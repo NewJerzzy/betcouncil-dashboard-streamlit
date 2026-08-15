@@ -319,7 +319,11 @@ def update_sidebar_status_message():
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
     """
-    Fetch VSiN intelligence data from Gist (vsin_intelligence.json).
+    Fetch VSiN intelligence data from Gist (betcouncil_vsin_splits.json --
+    real fix 2026-08-15: was checking vsin_intelligence.json, a filename
+    the real scheduled workflow never wrote. The real file covers multiple
+    sports per file, so games are filtered by sport here rather than at
+    the top level).
     Returns unified dict with lines, splits, makinen, team_summary,
     power_ratings, rlm_alerts, ats_signals.
     TTL: 10 minutes.
@@ -343,10 +347,10 @@ def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
             return empty
 
         files = r.json().get("files", {})
-        if "vsin_intelligence.json" not in files:
+        if "betcouncil_vsin_splits.json" not in files:
             return empty
 
-        file_obj = files["vsin_intelligence.json"]
+        file_obj = files["betcouncil_vsin_splits.json"]
         if file_obj.get("size", 0) > 900000:
             raw = requests.get(file_obj["raw_url"], timeout=10)
             data = raw.json() if raw.status_code == 200 else empty
@@ -354,10 +358,18 @@ def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
             content = file_obj.get("content", "")
             data = json.loads(content) if content else empty
 
-        # Filter to requested sport
-        if data.get("sport", "").upper() != sport.upper():
+        # Real file covers multiple sports per file -- filter games by
+        # each game's own "sport" field, not a top-level sport check.
+        all_games = data.get("games", []) or []
+        sport_games = [g for g in all_games if str(g.get("sport", "")).upper() == sport.upper()]
+        if not sport_games:
             return empty
-        return data
+        return {
+            "sport": sport, "timestamp": data.get("captured_at"),
+            "lines": [], "splits": sport_games, "merged": sport_games,
+            "makinen": [], "team_summary": [], "dk_splits": [],
+            "power_ratings": [], "rlm_alerts": [], "ats_signals": {},
+        }
 
     except Exception as e:
         log_error_to_session("fetch_vsin_intelligence", str(e), "warning")
