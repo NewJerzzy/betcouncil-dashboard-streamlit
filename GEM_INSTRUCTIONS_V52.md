@@ -2725,3 +2725,138 @@ key — confirmed via System tab's Fetch Function Health showing 100%
 errors on this function. Fixed; also gave it its own separate budget
 bucket (`ODDS_API_GAMES`, already pre-registered in `API_BUDGETS`, just
 never connected).
+
+## Session Addendum (August 16, 2026, continued) — Full Real Change List
+
+The addendum above covered 4 items. This covers the rest of what was
+actually done this session, since a partial list was previously given
+as if it were complete — correcting that here.
+
+### Dead sources removed (confirmed zero real downstream consumers)
+RotoGrinders — both the in-app harvester-loop fetch (`fetch_rotogrinders_from_gist`,
+zero consumers anywhere) and a completely separate, independent scheduled
+workflow (`rotogrinders_refresh.py`/`.yml`, running every 30 min, also
+zero consumers) — both deleted. In-app comparison dict entries `fd_parlayhub`,
+`wagerbird`, `lineterminal`, `propsmadness` removed (Pick For You chips,
+confirmed zero downstream reads; the separate daily-grading system for
+WagerBird/LineTerminal is untouched, different code path). Harvester-loop
+duplicate entries for PrizePicks, ProphetX (lines+props), LineStar salaries,
+and ScoresAndOdds removed — all confirmed redundant with real, separately-used
+fetch paths elsewhere; nothing real lost.
+
+### Game-line snapshot pipeline (was silently broken since ~Aug 3)
+`game_board_snapshot_headless.py` imported `scrape_bovada_lines` from
+`betcouncil_auto_scraper.py`, a function that never existed there (confirmed
+via exhaustive grep). Every headless run silently caught this ImportError
+and wrote nothing while reporting success to GitHub Actions — this is why
+game-line calibration data went stale for over a week. Replaced with a
+self-contained direct Bovada scrape using the same real, confirmed-working
+endpoint used elsewhere in this codebase. Confirmed fixed via live dispatch
+and direct snapshot-file verification.
+
+### NFL power ratings — real fallback added (previously missing entirely)
+`NFL_POWER_RATINGS` never existed as a static fallback, unlike every other
+sport — meant NFL games got zero power-rating signal if the live fetch
+failed. Added, derived from real Super Bowl odds (Aug 10 2026), scaled to
+match the existing NBA_POWER_RATINGS format.
+
+### Athletics stale team-name bug (5 real config dicts)
+"Oakland Athletics" doesn't match the real, current team-name lookup
+("Athletics") anywhere in this codebase, silently falling back to neutral
+defaults. Real, current data confirms their temporary park (Sutter Health,
+Sacramento) is the 2nd-highest run-scoring park in MLB — was being treated
+as neutral. Fixed across MLB_PARK_FACTORS, MLB_BALLPARKS (also fixes wind
+adjustment, which was silently skipped entirely — empty city string is
+falsy), MLB_POWER_RATINGS, and both wOBA dicts.
+
+### PrizePicks gist-first fix (real ScrapeOps waste eliminated)
+`fetch_prizepicks_props` (fetchers.py)'s gist-first check read
+`auto_scraped_props.json` — the local, manually-run PC scraper's output,
+confirmed missing from the Gist entirely (never run regularly). Meant
+gist-first always failed, falling through to curl_cffi + ScrapeOps on
+every single board load regardless of the real, automated
+`prizepicks_refresh.yml` workflow's fresh data sitting in a different
+file. Fixed to check the real file.
+
+### DraftKings/FanDuel slip parsers (slip_parser.py) — real schema bug
+Both fully built but never callable — not wired into the real detection
+chain at all, and even if they had been, both used an incompatible output
+schema (`Player`/`Direction` capitalized) vs. every real parser (`player`/
+`prop` lowercase, matching `log_manual_bet`'s actual parameters). Rewrote
+both to the correct schema, added sport inference (neither had any), wired
+into the real chain, fixed a missing import that would have caused an
+immediate NameError.
+
+### Predictions tab — real sort bug
+Game-line and player-prop cross-source groups were never sorted, displaying
+in whatever order sources happened to run rather than by real cross-source
+agreement (the actual signal that section is built around). Now sorted by
+distinct confirming-source count, descending.
+
+### Push-handling bug (2 real auto-grading functions)
+ESPN box-score resolution and a second stat-grading function had zero PUSH
+detection — an exact line tie (a real, possible outcome on whole-number
+lines) was always mislabeled LOSS. Real, money-record-affecting: fed bad
+labels into calibration. Fixed both to correctly detect and record PUSH.
+
+### Sport-mislabeling default fix
+3 places silently defaulted an undetected/unclassifiable sport to a real
+sport (MLB or NBA) when OCR/screenshot parsing couldn't determine it —
+confirmed via real bad data in history (a competitive eater and a soccer
+player both tagged MLB), contaminating that real sport's calibration with
+noise. Now defaults to an honest "OTHER" instead.
+
+### MLB totals steam-signal bug (real, confirmed dead multiplier)
+`_steam_signals` was referenced in the total-edge calculation before it
+was ever initialized in this function's actual execution order (the real
+init sits ~140 lines later) — the defensive `dir()` check always failed,
+so the steam multiplier never applied, for any MLB game, ever. Fixed with
+a targeted early check; confirmed the multiplier can only amplify an
+existing edge, not flip direction, so this alone does not explain the
+real, still-unresolved directional OVER bias in MLB totals (separately
+investigated, root cause not found despite ruling out several real
+candidates — noted as still open, not fabricating a fix for it).
+
+### Unabated / VSiN lock-contention fixes (real, confirmed via live job log)
+Both scripts share the "sharp_feeds" lock with 4-5 other real scripts,
+scheduled close enough together that losing the lock race was the norm,
+not the exception — confirmed via an actual GitHub Actions job log showing
+"FAILED to acquire sharp_feeds after 4 attempts" on every run. Gave both
+more retry patience (7 attempts vs. default 4), without touching the other
+scripts' working schedules. VSiN additionally had a wrong-filename bug
+(`fetch_vsin_intelligence` checked `vsin_intelligence.json`, a file the
+real automated workflow never wrote — real data was in
+`betcouncil_vsin_splits.json` the whole time) plus a multi-sport-per-file
+compatibility issue; both fixed.
+
+### Board Audit Engine — real, confirmed caching fix
+The 13 real board-integrity audits recomputed unconditionally on every
+Streamlit rerun (a genuine, common Streamlit gotcha — every tab's code
+runs every rerun regardless of which tab is visually active, so being
+"inside System tab" never actually gated this). Now cached in session
+state, keyed on the real board/game/lock data, only recomputing when that
+data actually changes.
+
+### Kalshi — 2 of 3 claimed bugs confirmed real, not yet fixed
+`_pf_kalshi()` calls the wrong function (`fetch_kalshi_markets` instead of
+`fetch_kalshi_from_gist`) and `HARVESTER_REGISTRY`'s Kalshi entry uses the
+wrong filename pattern — both confirmed real via direct code check. The
+third claimed bug (Gist file "missing") was false — confirmed the real
+file exists and is genuinely fresh. Flagged, not yet fixed as of this
+entry.
+
+### Live production crash fixed (st.session_state.locks)
+20+ real call sites across both files used direct attribute access
+(`.append()`, `.remove()`, `[-1]`, membership checks) on
+`st.session_state.locks` with zero guaranteed initialization anywhere in
+the app — confirmed via an actual live traceback. Any genuinely fresh
+session hitting a lock button before rehydration happened to set this key
+would crash immediately. All real occurrences now use
+`st.session_state.setdefault("locks", [])` first.
+
+### Broken "Configuration" bankroll display removed
+A redundant System tab display showed `DEFAULT_BANKROLL` (a stale
+hardcoded constant, $468.49) instead of the real live value shown
+correctly elsewhere on the same page — removed rather than left
+misleading real money numbers on screen; the same info already displays
+correctly elsewhere in the same tab.
