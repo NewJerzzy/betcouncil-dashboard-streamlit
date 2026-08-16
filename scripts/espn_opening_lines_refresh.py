@@ -197,9 +197,11 @@ def main() -> int:
             events = fetch_espn_odds(sport)
         except Exception as e:
             log(f"  {sport}: fetch error — {e}")
+            _skip_log.append({"sport": sport, "phase": "exception", "error": str(e)})
             continue
         if not events:
             log(f"  {sport}: no games/odds today")
+            _skip_log.append({"sport": sport, "phase": "empty_events"})
             continue
         files_payload[filename] = {
             "content": json.dumps({
