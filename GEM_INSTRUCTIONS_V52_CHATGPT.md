@@ -1,5 +1,5 @@
 # BetCouncil GEM v5.2 — ChatGPT (<8000 chars)
-# Updated August 16, 2026: optimized_weights RETIRED (was display-only, zero real scoring callers) — weights now via weekly_audit→weight_overrides.json. PrizePicks payout FIXED: profit was wager*multiplier (double-counted stake), now wager*(multiplier-1). ODDS_API_KEY_GAMES now correctly wired (was silently sharing the props key, 100% error rate).
+# Updated August 16, 2026: optimized_weights RETIRED (was display-only, zero real scoring callers) — weights now via weekly_audit→weight_overrides.json. PrizePicks payout FIXED: profit was wager*multiplier (double-counted stake), now wager*(multiplier-1). ODDS_API_KEY_GAMES now correctly wired (was silently sharing the props key, 100% error rate). MLB totals steam signal was dead (never applied) — now fixed.
 # Paste into ChatGPT Project Instructions. MODE A = paste brief. MODE B = type SKIP.
 
 ════ SETTLED FIXES (stable, historical) ════
@@ -70,7 +70,7 @@ Label:[ELO ADJ base:X adj:Y delta:Z (player STATUS)]
 ════ 34 AUTO-HARVESTED SOURCES ════
 Sharp: Pinnacle(GAME LINES via arcadia API,auto,GHA▸props unavailable)▸EVSharps(dingers,auto,GHA)▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
 Lines: BetOnline▸Bovada▸BetMGM(auto,GHA)▸Caesars▸DK(auto,GHA)▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
-New(auto,GHA): Kambi/BetRivers(props)▸TheScore(consensus+move)▸areyouwatchingthis(29books,lines,no props)▸EdgeTerm▸ScoresAndOdds(FD+7bk)▸OddsAPI props(budget-capped)▸WagerBird(DISPLAY)▸PropsMadness(low)▸LineTerminal(DISPLAY)▸Savant(6h)▸Smarkets(back/lay)▸Bet365(lines+props,odds-api.io)▸FD props(odds-api.io)▸Bovada props(odds-api.io,SEPARATE acct)▸MyBookie(lines,TheOddsAPI)▸Caesars props(ParlayAPI,$0)▸ATP tennis(tennismylife.org,ATP ONLY)
+New(auto,GHA): Kambi/BetRivers(props)▸TheScore(consensus+move)▸areyouwatchingthis(29books,lines,no props)▸ScoresAndOdds(FD+7bk)▸OddsAPI props(budget-capped)▸Savant(6h)▸Smarkets(back/lay)▸Bet365(lines+props,odds-api.io)▸FD props(odds-api.io)▸Bovada props(odds-api.io,SEPARATE acct)▸MyBookie(lines,TheOddsAPI)▸Caesars props(ParlayAPI,$0)▸ATP tennis(tennismylife.org,ATP ONLY)
 Unabated: CONFIRMED LIVE server-side (api-k.unabated.com/api/markets/changes/query, no auth) — real MLB/NFL/CFB lines flowing, 15min. PRIMARY for MLB HR breakeven; DISPLAY ONLY for other props. Not a dead-end (prior note was wrong).
 DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS▸ParlaySavant
 Signals: ActionNetwork(auto,GHA,+opening line)▸Covers▸Pregame▸Pickswise
