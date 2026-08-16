@@ -25,6 +25,19 @@ for _name_copy_guard in dir(_app_core_module):
     if not _name_copy_guard.startswith("__"):
         globals()[_name_copy_guard] = getattr(_app_core_module, _name_copy_guard)
 del _name_copy_guard
+
+# Real, unconditional guard (2026-08-16, second attempt at this fix --
+# first attempt used st.session_state.setdefault(), which Streamlit's
+# SessionState object does not actually implement, confirmed via a real
+# live traceback). Deliberately NOT nested inside the persistence_loaded
+# gate above (in app_core.py) -- if that block throws partway through on
+# some prior rerun after setting persistence_loaded=True but before
+# reaching its own locks assignment, this still guarantees the key
+# exists. This is now the single source of truth; no other call site
+# needs its own defensive check.
+if "locks" not in st.session_state:
+    st.session_state["locks"] = []
+
 # app_core.py holds everything that used to be here before the tab-rendering
 # section: imports, constants, and ~181 pure helper/calc functions (887KB).
 # Split 2026-07-26 to shrink app.py, which had grown past 1.5MB and required
@@ -2686,7 +2699,7 @@ with tabs[4]:
                                 for l in st.session_state.get("locks", [])
                             )
                             if not _already:
-                                st.session_state.setdefault("locks", []).append({
+                                st.session_state["locks"].append({
                                     "player":    _lk_prop.get("Player",""),
                                     "prop":      _lk_prop.get("Prop",""),
                                     "line":      _lk_prop.get("Line",0),
@@ -2709,7 +2722,7 @@ with tabs[4]:
                                 # stuck on "need 5 more" no matter how many
                                 # bets were resolved.
                                 try:
-                                    record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], _board)
+                                    record_pinnacle_line(st.session_state["locks"][-1], _board)
                                 except Exception:
                                     pass
                                 save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -2748,7 +2761,7 @@ with tabs[4]:
                             for l in st.session_state.get("locks", [])
                         )
                         if not _already2:
-                            st.session_state.setdefault("locks", []).append({
+                            st.session_state["locks"].append({
                                 "player":    _lk_prop2.get("Player",""),
                                 "prop":      _lk_prop2.get("Prop",""),
                                 "line":      _lk_prop2.get("Line",0),
@@ -2765,7 +2778,7 @@ with tabs[4]:
                             })
                             _show_team_exposure_warning(_lk_prop2.get("Team",""), _sport)
                             try:
-                                record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], _board)
+                                record_pinnacle_line(st.session_state["locks"][-1], _board)
                             except Exception:
                                 pass
                             save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -2854,7 +2867,7 @@ with tabs[4]:
                         for l in st.session_state.get("locks", [])
                     )
                     if not _already:
-                        st.session_state.setdefault("locks", []).append({
+                        st.session_state["locks"].append({
                             "player": _lp.get("Player",""), "prop": _lp.get("Prop",""),
                             "line": _lp.get("Line",0), "side": _lp.get("Side","OVER"),
                             "tier": _lp.get("Tier",""), "edge": _lp.get("Edge",0),
@@ -2866,7 +2879,7 @@ with tabs[4]:
                             "clv_capture": _capture_clv_placement(_lp.get("Player",""), _lp.get("Prop",""), _lp.get("Prob",0.5)),
                         })
                         try:
-                            record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], _board)
+                            record_pinnacle_line(st.session_state["locks"][-1], _board)
                         except Exception:
                             pass
                 save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -2893,7 +2906,7 @@ with tabs[4]:
                             for l in st.session_state.get("locks", [])
                         )
                         if not _already:
-                            st.session_state.setdefault("locks", []).append({
+                            st.session_state["locks"].append({
                                 "player": _p.get("Player",""), "prop": _p.get("Prop",""),
                                 "line": _p.get("Line",0), "side": _p.get("Side","OVER"),
                                 "tier": _p.get("Tier",""), "edge": _p.get("Edge",0),
@@ -2905,7 +2918,7 @@ with tabs[4]:
                                 "clv_capture": _capture_clv_placement(_p.get("Player",""), _p.get("Prop",""), _p.get("Prob",0.5)),
                             })
                             try:
-                                record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], _board)
+                                record_pinnacle_line(st.session_state["locks"][-1], _board)
                             except Exception:
                                 pass
                 save_json_data(LOCKS_PATH, st.session_state.locks)
@@ -4107,7 +4120,7 @@ with tabs[3]:
                             "wager": 0,
                             "clv_capture": _capture_clv_placement_game(_matchup, _pk["label"], _pk["pick"], _pk["line"]),
                         }
-                        st.session_state.setdefault("locks", []).append(_new_game_lock)
+                        st.session_state["locks"].append(_new_game_lock)
                         try:
                             record_pinnacle_game_line(_new_game_lock, st.session_state.get("pinnacle_game_lines", []))
                         except Exception:
@@ -5015,7 +5028,7 @@ with tabs[10]:
         # Group locks by timestamp (same minute = same slip)
         from collections import defaultdict
         slips = defaultdict(list)
-        for lock in st.session_state.setdefault("locks", []):
+        for lock in st.session_state["locks"]:
             ts = lock.get("timestamp","")[:16]  # group by YYYY-MM-DD HH:MM
             slip_key = f"{ts}_{lock.get('sport','')}"
             slips[slip_key].append(lock)
@@ -5114,8 +5127,8 @@ with tabs[10]:
                         )
                     # Remove these locks
                     for lock in slip_locks:
-                        if lock in st.session_state.setdefault("locks", []):
-                            st.session_state.setdefault("locks", []).remove(lock)
+                        if lock in st.session_state["locks"]:
+                            st.session_state["locks"].remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
                     if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
@@ -5135,8 +5148,8 @@ with tabs[10]:
                             signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
                         )
                     for lock in slip_locks:
-                        if lock in st.session_state.setdefault("locks", []):
-                            st.session_state.setdefault("locks", []).remove(lock)
+                        if lock in st.session_state["locks"]:
+                            st.session_state["locks"].remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
                     if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
@@ -5144,8 +5157,8 @@ with tabs[10]:
             with btn_col4:
                 if st.button("↩ VOID", key=f"void_{slip_key}", use_container_width=True):
                     for lock in slip_locks:
-                        if lock in st.session_state.setdefault("locks", []):
-                            st.session_state.setdefault("locks", []).remove(lock)
+                        if lock in st.session_state["locks"]:
+                            st.session_state["locks"].remove(lock)
                     save_json_data(LOCKS_PATH, st.session_state.locks)
                     if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
@@ -5208,7 +5221,7 @@ with tabs[10]:
                 # every other lock sharing that sport, mislabeling them all
                 # with the same generic error.
                 sport_locks = {}
-                for lock in st.session_state.setdefault("locks", []):
+                for lock in st.session_state["locks"]:
                     if lock.get("bet_type") == "game":
                         continue
                     s = lock.get("sport","NBA")
@@ -5375,8 +5388,8 @@ with tabs[10]:
                                     tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"),
                                     signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture")
                                 )
-                                if lock in st.session_state.setdefault("locks", []):
-                                    st.session_state.setdefault("locks", []).remove(lock)
+                                if lock in st.session_state["locks"]:
+                                    st.session_state["locks"].remove(lock)
                                 resolved += 1
                             except (ValueError, TypeError, ZeroDivisionError) as e:
                                 skipped.append(f"{lock.get('player','')} (error: {str(e)[:40]})")
@@ -5398,7 +5411,7 @@ with tabs[10]:
                 if nba_skipped:
                     st.caption(f"Trying BDL for {len(nba_skipped)} missed NBA picks...")
                     bdl_resolved = 0
-                    for lock in st.session_state.setdefault("locks", []).copy():
+                    for lock in st.session_state["locks"].copy():
                         if lock.get("sport","") != "NBA":
                             continue
                         try:
@@ -5440,8 +5453,8 @@ with tabs[10]:
                                 actual = float(stat.get(stat_key,0) or 0)
                             outcome = ("WIN" if actual > line else "LOSS") if side == "OVER" else ("WIN" if actual < line else "LOSS")
                             log_manual_bet(lock.get("player",""), lock.get("prop",""), line, side, "NBA", outcome, float(lock.get("wager") or 0), 2, "prop", "PrizePicks", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture"))
-                            if lock in st.session_state.setdefault("locks", []):
-                                st.session_state.setdefault("locks", []).remove(lock)
+                            if lock in st.session_state["locks"]:
+                                st.session_state["locks"].remove(lock)
                             bdl_resolved += 1
                             icon = "✅" if outcome == "WIN" else "❌"
                             st.markdown(f"{icon} **{lock.get('player','')}** (BDL) — actual: **{actual}** → **{outcome}**")
@@ -5586,7 +5599,7 @@ with tabs[10]:
                                 if _is_relevant:
                                     _espn_debug_log.append(f"  completed: {away_name} ({away_abbr}) @ {home_name} ({home_abbr}) — {away_score}-{home_score}  [date query: {date_str or 'today'}]")
                                 for lock in sport_locks:
-                                    if lock not in st.session_state.setdefault("locks", []):
+                                    if lock not in st.session_state["locks"]:
                                         continue  # already resolved in an earlier date pass
                                     matchup = lock.get("player","")
                                     matchup_norm = _norm_team(matchup)
@@ -5708,7 +5721,7 @@ with tabs[10]:
                                             outcome = "WIN" if pick_is_home == win_is_home else "LOSS"
                                         if outcome:
                                             log_manual_bet(matchup, lock.get("prop",""), line, pick, sport_key, outcome, float(lock.get("wager") or 0), 1, "game", "Bovada/MyBookie", lock.get("timestamp","")[:10], tier=lock.get("tier"), edge=lock.get("edge"), prob=lock.get("prob"), signals=lock.get("signal_values"), clv_capture=lock.get("clv_capture"))
-                                            if lock in st.session_state.setdefault("locks", []): st.session_state.setdefault("locks", []).remove(lock)
+                                            if lock in st.session_state["locks"]: st.session_state["locks"].remove(lock)
                                             resolved += 1
                                             game_resolved += 1
                                             st.markdown(f"{'✅' if outcome=='WIN' else '❌' if outcome=='LOSS' else '➖'} **{matchup}** {prop_type} {pick} {line} → {home_name} {int(home_score)}-{int(away_score)} → **{outcome}**")
@@ -8253,7 +8266,7 @@ with tabs[7]:
                     elif _already_locked:
                         st.caption("🔒 Locked")
                     elif st.button("🔒 Lock", key=f"_board_lock_{_bi}"):
-                        st.session_state.setdefault("locks", []).append({
+                        st.session_state["locks"].append({
                             "player": row["player"], "prop": row["stat"],
                             "line": row["line"], "side": row["suggestion"],
                             "wager": active_unit(), "prob": 0.5 + abs(row["edge_val"]),
@@ -8504,7 +8517,7 @@ with tabs[7]:
                     if board_match:
                         already = any(l.get("player") == r["player"] and l.get("prop") == r["stat"] for l in st.session_state.get("locks", []))
                         if not already:
-                            st.session_state.setdefault("locks", []).append({
+                            st.session_state["locks"].append({
                                 "player": r["player"], "prop": r["stat"],
                                 "line": r["line"], "side": r["side"],
                                 "wager": active_unit(), "prob": r["prob"],
@@ -8518,7 +8531,7 @@ with tabs[7]:
                                 "clv_capture": _capture_clv_placement(r["player"], r["stat"], r.get("prob", 0.5)),
                             })
                             try:
-                                record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], board)
+                                record_pinnacle_line(st.session_state["locks"][-1], board)
                             except Exception:
                                 pass
                             locked += 1
