@@ -66,7 +66,7 @@ from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
     mc_calculate_lambdas, mc_log5_win_prob, mc_simulate_game, mc_game_prob,
     ELO_DEFAULT_RATING, ELO_K_FACTOR, elo_update, elo_expected_score, elo_to_def_adj,
     # Extracted from app.py — pure computation, no Streamlit deps
-    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_dff_propstats_edge, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_market_climate, compute_game_density, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
+    _ev_parse_odds, _get_elo_roster_confidence, _load_cache, _merge_rolling, _parse_american, _save_cache, build_optimal_portfolio, calculate_lock_quality_score, calculate_prizepicks_ev, check_portfolio_correlation, check_prop_line_fairness, compute_calibration_buckets, compute_clv_grade, compute_expected_vs_actual, compute_home_away_splits, compute_model_vs_market, compute_parlay_correlation, compute_projection_confidence, compute_signal_attribution, compute_market_climate, compute_game_density, compute_team_exposure, compute_tier_stats, detect_game_script_contradictions, detect_sharp_movement, find_best_alt_line, generate_post_mortem, generate_weight_recommendations, get_best_alt_line_recommendation, get_calibration_summary, get_clv_summary, get_edge_staleness, get_game_tier, get_pinnacle_edge, get_tier, optimize_daily_bet_sizing, power_rating_spread_divergence, prizepicks_breakeven_prob, save_json_data, weather_edge_adjustment,
     score_rlm, devig_ensemble,
     record_line, detect_steam_move,
     pace_adjust_mlb_prop, rest_adjusted_std_dev,
@@ -104,8 +104,8 @@ from config import (
     MLB_PITCHER_HANDEDNESS, MLB_TEAM_WOBA_VS_RHP, MLB_TEAM_WOBA_VS_LHP, MLB_WOBA_LEAGUE_AVG,
     MLB_PARK_FACTORS,
     NHL_TEAM_GOALS_FOR, NHL_TEAM_GOALS_AGAINST, ESPN_ATHLETE_IDS, GAME_TOTAL_LINE_THRESHOLDS,
-    PROP_CORRELATION_PAIRS, KALSHI_SPORT_SERIES, GOLF_TOURNAMENT_MAP, DFF_HEADERS,
-    DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP, BQ_WEIGHTS_DEFAULT,
+    PROP_CORRELATION_PAIRS, KALSHI_SPORT_SERIES, GOLF_TOURNAMENT_MAP,
+    BQ_WEIGHTS_DEFAULT,
     BOVADA_HEADERS, BOVADA_SPORT_MAP, SIGNAL_COLS, MLB_STADIUM_COORDS,
     NFL_OUTDOOR_STADIUMS, NFL_DIVISIONS, FL_SPORT_MAP, FL_HEADERS, GAME_TIER_THRESHOLDS,
     BDL_PLAYER_IDS, ESPN_SLUG_MAP, PLAYER_HOME_SPLITS,
@@ -3575,295 +3575,6 @@ def get_golf_player_edge(player_name, leaderboard=None, odds=None):
 # Weight: +1% to +3% max
 # ═══════════════════════════════════════════════════════════════
 
-DFF_PATH      = os.path.join(CACHE_DIR, "dff_rosterfilter.json")
-
-
-
-
-def compute_dff_teammate_impact(player, team, sport, prop_type, stat_line,
-                                 dff_data=None, injury_data=None):
-    """
-    Compute DFF teammate impact signal for a prop.
-    
-    Checks if key teammates are injured/out and adjusts edge.
-    
-    Example:
-      Castle PRA prop
-      Wembanyama OUT
-      DFF: Castle PRA +22% without Wembanyama
-      → edge boost +2%
-    
-    Weight: +1% to +3% max — confirmation only, never overrides Pinnacle EV.
-    Returns (edge_adj, signal_dict, display_note)
-    """
-    if dff_data is None:
-        # Try to get from cache
-        cache = st.session_state.get("dff_cache", {})
-        dff_data = next(
-            (v for k, v in cache.items()
-             if k.startswith(f"{sport}_{DFF_TEAM_MAP.get(team,team)}")),
-            {}
-        )
-    
-    if not dff_data or not dff_data.get("roster"):
-        return 0.0, {}, ""
-    
-    roster  = dff_data["roster"]
-    injuries = injury_data or st.session_state.get("injuries", {})
-    
-    adj         = 0.0
-    signals     = []
-    top_impacts = []
-    
-    for teammate in roster:
-        tname     = teammate["player"]
-        with_val  = teammate.get("with_val", 0)
-        wo_val    = teammate.get("without_val", 0)
-        dep       = teammate.get("dependency", "UNKNOWN")
-        avg_pra   = teammate.get("avg_pra", 0)
-        
-        # Skip if no with/without data
-        if with_val <= 0 or wo_val <= 0:
-            continue
-        
-        # Check if teammate is out/injured
-        tname_norm = normalize_name(tname)
-        inj_status = ""
-        if isinstance(injuries, dict):
-            inj_entry = injuries.get(tname_norm, injuries.get(tname, {}))
-            if isinstance(inj_entry, dict):
-                inj_status = inj_entry.get("status","").lower()
-            elif isinstance(inj_entry, str):
-                inj_status = inj_entry.lower()
-        
-        teammate_out = inj_status in ("out","doubtful","dtd","ir","inactive")
-        
-        if dep == "HIGH":
-            if teammate_out:
-                # Key teammate out — use WITHOUT value
-                pct_change = (wo_val - with_val) / max(with_val, 1)
-                if pct_change > 0.10:
-                    # Player improves without this teammate
-                    edge_boost = min(0.03, pct_change * 0.15)
-                    adj += edge_boost
-                    signals.append({
-                        "teammate": tname,
-                        "status":   "OUT",
-                        "with":     round(with_val,1),
-                        "without":  round(wo_val,1),
-                        "change":   f"+{pct_change:.0%}",
-                        "direction":"BOOST",
-                    })
-                    top_impacts.append(
-                        f"📈 {tname} OUT: {round(wo_val,1)} vs {round(with_val,1)} PRA ({pct_change:+.0%})"
-                    )
-                elif pct_change < -0.10:
-                    # Player regresses without this teammate
-                    edge_cut = max(-0.03, pct_change * 0.15)
-                    adj += edge_cut
-                    signals.append({
-                        "teammate": tname,
-                        "status":   "OUT",
-                        "with":     round(with_val,1),
-                        "without":  round(wo_val,1),
-                        "change":   f"{pct_change:.0%}",
-                        "direction":"FADE",
-                    })
-                    top_impacts.append(
-                        f"📉 {tname} OUT: {round(wo_val,1)} vs {round(with_val,1)} PRA ({pct_change:+.0%})"
-                    )
-            else:
-                # Key teammate IN — use WITH value (normal)
-                signals.append({
-                    "teammate": tname,
-                    "status":   "IN",
-                    "with":     round(with_val,1),
-                    "without":  round(wo_val,1),
-                    "change":   "—",
-                    "direction":"NORMAL",
-                })
-    
-    # Cap total adjustment
-    adj = round(max(-0.03, min(0.03, adj)), 3)
-    
-    display = " | ".join(top_impacts[:2]) if top_impacts else ""
-    
-    return adj, signals, display
-
-
-def get_dff_player_id(player_name, sport="NBA"):
-    """
-    Get DFF player ID from session cache or pre-built lookup.
-    DFF uses hex IDs (e.g. 164B7E for Wembanyama).
-    These need to be discovered from DevTools or a player list endpoint.
-    """
-    # Session cache of discovered IDs
-    id_cache = st.session_state.get("dff_player_ids", {})
-    return id_cache.get(normalize_name(player_name), "")
-
-
-def register_dff_player_id(player_name, player_id):
-    """Store a discovered DFF player ID for future lookups."""
-    cache = st.session_state.get("dff_player_ids", {})
-    cache[normalize_name(player_name)] = player_id
-    st.session_state["dff_player_ids"] = cache
-
-# ── DFF PropStats ────────────────────────────────────────────
-# Endpoint: dailyfantasyfuel.com/propstats/{SPORT}/
-# Returns: per-game hit rate, avg minutes, usage, potentials
-# Worst case: games=[] → logs "no data"
-# Best case:  L10 hit rate, avg minutes, contextual splits
-
-DFF_PROPSTATS_URL = "https://www.dailyfantasyfuel.com/propstats/{sport}/"
-
-
-@st.cache_data(ttl=1800)
-def _fetch_dff_propstats_live(player_id, sport, metric, line, team="",
-                         opponent="", position="", direction="over",
-                         location="ALL", last_n=10,
-                         wplayer="", woplayer=""):
-    """
-    Fetch DFF PropStats for a player/metric combination.
-    
-    Endpoint: dailyfantasyfuel.com/propstats/{SPORT}/
-    Returns per-game hit rate against the line + contextual stats.
-    
-    Params:
-      wplayer/woplayer: optional teammate filter (with/without)
-      last_n:           L5, L10, L20, or Season
-      direction:        "over" or "under"
-    
-    Returns dict:
-      hit_rate, hits, total_games, avg_val,
-      avg_minutes, avg_usage, avg_potentials,
-      games (raw list)
-    """
-    sport_key = DFF_SPORT_MAP.get(sport, sport.upper())
-    metric_key = DFF_METRIC_MAP.get(metric, metric.lower().replace(" ",""))
-    range_str  = f"L{last_n}" if last_n in (5,10,20) else "Season"
-    
-    params = {
-        "playerID":  player_id,
-        "metric":    metric_key,
-        "loc":       location,       # ALL, Home, Away
-        "playoffs":  "ALL",
-        "pos":       position or "ALL",
-        "team":      team or "ALL",
-        "opp":       opponent or "ALL",
-        "range":     range_str,
-        "line":      str(line),
-        "starter":   "ALL",
-        "minutes":   1,
-        "rest":      "ALL",
-        "direction": direction,
-        "win":       "ALL",
-    }
-    
-    # Optional teammate filters
-    if wplayer:
-        params["wplayer"] = wplayer
-    if woplayer:
-        params["woplayer"] = woplayer
-    
-    url = DFF_PROPSTATS_URL.format(sport=sport_key)
-    
-    try:
-        r = _http.get(url, headers=DFF_HEADERS, params=params, timeout=15)
-        
-        # Log actual URL once per session for diagnostics
-        _req_url = r.url if hasattr(r, 'url') else url
-        _url_log = st.session_state.get("dff_url_log", [])
-        if not any(l.get("player_id") == player_id and l.get("metric") == metric_key 
-                   for l in _url_log):
-            _url_log.append({
-                "player_id": player_id, "metric": metric_key,
-                "url": _req_url, "status": r.status_code,
-                "time": datetime.now().strftime("%H:%M"),
-            })
-        if r.status_code not in (200, 304):
-            st.session_state.setdefault("errors",[]).append({
-                "source": "DFF PropStats",
-                "error":  f"HTTP {r.status_code}",
-                "time":   datetime.now().strftime("%H:%M"),
-            })
-            return {}
-        
-        data  = r.json() if r.text else {}
-        games = data.get("stats", data.get("games", data.get("data", [])))
-        
-        if not games:
-            # Log but don't error — endpoint may return empty for some combos
-            st.session_state.setdefault("dff_propstats_log",[]).append({
-                "player_id": player_id, "metric": metric_key,
-                "result": "no_data", "time": datetime.now().strftime("%H:%M"),
-            })
-            return {}
-        
-        # Parse per-game stats
-        hits         = 0
-        total        = len(games)
-        vals         = []
-        mins_list    = []
-        usage_list   = []
-        potentials_list = []
-        
-        line_f = float(line)
-        
-        for g in games:
-            val       = float(g.get("metric", g.get("value", g.get("stat", 0))) or 0)
-            mins      = float(g.get("mins",   g.get("minutes", 0)) or 0)
-            usage     = float(g.get("usage",  0) or 0)
-            potential = float(g.get("potentials", g.get("potential", 0)) or 0)
-            
-            vals.append(val)
-            if mins > 0:     mins_list.append(mins)
-            if usage > 0:    usage_list.append(usage)
-            if potential > 0:potentials_list.append(potential)
-            
-            # Hit check
-            if direction == "over" and val > line_f:
-                hits += 1
-            elif direction == "under" and val < line_f:
-                hits += 1
-        
-        hit_rate  = round(hits / total, 3) if total > 0 else 0
-        avg_val   = round(sum(vals) / len(vals), 2) if vals else 0
-        avg_mins  = round(sum(mins_list) / len(mins_list), 1) if mins_list else 0
-        avg_usage = round(sum(usage_list) / len(usage_list), 3) if usage_list else 0
-        avg_pot   = round(sum(potentials_list) / len(potentials_list), 1) if potentials_list else 0
-        
-        result = {
-            "hit_rate":       hit_rate,
-            "hits":           hits,
-            "total_games":    total,
-            "avg_val":        avg_val,
-            "avg_minutes":    avg_mins,
-            "avg_usage":      avg_usage,
-            "avg_potentials": avg_pot,
-            "line":           line_f,
-            "direction":      direction,
-            "metric":         metric_key,
-            "range":          range_str,
-            "games":          games[:20],  # cap stored games
-        }
-        
-        # Log success
-        st.session_state.setdefault("dff_propstats_log",[]).append({
-            "player_id": player_id, "metric": metric_key,
-            "hit_rate": hit_rate, "games": total,
-            "result": "success", "time": datetime.now().strftime("%H:%M"),
-        })
-        
-        return result
-    
-    except (requests.RequestException, ValueError, KeyError) as e:
-        st.session_state.setdefault("errors",[]).append({
-            "source": "DFF PropStats", "error": str(e)[:80],
-            "time": datetime.now().strftime("%H:%M"),
-        })
-        return {}
-
-
 def compute_market_move_quality(matchup, prop, sport, current_props=None):
     """
     Determine WHY a line moved — sharp vs soft attribution.
@@ -4581,7 +4292,6 @@ def compute_signal_roi_audit(history=None):
         "Sharp money":       "SharpFlag",
         "Minutes stable":    "MinutesStability",
         "Low volatility":    "RiskLevel",
-        "DFF hit rate":      "DFFHitRateL10",
         "Market move":       "MarketMoveQuality",
         "RLM":               "rlm_present",
         "Lineup confirmed":  "LineupConfirmed",
@@ -4605,8 +4315,6 @@ def compute_signal_roi_audit(history=None):
                 present = val in ("STABLE",)
             elif key == "RiskLevel":
                 present = val in ("LOW",)
-            elif key == "DFFHitRateL10":
-                present = float(val or 0) >= 0.60
             elif key == "MarketMoveQuality":
                 present = int(val or 0) >= 1
             elif key == "rlm_present":
@@ -10382,22 +10090,6 @@ def generate_why_drivers(prop):
             (drivers if lfl > 0 else risks).append((f"Batting #{batting} (FL)", f"{'+' if lfl>0 else ''}{lfl}%", c))
     elif "Not in lineup" in lineup:
         risks.append(("Not in lineup (FL)", "-5.0%", "#e04040"))
-
-    # ── DFF PropStats ───────────────────────────────────────
-    dff_hr = float(prop.get("DFFHitRateL10",0) or 0)
-    dff_n  = int(prop.get("DFFGamesTotal",0) or 0)
-    if dff_n >= 5:
-        da = 0.02 if dff_hr>=0.70 else 0.01 if dff_hr>=0.60 else -0.02 if dff_hr<=0.30 else -0.01 if dff_hr<=0.40 else 0
-        if abs(da) >= 0.01:
-            c = "#22c55e" if da > 0 else "#e04040"
-            (drivers if da > 0 else risks).append((f"DFF L{dff_n} ({dff_hr:.0%} hit rate)", f"{'+' if da>0 else ''}{da*100:.0f}%", c))
-
-    # ── DFF Teammate ────────────────────────────────────────
-    dff_sig = str(prop.get("DFFSignal",""))
-    if "📈" in dff_sig:
-        drivers.append(("DFF teammate OUT (boost)", "+3.0%", "#22c55e"))
-    elif "📉" in dff_sig:
-        risks.append(("DFF teammate OUT (fade)", "-3.0%", "#e04040"))
 
     # ── Role change ─────────────────────────────────────────
     rc = prop.get("RoleChange")
@@ -16907,54 +16599,6 @@ def load_sport_data(sport):
                 final_edge  = round(final_edge * 0.90, 4)
                 tier        = _get_cal_tier(final_edge, sport)
                 p["InjuryNote"] = f"🟡 {injury_flag} — edge -10%"
-        # DFF Teammate Impact — NBA/WNBA primarily
-        if sport in ("NBA","WNBA"):
-            _dff_cache = st.session_state.get("dff_cache", {})
-            if _dff_cache:
-                _dff_team = p.get("Team","")
-                _dff_adj, _dff_signals, _dff_note = compute_dff_teammate_impact(
-                    player, _dff_team, sport,
-                    stat_norm, line,
-                    dff_data=None,
-                    injury_data=injuries,
-                )
-                if _dff_adj != 0:
-                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _dff_adj)), 4)
-                    tier = _get_cal_tier(final_edge, sport)
-                if _dff_note:
-                    p["DFFSignal"] = _dff_note
-                if _dff_signals:
-                    p["DFFRosterContext"] = _dff_signals
-
-        # DFF PropStats — hit rate confirmation signal
-        _dff_pid = get_dff_player_id(player, sport)
-        if _dff_pid:
-            # NOTE: fetch_dff_propstats is a dead stub (dailyfantasyfuel.com
-            # is Cloudflare-blocked) — always returns {}. Call matches its
-            # real signature so this doesn't TypeError; direction/last_n
-            # were never accepted params.
-            _dff_ps = fetch_dff_propstats(
-                player_id  = _dff_pid,
-                sport      = sport,
-                metric     = stat_norm,
-                line       = line,
-                team       = p.get("Team",""),
-                opponent   = p.get("Opponent",""),
-            )
-            if _dff_ps:
-                _ps_adj, _ps_note = compute_dff_propstats_edge(_dff_ps, final_edge)
-                if _ps_adj != 0:
-                    final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _ps_adj)), 4)
-                    tier = _get_cal_tier(final_edge, sport)
-                p["DFFHitRateL10"]    = _dff_ps.get("hit_rate", 0)
-                p["DFFAvgVal"]        = _dff_ps.get("avg_val", 0)
-                p["DFFAvgMins"]       = _dff_ps.get("avg_minutes", 0)
-                p["DFFAvgUsage"]      = _dff_ps.get("avg_usage", 0)
-                p["DFFAvgPotentials"] = _dff_ps.get("avg_potentials", 0)
-                p["DFFGamesTotal"]    = _dff_ps.get("total_games", 0)
-                if _ps_note:
-                    p["DFFPropNote"]  = _ps_note
-
         # All sports: apply FantasyLabs lineup bonus
         # MLB: batting order bonus — ONLY within 4hr of first pitch
         #      (lineups not posted until 2-3hr before game)
@@ -17085,15 +16729,6 @@ def load_sport_data(sport):
             "PricerEdgeVsOpen":  _pricer_info.get("edge_vs_open") if _pricer_info else None,
             "PricerUncertainty": _pricer_info.get("uncertainty_penalty") if _pricer_info else None,
             "RiskNote":         _risk_note,
-            "DFFSignal":        p.get("DFFSignal",""),
-            "DFFRosterContext":  p.get("DFFRosterContext",[]),
-            "DFFHitRateL10":    p.get("DFFHitRateL10", 0),
-            "DFFAvgVal":        p.get("DFFAvgVal", 0),
-            "DFFAvgMins":       p.get("DFFAvgMins", 0),
-            "DFFAvgUsage":      p.get("DFFAvgUsage", 0),
-            "DFFAvgPotentials": p.get("DFFAvgPotentials", 0),
-            "DFFGamesTotal":    p.get("DFFGamesTotal", 0),
-            "DFFPropNote":      p.get("DFFPropNote",""),
             "UnabatedLine":     p.get("UnabatedLine"),
             "UnabatedPrice":    p.get("UnabatedPrice"),
             "UnabatedFairProb": p.get("UnabatedFairProb"),
