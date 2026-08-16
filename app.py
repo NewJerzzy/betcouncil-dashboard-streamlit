@@ -3799,7 +3799,7 @@ with tabs[3]:
                     if not _ump_name:
                         _ump_name = next((v.get("hp_umpire","") for v in _ump_lineups.values() if _og_teams_match(v.get("home_team",""), _g.get("home","")) and _og_teams_match(v.get("away_team",""), _g.get("away",""))), "")
                     if _ump_name:
-                        _ump_totals = fetch_ump_game_totals().get(_ump_name.strip().lower(), {})
+                        _ump_totals = _ump_totals_cache.get(_ump_name.strip().lower(), {})
                         _ump_avg = _ump_totals.get("avg_total_runs")
                         if _ump_avg is not None:
                             _ump_over = _ump_totals.get("over_rate_vs_85", 0)
