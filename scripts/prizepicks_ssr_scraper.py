@@ -234,7 +234,7 @@ def push_league_files(by_league: dict) -> int:
             "source": "github_actions_partner_api",
         }
 
-    lock_token = acquire_lock(GIST_ID, github_token, "prizepicks_combined", holder="prizepicks")
+    lock_token = acquire_lock(GIST_ID, github_token, "prizepicks_combined", holder="prizepicks", max_attempts=7)
     if not lock_token:
         log("Could not acquire prizepicks_combined lock -- skipping this run to avoid a collision")
         return 0
