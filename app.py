@@ -2125,9 +2125,6 @@ with tabs[4]:
                 "_szn":        str(_szn)  if _szn  else "—",
                 "_rel":        _rel or "—",
                 "_source":     _p.get("Source",""),
-                "_dff_signal": _p.get("DFFSignal",""),
-                "_dff_hr":     f"{_p.get('DFFHitRateL10',0):.0%}" if _p.get("DFFHitRateL10") else "",
-                "_dff_note":   _p.get("DFFPropNote",""),
                 "_risk":       _p.get("RiskLevel",""),
                 "_p":          _p,   # full prop dict for edge type badge and other display
                 "_mmq":        _p.get("MarketMoveQuality",0),
@@ -2532,7 +2529,6 @@ with tabs[4]:
             # Build consensus bar: colored dots for each source
             _p_dict = _r.get("_p", {})
             _cons_sources = [
-                ("D",  "#378add" if _p_dict.get("DFFSignal") else "var(--bc-border)"),   # DFF
                 ("G",  "#378add" if _p_dict.get("EVSharpEV") else "var(--bc-border)"),   # EVSharps/Outlier
                 ("Cl", "#378add" if _p_dict.get("CLVCapture") else "var(--bc-border)"),  # CLV
                 ("P",  "#378add" if _r.get("_kalshi") else "var(--bc-border)"),           # Kalshi/Poly
@@ -11821,53 +11817,6 @@ with tabs[14]:
 
         if _fails:
             st.warning(f"⚠️ {len(_fails)} audit failure(s) detected. Review before placing bets.")
-
-    # ── DFF Teammate Cache ──────────────────────────────────
-    _dff_cache_sys = st.session_state.get("dff_cache", {})
-    _dff_ids_sys   = st.session_state.get("dff_player_ids", {})
-    if _dff_cache_sys or _dff_ids_sys:
-        st.markdown("---")
-        st.markdown("### 🔗 DFF Teammate Impact")
-        st.caption("DailyFantasyFuel rosterfilter — teammate with/without context for NBA/WNBA props.")
-        _dc1, _dc2 = st.columns(2)
-        _dc1.metric("Cached Lookups", len(_dff_cache_sys))
-        _dc2.metric("Known Player IDs", len(_dff_ids_sys))
-        if _dff_cache_sys:
-            for _ck, _cv in list(_dff_cache_sys.items())[:3]:
-                _roster = _cv.get("roster",[])
-                _high_dep = [r for r in _roster if r.get("dependency")=="HIGH"]
-                if _high_dep:
-                    st.caption(f"**{_ck}** — {len(_high_dep)} high-dependency teammates")
-                    for _hd in _high_dep[:2]:
-                        st.caption(f"  {_hd['player']}: WITH {_hd['with_val']:.1f} / WITHOUT {_hd['without_val']:.1f} PRA")
-        # PropStats log
-        _ps_log = st.session_state.get("dff_propstats_log", [])
-        _url_log = st.session_state.get("dff_url_log", [])
-        if _ps_log:
-            _ps_success = [l for l in _ps_log if l.get("result") == "success"]
-            _ps_empty   = [l for l in _ps_log if l.get("result") == "no_data"]
-            st.caption(f"PropStats: {len(_ps_success)} successful / {len(_ps_empty)} empty this session")
-            if _ps_success:
-                for _psl in _ps_success[-3:]:
-                    st.caption(f"  ✅ {_psl.get('metric','')} | hit rate: {_psl.get('hit_rate',0):.0%} | {_psl.get('games',0)} games")
-        if _url_log:
-            with st.expander("🔗 DFF Request URLs (diagnostics)"):
-                for _ul in _url_log[-10:]:
-                    st.code(f"{_ul.get('time','')} [{_ul.get('status','')}] {_ul.get('url','')}", language=None)
-
-        # Player ID registration
-        with st.expander("➕ Register DFF Player ID"):
-            _reg_player = st.text_input("Player Name", key="dff_reg_player")
-            _reg_id     = st.text_input("DFF Player ID (from DevTools URL)", key="dff_reg_id")
-            _reg_team   = st.text_input("Team abbreviation (e.g. SA, LAL)", key="dff_reg_team")
-            if st.button("Register", key="dff_reg_btn"):
-                if _reg_player and _reg_id:
-                    register_dff_player_id(_reg_player, _reg_id)
-                    if _reg_team:
-                        _team_map = st.session_state.get("dff_team_map",{})
-                        _team_map[normalize_name(_reg_player)] = _reg_team
-                        st.session_state["dff_team_map"] = _team_map
-                    st.success(f"Registered {_reg_player} → {_reg_id}")
 
     # ── FantasyLabs MLB Lineups ──────────────────────────────
     _fl_sys = st.session_state.get("fantasylabs_lineups", {})
