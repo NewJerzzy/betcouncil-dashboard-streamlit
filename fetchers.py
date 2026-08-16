@@ -75,7 +75,6 @@ try:
         _TENNIS_SURFACE_BASELINES_BO3, _TENNIS_SURFACE_BASELINES_BO5,
         _ATP_GRAND_SLAMS, _SLAM_SURFACE,
         _UFC_WEIGHTCLASS_BASELINES, _UFC_ROUND_DEFAULT, _UFC_CHAMPIONSHIP_ROUNDS,
-        DFF_HEADERS, DFF_SPORT_MAP, DFF_TEAM_MAP, DFF_METRIC_MAP,
         ODDS_API_BASE, ODDS_API_KEY, ODDS_API_KEY_GAMES, ODDSPAPI_KEY, REQUEST_TIMEOUT,
         SCRAPEOPS_KEY, GITHUB_TOKEN, GITHUB_GIST_ID,
         ACTION_NETWORK_SPORT_MAP, ACTION_NETWORK_LEAGUE_IDS,
@@ -366,14 +365,6 @@ def fetch_golf_odds(tournament_key="default"):
     except (requests.RequestException, ValueError, KeyError, TypeError) as e:
         return {}
 
-def _fetch_dff_propstats_live(player_id, sport, metric, line,
-                              team="", opponent="", home=False):
-    """DEAD: dailyfantasyfuel.com is Cloudflare-blocked; endpoint URL unverified."""
-    return {}
-def fetch_dff_propstats(player_id, sport, metric, line, team="",
-                        opponent="", home=False, cache_hours=6):
-    """DEAD: dailyfantasyfuel.com is Cloudflare-blocked; endpoint URL unverified."""
-    return {}
 def fetch_bovada_lines(sport="NBA"):
     """
     Fetch Bovada game lines — moneyline, runline/spread, total.
