@@ -2,7 +2,7 @@ name: Smarkets Refresh
 
 on:
   schedule:
-    - cron: "10,40 * * * *"
+    - cron: "20,50 * * * *"
   workflow_dispatch: {}
 
 jobs:
