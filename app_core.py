@@ -6058,7 +6058,7 @@ def _lock_board_prop(prop: dict, sport: str, source: str) -> bool:
     )
     if already:
         return False
-    st.session_state.locks.append({
+    st.session_state.setdefault("locks", []).append({
         "player": prop.get("Player", ""), "prop": prop.get("Prop", ""),
         "line": prop.get("Line", 0), "side": prop.get("Side", "OVER"),
         "tier": prop.get("Tier", ""), "edge": prop.get("Edge", 0),
@@ -6070,7 +6070,7 @@ def _lock_board_prop(prop: dict, sport: str, source: str) -> bool:
         "clv_capture": _capture_clv_placement(prop.get("Player", ""), prop.get("Prop", ""), prop.get("Prob", 0.5)),
     })
     try:
-        record_pinnacle_line(st.session_state.locks[-1], st.session_state.get("board", []))
+        record_pinnacle_line(st.session_state.setdefault("locks", [])[-1], st.session_state.get("board", []))
     except Exception:
         pass
     save_json_data(LOCKS_PATH, st.session_state.locks)
