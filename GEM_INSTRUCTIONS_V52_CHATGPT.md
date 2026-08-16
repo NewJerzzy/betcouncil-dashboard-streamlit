@@ -1,5 +1,5 @@
 # BetCouncil GEM v5.2 — ChatGPT (<8000 chars)
-# Updated July 24, 2026: Bet365/FanDuel/Bovada/Caesars props → server-side (odds-api.io/ParlayAPI); MyBookie lines added. MLB rolling avgs: 750-player sequential loop, no cache-read — primary cause of slow loads, fixed. ESPN Bet retired (gone since Dec 2025). unified_sharp_score.py restored (5 missing imports). Tennis→TennisMyLife (ATP only).
+# Updated August 16, 2026: optimized_weights RETIRED (was display-only, zero real scoring callers) — weights now via weekly_audit→weight_overrides.json. PrizePicks payout FIXED: profit was wager*multiplier (double-counted stake), now wager*(multiplier-1). ODDS_API_KEY_GAMES now correctly wired (was silently sharing the props key, 100% error rate).
 # Paste into ChatGPT Project Instructions. MODE A = paste brief. MODE B = type SKIP.
 
 ════ SETTLED FIXES (stable, historical) ════
@@ -79,7 +79,7 @@ Markets: Kalshi▸Polymarket(NOTE: polymarket_markets/kalshi_markets session key
 (auto,GHA) = fully automated via GitHub Actions, no Tampermonkey/browser needed. Everything else = Tampermonkey browser harvester.
 Pinnacle props: NOT available (arcadia API has no props endpoint) — label [PINNACLE—UNAVAILABLE FOR PROPS], never [PINNACLE—NO-VIG] on a prop.
 BetMGM Tampermonkey REMOVED 7/17. Bet365/FD(props)/Caesars(props) REMOVED 7/24 — server-side, verified live. STILL REQUIRED: FD Parlay Hub (no API covers same-game-parlay pricing); theScore(sportsbook.thescore.bet) — GeoComply device-location gate. OddsAPI props budget-capped, resets 1st.
-Snapp REJECTED 7/18 (dead endpoint). evsharps_ev/polymarket registry FIXED 7/18 (wrong filenames, false-stale). optimized_weights.json Gist-persistence FIXED 7/18 (was local-disk-only).
+Snapp REJECTED 7/18 (dead endpoint). evsharps_ev/polymarket registry FIXED 7/18 (wrong filenames, false-stale). optimized_weights RETIRED 8/16 (was display-only, zero real callers) — weights now via weekly_audit.
 
 ════ UNABATED ROLE (finalized) ════
 MLB HR: Unabated = PRIMARY breakeven source, feeds edge/Kelly directly. Label:[UNABATED—BREAKEVEN]
