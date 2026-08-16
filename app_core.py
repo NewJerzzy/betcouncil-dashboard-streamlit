@@ -13517,11 +13517,6 @@ def load_sport_data(sport):
             return fetch_paddypower_lines(sport)
         except Exception:
             return None
-    def _pf_auto_props2():
-        try:
-            return fetch_auto_scraped_props(sport)
-        except Exception:
-            return None
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
@@ -13856,7 +13851,7 @@ def load_sport_data(sport):
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
         _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2, _pf_bovada_lines2,
-        _pf_betonline_lines2, _pf_paddypower2, _pf_auto_props2,
+        _pf_betonline_lines2, _pf_paddypower2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
 
@@ -13876,7 +13871,7 @@ def load_sport_data(sport):
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
      parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw,
      evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw,
-     betonline_lines2_raw, paddypower2_raw, auto_props2_raw) = _results
+     betonline_lines2_raw, paddypower2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
     # NOT added to the _parallel_fns tuple above. That tuple is already a
@@ -17661,16 +17656,6 @@ def load_sport_data(sport):
     # batch above; was a sequential blocking call.
     if paddypower2_raw:
         st.session_state["paddypower_lines"] = paddypower2_raw
-
-    # Auto scraper props (MyBookie/BetOnline from local machine) — moved
-    # into parallel batch above; was a sequential blocking call. The
-    # st.caption() UI render below stays in the main thread (required).
-    _auto_props = auto_props2_raw
-    if _auto_props:
-        st.session_state[f"auto_scraped_props_{sport}"] = _auto_props
-        _auto_books = list({p.get("Book","") for p in _auto_props})
-        st.caption(f"📡 Auto scraper: {len(_auto_props)} props from {', '.join(_auto_books)}")
-
 
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
