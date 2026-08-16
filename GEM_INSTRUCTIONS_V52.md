@@ -2675,3 +2675,53 @@ linestar_harvester, vegasinsider). All fixed with the same exponential-
 backoff+jitter pattern. `vegasinsider_refresh.py` specifically had ZERO
 error handling of any kind before this — a transient failure would have
 crashed the whole script outright, not just failed gracefully.
+
+## Session Addendum (August 16, 2026) — In-App Weight Optimizer Retired, PrizePicks Payout Math Corrected, Live Crash Fixed
+
+### `compute_optimized_weights()` / `optimized_weights.json` fully retired
+The Session 15 entry above describes a real fix made on July 18 to this
+system's Gist persistence. That fix was real and correct at the time.
+As of this session, the system it fixed has been retired entirely —
+confirmed via `get_harvester_status`/`get_active_weights` showing this
+pipeline only ever fed a decorative dashboard display, never real
+scoring. All real scoring now exclusively uses
+`get_effective_signal_weights()`, sourced from the weekly audit
+(`scripts/weekly_audit.py`) writing to `weight_overrides.json` — a
+separate, still-active system. `compute_optimized_weights` and
+`get_active_weights` remain in `app_core.py` as unreferenced functions
+(confirmed zero real callers) rather than deleted outright, since
+nothing calls them. Do not describe this as an active weighting
+mechanism going forward.
+
+### PrizePicks payout multiplier bug (real, money-affecting, now fixed)
+`log_manual_bet()` computed `profit = wager * multiplier` for prop wins,
+treating `PRIZEPICKS_MULTIPLIERS` (2:3.0, 3:5.0, 4:10.0, 5:20.0) as pure
+profit multipliers. Confirmed via external verification these are
+total-return multipliers (a 2-pick 3x payout includes the stake back,
+equivalent to +200 American odds) — the same convention this same
+function already used correctly for game lines two lines below
+(`wager * 0.909`, net profit only). This overstated net profit by
+exactly 1x the wager on every prop win in the real, live bet history —
+confirmed and corrected 44 real affected records, a real difference of
+$100.94 across the account's actual history. Fixed going forward to
+`profit = wager * (multiplier - 1)`.
+
+### Live crash fixed: `st.session_state.locks` unsafe attribute access
+`_lock_board_prop()` and 20+ other real call sites across `app.py`/
+`app_core.py` accessed `st.session_state.locks` via direct attribute
+syntax (`.append()`, `.remove()`, `[-1]`, membership checks) with zero
+guaranteed initialization anywhere in the app. A genuinely fresh session
+hitting a lock button before rehydration happened to populate this key
+would throw `AttributeError` — confirmed via a live production
+traceback. All real occurrences now use
+`st.session_state.setdefault("locks", [])` before use.
+
+### Odds API: two real keys now correctly separated
+`ODDS_API_KEY` (props) and `ODDS_API_KEY_GAMES` (game lines) are
+genuinely separate real accounts with independent quotas.
+`fetch_odds_api_game_lines()` was missing the import for
+`ODDS_API_KEY_GAMES` entirely and could only ever use the shared props
+key — confirmed via System tab's Fetch Function Health showing 100%
+errors on this function. Fixed; also gave it its own separate budget
+bucket (`ODDS_API_GAMES`, already pre-registered in `API_BUDGETS`, just
+never connected).
