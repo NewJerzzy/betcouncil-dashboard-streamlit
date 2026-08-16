@@ -81,6 +81,57 @@ def fetch_cdn_league_odds(league_id: int, timeout: int = 45):
         return None
 
 
+def fetch_cdn_props(timeout: int = 60):
+    """Real fix attempt (2026-08-16): the straight-lines CDN fix above
+    (content.unabated.com/markets/v2/...) is confirmed working via a
+    real job log. Props were originally claimed to live at a separate
+    CDN URL. Isolated, defensively parsed -- logs and returns None on
+    anything unexpected rather than crashing, same as the straight-lines
+    attempt that turned out to work."""
+    url = "https://content.unabated.com/markets/game-odds/b_gameodds.json"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+    except Exception as e:
+        log(f"CDN props request error {url}: {e}")
+        DEBUG_LOG.append({"url": url, "error": str(e)})
+        return None
+    DEBUG_LOG.append({"url": url, "status": r.status_code, "body_snippet": r.text[:300]})
+    if r.status_code != 200:
+        log(f"CDN props HTTP {r.status_code} for {url}: {r.text[:200]}")
+        return None
+    try:
+        return r.json()
+    except Exception as e:
+        log(f"CDN props JSON parse error {url}: {e}")
+        return None
+
+
+def flatten_cdn_props(data, league_id: int) -> list:
+    """Defensive parse of the CDN props file. Real structure unconfirmed
+    -- tries the shape described (top-level propsPeopleEvents key),
+    logs and returns [] on anything unexpected."""
+    rows = []
+    if not isinstance(data, dict):
+        log("CDN props response not a dict -- unexpected structure")
+        return rows
+    try:
+        events = data.get("propsPeopleEvents", {})
+        if not isinstance(events, dict):
+            log("CDN props: no propsPeopleEvents key found")
+            return rows
+        league_events = events.get(f"lg{league_id}", events)
+        if isinstance(league_events, dict):
+            for event_id, event_data in league_events.items():
+                rows.append({"event_id": event_id, "raw": event_data})
+        elif isinstance(league_events, list):
+            for event_data in league_events:
+                rows.append({"raw": event_data})
+    except Exception as e:
+        log(f"CDN props parse error: {e}")
+        DEBUG_LOG.append({"note": "cdn_props_parse_error", "error": str(e)})
+    return rows
+
+
 def flatten_cdn_straight_lines(data, league_id: int) -> list:
     """Parse the CDN v2 odds file into flat straight-line rows. Real
     structure confirmed via live job log (2026-08-14):
@@ -489,6 +540,27 @@ def main() -> int:
             }
     else:
         log("  CDN endpoint did not return usable data")
+
+    log("Trying CDN endpoint for props (b_gameodds.json)...")
+    cdn_props_raw = fetch_cdn_props()
+    files_payload["betcouncil_unabated_cdn_props_debug.json"] = {
+        "content": json.dumps({"captured_at": now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
+    }
+    if cdn_props_raw:
+        cdn_props_rows = flatten_cdn_props(cdn_props_raw, 5)
+        log(f"  CDN props: {len(cdn_props_rows)} MLB rows extracted")
+        if cdn_props_rows:
+            if len(cdn_props_rows) > MAX_ROWS_PER_FILE:
+                cdn_props_rows = cdn_props_rows[:MAX_ROWS_PER_FILE]
+            files_payload["betcouncil_unabated_cdn_props_mlb.json"] = {
+                "content": json.dumps({
+                    "source": "unabated_cdn_props", "sport": "mlb",
+                    "captured_at": now_iso, "total": len(cdn_props_rows),
+                    "rows": cdn_props_rows,
+                }, default=str)
+            }
+    else:
+        log("  CDN props endpoint did not return usable data")
 
     for sport in SPORTS:
         # Step 2: player names (per sport)
