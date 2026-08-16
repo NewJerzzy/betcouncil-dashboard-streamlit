@@ -167,15 +167,28 @@ def main() -> int:
         return 1
 
     if not _rate_limit_ok(github_token):
+        try:
+            requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": {"betcouncil_oddsportal_debug.json": {
+                    "content": json.dumps({"reached": "rate_limit_ok returned False, early exit", "at": datetime.now(timezone.utc).isoformat()})
+                }}},
+                timeout=15,
+            )
+        except Exception:
+            pass
         return 0
 
     today_str = date.today().isoformat()
     files_payload = {}
     captured, skipped = 0, 0
+    _skip_log = []
 
     for sport in SPORTS:
         filename = f"betcouncil_oddsportal_{sport}.json"
         existing = _read_gist_file(filename)
+        _skip_log.append({"sport": sport, "existing_capture_date": (existing or {}).get("capture_date"), "today_str": today_str})
         if existing and existing.get("capture_date") == today_str and existing.get("data"):
             skipped += 1
             log(f"  {sport}: already captured today's opening lines — leaving as-is")
@@ -201,6 +214,17 @@ def main() -> int:
 
     if not files_payload:
         log(f"Nothing new to push ({skipped} already captured today, 0 new)")
+        try:
+            requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+                json={"files": {"betcouncil_oddsportal_debug.json": {
+                    "content": json.dumps({"reached": "files_payload empty after loop", "skip_log": _skip_log, "at": datetime.now(timezone.utc).isoformat()})
+                }}},
+                timeout=15,
+            )
+        except Exception:
+            pass
         return 0
 
     pushed = push_files(files_payload, github_token)
