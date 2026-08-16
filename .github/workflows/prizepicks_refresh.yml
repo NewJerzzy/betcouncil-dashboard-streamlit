@@ -5,6 +5,10 @@ on:
     - cron: "6,21,36,51 * * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: prizepicks-refresh
+  cancel-in-progress: false
+
 jobs:
   refresh-prizepicks:
     runs-on: ubuntu-latest
