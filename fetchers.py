@@ -7763,6 +7763,51 @@ def fetch_game_lines(sport):
         if tomorrow_games:
             today_games = tomorrow_games
 
+    # ── Real fix: ESPN scoreboard empty fallback ─────────────────────────
+    # Confirmed real (2026-08-17): ESPN's scoreboard endpoint can return
+    # zero events for today even when real, live games with posted lines
+    # exist on real sportsbooks (confirmed directly against Bovada/ESPN
+    # web listings for the same date) -- an ESPN-side population delay,
+    # not a code bug. Bovada is already a real, confirmed-working, no-auth
+    # source in this codebase (fetch_bovada_lines) -- fall back to it here
+    # so a real board load isn't left with zero games just because ESPN's
+    # own scoreboard hasn't caught up yet.
+    if not today_games:
+        try:
+            _bov_games = fetch_bovada_lines(sport)
+        except Exception as e:
+            print(f"[GAME_LINES] Bovada fallback failed: {e}")
+            _bov_games = []
+        if _bov_games:
+            _bov_converted = []
+            _bov_home, _bov_away = {}, {}
+            for _bg in _bov_games:
+                _matchup = _bg.get("matchup", "")
+                if not _matchup:
+                    continue
+                _spread = _bg.get("spread", "N/A")
+                _total = _bg.get("total", "N/A")
+                _home_ml = _bg.get("home_ml", "N/A")
+                _away_ml = _bg.get("away_ml", "N/A")
+                _bov_converted.append({
+                    "Matchup": _matchup, "Status": "Scheduled",
+                    "Spread": _spread if _spread is not None else "N/A",
+                    "Total": _total if _total is not None else "N/A",
+                    "Home ML": _home_ml if _home_ml is not None else "N/A",
+                    "Away ML": _away_ml if _away_ml is not None else "N/A",
+                    "Odds Source": "Bovada (ESPN fallback)",
+                    "Date": today.strftime("%a %b %d"), "Sport": sport,
+                })
+                if _bg.get("home"):
+                    _bov_home[_matchup] = _bg["home"]
+                if _bg.get("away"):
+                    _bov_away[_matchup] = _bg["away"]
+            if _bov_converted:
+                print(f"[GAME_LINES] ESPN returned 0 games for {sport} -- using Bovada fallback ({len(_bov_converted)} games)")
+                today_games = _bov_converted
+                home_teams = _bov_home
+                away_teams = _bov_away
+
     # ── Definitive ESPN abbrev → full-name fragment mapping ──
     # Covers every MLB team + all major sports. Hoisted out of the
     # ODDS_API_KEY block below so the BetOnline fallback pass (which
@@ -8376,9 +8421,20 @@ def _sbr_fetch_games(sport):
 
 
 def fetch_odds_api_game_lines(sport):
+    _debug = {"stage": "start", "sport": sport}
     # ── SBR primary (no API key required) ──
-    sbr_games, sbr_home, sbr_away = _sbr_fetch_games(sport)
+    try:
+        sbr_games, sbr_home, sbr_away = _sbr_fetch_games(sport)
+        _debug["sbr_games_count"] = len(sbr_games) if sbr_games else 0
+    except Exception as e:
+        _debug["sbr_error"] = str(e)[:200]
+        sbr_games, sbr_home, sbr_away = [], {}, {}
     if sbr_games:
+        try:
+            import streamlit as _st
+            _st.session_state.setdefault("odds_api_gl_debug", {})[sport] = {**_debug, "result": "sbr_success"}
+        except Exception:
+            pass
         return sbr_games, sbr_home, sbr_away
 
     # ── OddsAPI fallback (requires key + remaining budget) ──
@@ -8391,13 +8447,32 @@ def fetch_odds_api_game_lines(sport):
     # genuinely two separate real API accounts with independent quotas.
     if not ODDS_API_KEY_GAMES:
         print("[ODDS_API] ODDS_API_KEY_GAMES not set — OddsAPI game lines skipped")
+        _debug["result"] = "no_key"
+        try:
+            import streamlit as _st
+            _st.session_state.setdefault("odds_api_gl_debug", {})[sport] = _debug
+        except Exception:
+            pass
         return [], {}, {}
     sport_key = ODDS_API_SPORT_MAP.get(sport)
     if not sport_key:
+        _debug["result"] = "no_sport_key_mapping"
+        try:
+            import streamlit as _st
+            _st.session_state.setdefault("odds_api_gl_debug", {})[sport] = _debug
+        except Exception:
+            pass
         return [], {}, {}
     allowed, reason = api_budget_check("ODDS_API_GAMES")
     if not allowed:
         print(f"[ODDS_API] budget check blocked game lines for {sport}: {reason}")
+        _debug["result"] = "budget_blocked"
+        _debug["reason"] = reason
+        try:
+            import streamlit as _st
+            _st.session_state.setdefault("odds_api_gl_debug", {})[sport] = _debug
+        except Exception:
+            pass
         return [], {}, {}
     cache_path = os.path.join(CACHE_DIR, f"odds_api_games_{sport}.pkl")
     if os.path.exists(cache_path):
@@ -8407,7 +8482,15 @@ def fetch_odds_api_game_lines(sport):
     url = f"{ODDS_API_BASE}/sports/{sport_key}/odds?apiKey={ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={ODDS_API_BOOKS_GAMES}"
     try:
         resp = _http.get(url, headers=HEADERS, timeout=15)
+        _debug["http_status"] = resp.status_code
+        _debug["body_snippet"] = resp.text[:200]
         api_budget_increment("ODDS_API_GAMES", amount=60)  # 10 x 3 markets x 2 regions
+        _debug["result"] = "http_error" if resp.status_code != 200 else "http_success"
+        try:
+            import streamlit as _st
+            _st.session_state.setdefault("odds_api_gl_debug", {})[sport] = _debug
+        except Exception:
+            pass
         if resp.status_code != 200:
             print(f"[ODDS_API] game lines HTTP {resp.status_code} for {sport} — "
                   f"{'ODDS_API_KEY invalid or expired' if resp.status_code in (401, 403) else 'upstream error'}")
