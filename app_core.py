@@ -13113,6 +13113,7 @@ def _fetch_harvester_data_cached(sport, _fn_names_tuple):
 
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
+    _setup_t0 = _time_mod.perf_counter()
     # ── Kill Switch ───────────────────────────────────────────────────────
     # If ENABLE_RECOMMENDATIONS is False in Streamlit secrets, return empty
     # board immediately. Caller is responsible for displaying the warning
@@ -15439,6 +15440,8 @@ def load_sport_data(sport):
     # (once for opponent defense rating, once for sharp flag lookup)
     # and was re-scanned from scratch for every prop sharing a team.
     _team_matchup_cache = {}
+    _bc_track("enrichment_setup", _time_mod.perf_counter() - _setup_t0,
+              {"props": len(props)})
     _main_loop_t0 = _time_mod.perf_counter()
     for p in props:
         stat_raw = p["Prop"]
