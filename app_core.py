@@ -16867,23 +16867,39 @@ def load_sport_data(sport):
             prop["FDDKFades"] = False
 
 
-    # ── Kalshi prediction market signal ─────────────────────────────────────
-    # 2026-07-17 fix: was reading "kalshi_raw", a key that's never set —
-    # the real data is stored under "kalshi_markets" (confirmed: every
-    # other consumer in this file already uses that key correctly). This
-    # block was silently firing on an empty list the entire time despite
-    # fetch_kalshi_markets() genuinely working and returning real data.
+    # ── Kalshi + Polymarket + Covers + Action Network public (merged) ──
+    # All 4 confirmed independent: no Tier writes, no cross-reads of each
+    # other's output fields. Safe to combine into one pass.
     _kalshi = st.session_state.get("kalshi_markets", [])
+    _kal_lookup = {}
     if _kalshi:
-        _kal_lookup = {}
         for _km in _kalshi:
             _title = normalize_name(_km.get("title", ""))
             _kal_lookup[_title] = _km
-        for prop in enriched:
-            _pname = normalize_name(prop.get("Player", ""))
-            _pstat = str(prop.get("Prop", "")).lower()
-            _pline = prop.get("Line", 0)
-            # Find matching Kalshi market
+
+    _poly = st.session_state.get("polymarket_markets", [])
+    _poly_lookup = {}
+    if _poly:
+        for _pm in _poly:
+            _q = normalize_name(_pm.get("question", ""))
+            _poly_lookup[_q] = _pm
+    _poly_match_cache = {}
+
+    _covers = st.session_state.get("covers_raw", {})
+    _covers_ok = _covers and isinstance(_covers, dict)
+    _covers_match_cache = {}
+
+    _an_public = st.session_state.get("public_betting_data", {})
+    _an_match_cache = {}
+
+    for prop in enriched:
+        _pname = normalize_name(prop.get("Player", ""))
+        _pstat = str(prop.get("Prop", "")).lower()
+        _pline = prop.get("Line", 0)
+        _side = prop.get("Side", "OVER")
+
+        # Kalshi
+        if _kal_lookup:
             _kal_match = None
             for _kt, _kv in _kal_lookup.items():
                 if _pname and _pname in _kt and any(s in _kt for s in [_pstat[:4], str(_pline)]):
@@ -16892,26 +16908,15 @@ def load_sport_data(sport):
             if _kal_match:
                 _yes = _kal_match.get("yes_bid")
                 prop["KalshiYesBid"] = _yes
-                if _yes and float(_yes) > 0.65 and prop.get("Side","OVER") == "OVER":
+                if _yes and float(_yes) > 0.65 and _side == "OVER":
                     prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎰 Kalshi {float(_yes):.0%} yes"
-                elif _yes and float(_yes) < 0.35 and prop.get("Side","OVER") == "OVER":
+                elif _yes and float(_yes) < 0.35 and _side == "OVER":
                     prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Kalshi fading ({float(_yes):.0%})"
             else:
                 prop["KalshiYesBid"] = None
 
-    # ── Polymarket signal ────────────────────────────────────────────────────
-    # 2026-07-17 fix: same key-mismatch bug as Kalshi above — was reading
-    # "polymarket_raw" (never set), real data is under "polymarket_markets".
-    _poly = st.session_state.get("polymarket_markets", [])
-    if _poly:
-        _poly_lookup = {}
-        for _pm in _poly:
-            _q = normalize_name(_pm.get("question", ""))
-            _poly_lookup[_q] = _pm
-        _poly_match_cache = {}
-        for prop in enriched:
-            _pname = normalize_name(prop.get("Player", ""))
-            _pstat = str(prop.get("Prop", "")).lower()
+        # Polymarket
+        if _poly_lookup:
             if _pname not in _poly_match_cache:
                 _pm_match = None
                 for _pk, _pv in _poly_lookup.items():
@@ -16924,18 +16929,15 @@ def load_sport_data(sport):
                 try:
                     _yes_p = float(_poly_match.get("yes_price", 0) or 0)
                     prop["PolymarketYes"] = _yes_p
-                    if _yes_p > 0.65 and prop.get("Side","OVER") == "OVER":
+                    if _yes_p > 0.65 and _side == "OVER":
                         prop["SignalNotes"] = prop.get("SignalNotes","") + f" 📊 Poly {_yes_p:.0%}"
                 except Exception:
                     prop["PolymarketYes"] = None
             else:
                 prop["PolymarketYes"] = None
 
-    # ── Covers.com consensus signal ──────────────────────────────────────────
-    _covers = st.session_state.get("covers_raw", {})
-    if _covers and isinstance(_covers, dict):
-        _covers_match_cache = {}
-        for prop in enriched:
+        # Covers
+        if _covers_ok:
             _matchup = prop.get("Matchup", "")
             if _matchup not in _covers_match_cache:
                 _cov_found = _covers.get(_matchup, {})
@@ -16947,7 +16949,6 @@ def load_sport_data(sport):
                 _covers_match_cache[_matchup] = _cov_found
             _cov = _covers_match_cache[_matchup]
             if _cov:
-                _side = prop.get("Side", "OVER")
                 _pct = float(_cov.get("over_pct") or 0) if _side=="OVER" else float(_cov.get("under_pct") or 0)
                 prop["CoversConsensus"] = _pct
                 if _pct > 0 and _pct < 35 and prop.get("Edge",0) > 0.03:
@@ -16957,28 +16958,72 @@ def load_sport_data(sport):
             else:
                 prop["CoversConsensus"] = None
 
+        # Action Network public betting %
+        if _an_public:
+            _matchup2 = prop.get("Matchup", "")
+            if _matchup2:
+                if _matchup2 not in _an_match_cache:
+                    _pub_found = _an_public.get(_matchup2, {})
+                    if not _pub_found:
+                        for _mk, _mv in _an_public.items():
+                            if any(t in _matchup2 for t in _mk.split(" @ ")):
+                                _pub_found = _mv
+                                break
+                    _an_match_cache[_matchup2] = _pub_found
+                _pub = _an_match_cache[_matchup2]
+                if _pub:
+                    if _side == "OVER":
+                        pub_pct = _pub.get("over_pct") or 0
+                    elif _side == "UNDER":
+                        pub_pct = _pub.get("under_pct") or 0
+                    else:
+                        pub_pct = 0
+                    try:
+                        pub_pct = float(pub_pct)
+                    except (TypeError, ValueError):
+                        pub_pct = 0
+                    prop["PublicPct"] = pub_pct
+                    if pub_pct > 0 and pub_pct < 40 and prop.get("Edge", 0) > 0.03:
+                        prop["SharpContrarian"] = True
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎯 Sharp contrarian ({pub_pct:.0f}% public)"
+                    elif pub_pct > 65:
+                        prop["PublicHeavy"] = True
+                        prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Public heavy ({pub_pct:.0f}%)"
+
     # ── Unabated sharp line validation ─────────────────────────────────────
     # Confirmed real dead code (2026-08-10): both the lookup build AND the
     # "UnabatedNote" field it wrote were never read anywhere in the
     # codebase. Removed entirely -- zero observable behavior change.
 
-    # ── SharpAPI +EV signal ────────────────────────────────────────────────────
-    # SharpAPI pre-computes Pinnacle no-vig EV on every prop.
-    # is_ev_positive:True = confirmed +EV vs sharp benchmark — strongest free signal.
+    # ── SharpAPI + ParlayAPI +EV signals (merged) ──
+    # Both write Tier (APPROVED->ELITE), confirmed idempotent between the
+    # two -- applying both in either order on the same prop gives the same
+    # final result. Kept positioned after Pinnacle/FDDK, before Kelly,
+    # matching original order.
     _sharp_props = st.session_state.get("sharpapi_props", [])
+    _sharp_ev_set = {}
     if _sharp_props:
-        _sharp_ev_set = {}
         for _sp in _sharp_props:
-            _pname = normalize_name(_sp.get("Player", ""))
-            _stat  = str(_sp.get("Prop", "")).lower()
+            _spname = normalize_name(_sp.get("Player", ""))
+            _sstat  = str(_sp.get("Prop", "")).lower()
             _ev    = _sp.get("ev_percent") or 0
             _is_ev = _sp.get("is_ev_positive", False)
-            key = (_pname, _stat)
-            if key not in _sharp_ev_set or _ev > _sharp_ev_set[key][0]:
-                _sharp_ev_set[key] = (_ev, _is_ev)
+            _skey = (_spname, _sstat)
+            if _skey not in _sharp_ev_set or _ev > _sharp_ev_set[_skey][0]:
+                _sharp_ev_set[_skey] = (_ev, _is_ev)
+
+    _papi_ev = st.session_state.get("parlayapi_ev", [])
+    _papi_ev_set = set()
+    if _papi_ev:
+        for _pe in _papi_ev:
+            _papname = normalize_name(_pe.get("player", _pe.get("Player", "")))
+            _papstat = str(_pe.get("prop", _pe.get("Prop", ""))).lower()
+            if _papname:
+                _papi_ev_set.add((_papname, _papstat))
+
+    if _sharp_ev_set or _papi_ev_set:
         for prop in enriched:
-            _pk = (normalize_name(prop.get("Player", "")),
-                   str(prop.get("Prop", "")).lower())
+            _pk = (normalize_name(prop.get("Player", "")), str(prop.get("Prop", "")).lower())
             if _pk in _sharp_ev_set:
                 _ev_val, _is_ev = _sharp_ev_set[_pk]
                 prop["SharpAPIEV"]      = _is_ev
@@ -16989,72 +17034,13 @@ def load_sport_data(sport):
             else:
                 prop["SharpAPIEV"]    = False
                 prop["SharpAPIEVPct"] = None
-
-        # ── ParlayAPI +EV signal ────────────────────────────────────────────────
-    # If ParlayAPI independently flags this player/prop as +EV vs Pinnacle,
-    # that's a sharp consensus confirmation — boost tier.
-    _papi_ev = st.session_state.get("parlayapi_ev", [])
-    if _papi_ev:
-        _papi_ev_set = set()
-        for _pe in _papi_ev:
-            _pname = normalize_name(_pe.get("player", _pe.get("Player", "")))
-            _pstat = str(_pe.get("prop", _pe.get("Prop", ""))).lower()
-            if _pname:
-                _papi_ev_set.add((_pname, _pstat))
-        for prop in enriched:
-            _pk = (normalize_name(prop.get("Player","")),
-                   str(prop.get("Prop","")).lower())
             if _pk in _papi_ev_set:
                 prop["ParlayAPIEV"] = True
-                # Boost: ParlayAPI EV + our model edge = stronger signal
                 if prop.get("Tier") == "APPROVED" and prop.get("Edge", 0) > 0.03:
                     prop["Tier"] = "ELITE"
                     prop["TierBoost"] = prop.get("TierBoost","") + " + ParlayAPI EV"
             else:
                 prop["ParlayAPIEV"] = False
-
-    # ── Action Network public betting % signal ──────────────────────────────
-    # High public % on one side with sharp line moving opposite = RLM signal.
-    # Low public % + our model edge = sharp-side lean.
-    _an_public = st.session_state.get("public_betting_data", {})
-    if _an_public:
-        _an_match_cache = {}
-        for prop in enriched:
-            matchup = prop.get("Matchup", "")
-            if not matchup:
-                continue
-            if matchup not in _an_match_cache:
-                _pub_found = _an_public.get(matchup, {})
-                if not _pub_found:
-                    for _mk, _mv in _an_public.items():
-                        if any(t in matchup for t in _mk.split(" @ ")):
-                            _pub_found = _mv
-                            break
-                _an_match_cache[matchup] = _pub_found
-            _pub = _an_match_cache[matchup]
-            if _pub:
-                side = prop.get("Side", "OVER")
-                if side == "OVER":
-                    pub_pct = _pub.get("over_pct") or 0
-                elif side == "UNDER":
-                    pub_pct = _pub.get("under_pct") or 0
-                else:
-                    pub_pct = 0
-                try:
-                    pub_pct = float(pub_pct)
-                except (TypeError, ValueError):
-                    pub_pct = 0
-                prop["PublicPct"] = pub_pct
-                # Sharp fade: <40% public but our model has edge = contrarian signal
-                if pub_pct > 0 and pub_pct < 40 and prop.get("Edge", 0) > 0.03:
-                    prop["SharpContrarian"] = True
-                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" 🎯 Sharp contrarian ({pub_pct:.0f}% public)"
-                # RLM candidate: >65% public tickets
-                elif pub_pct > 65:
-                    prop["PublicHeavy"] = True
-                    prop["SignalNotes"] = prop.get("SignalNotes","") + f" ⚠️ Public heavy ({pub_pct:.0f}%)"
-            else:
-                prop["PublicPct"] = None
 
 
 
@@ -17143,7 +17129,9 @@ def load_sport_data(sport):
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
+    _ev_lookup = st.session_state.get("ev_book_lookup", {})
     for prop in enriched:
+        # ── Better line detection ──
         player_norm = normalize_name(prop.get("Player",""))
         prop_key = (player_norm, prop.get("Prop",""))
         prop_line = prop.get("Line", 0)
@@ -17166,15 +17154,12 @@ def load_sport_data(sport):
         prop["BetterLineSource"] = best_line_source
         prop["BetterLineVal"] = best_line_val
 
-    # ── EV API enrichment — attach multi-book odds + EV/FV to every board prop ──
-    _ev_lookup = st.session_state.get("ev_book_lookup", {})
-    if _ev_lookup:
-        for prop in enriched:
+        # ── EV API enrichment — attach multi-book odds + EV/FV ──
+        if _ev_lookup:
             _pk = (normalize_name(prop.get("Player","")), prop.get("Prop",""))
             _ev_books = _ev_lookup.get(_pk, {})
             if _ev_books:
-                prop["EVBooks"] = _ev_books  # full dict of {book: {odds_over, line, ev, fair_value, bet_link}}
-                # Attach best EV and fair value across all books
+                prop["EVBooks"] = _ev_books
                 _best_ev, _best_fv, _best_link = None, None, None
                 for _bk, _bd in _ev_books.items():
                     if _bd.get("ev") is not None:
@@ -17198,20 +17183,21 @@ def load_sport_data(sport):
                 prop["EVSharpFV"] = None
                 prop["EVSharpLink"] = None
                 prop["EVSharpBooks"] = 0
+        else:
+            prop["EVBooks"] = {}
+            prop["EVSharpEV"] = None
+            prop["EVSharpFV"] = None
+            prop["EVSharpLink"] = None
+            prop["EVSharpBooks"] = 0
 
+        # ── AltLineUpgrade (confirmed dead stub, always None) ──
+        prop["AltLineUpgrade"] = None
+        prop["BestAltLine"] = None
+        prop["BestAltEV"] = None
 
     arb_opps = detect_arbitrage_opportunities(sport)
     st.session_state["arb_opportunities"] = arb_opps
     alt_line_upgrades = []
-    # Confirmed real dead-weight loop (2026-08-10): get_best_alt_line_
-    # recommendation is a stub (bc_utils.py) that unconditionally returns
-    # None -- every call here did real work (string parsing, tier check)
-    # for a guaranteed-same null result. Replaced with the direct
-    # equivalent of the else-branch that always ran anyway.
-    for prop in enriched:
-        prop["AltLineUpgrade"] = None
-        prop["BestAltLine"] = None
-        prop["BestAltEV"] = None
     st.session_state["alt_line_upgrades"] = alt_line_upgrades
     # Sort by LockScore first, then ProjConfidence as tiebreaker
     enriched.sort(key=lambda x: (
