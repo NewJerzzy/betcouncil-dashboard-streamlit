@@ -107,19 +107,67 @@ def fetch_cdn_props(timeout: int = 60):
 
 
 def flatten_cdn_props(data, league_id: int) -> list:
-    """Defensive parse of the CDN props file. Real structure unconfirmed
-    -- tries the shape described (top-level propsPeopleEvents key),
-    logs and returns [] on anything unexpected."""
+    """Defensive parse of the CDN props file (b_gameodds.json).
+    
+    CONFIRMED 2026-08-17 via live probe of b_gameodds.json (45MB):
+    - Top-level keys: gameOddsEvents, people, propsPeopleEvents,
+      marketSources, teams, propsPeopleEventsFutures, startDateTimeISO, endDateTimeISO
+    - propsPeopleEvents EXISTS but is an EMPTY DICT {} -- no DFS prop data
+    - gameOddsEvents has the same game-line structure as v2/league/5/odds.json
+    - DFS source IDs 72/73/84 listed in marketSources but absent from all odds sections
+    
+    This is a confirmed dead end: DFS props (PrizePicks/Underdog/Pick6) are not
+    available in b_gameodds.json without authentication. The propsPeopleEvents key
+    exists in the schema but is empty in the anonymous CDN response.
+    
+    This function logs the actual structure so the Gist debug file shows exactly
+    what came back, rather than silently returning 0 rows with no diagnostic info."""
     rows = []
     if not isinstance(data, dict):
         log("CDN props response not a dict -- unexpected structure")
+        DEBUG_LOG.append({"note": "cdn_props_not_dict", "type": type(data).__name__})
         return rows
+    
+    # Log the actual top-level structure for diagnosis
+    top_keys = list(data.keys())
+    props_events = data.get("propsPeopleEvents")
+    props_events_type = type(props_events).__name__
+    props_events_len = len(props_events) if isinstance(props_events, (dict, list)) else None
+    game_odds_events = data.get("gameOddsEvents")
+    game_odds_sections = list(game_odds_events.keys()) if isinstance(game_odds_events, dict) else []
+    market_sources = data.get("marketSources", [])
+    dfs_in_sources = [
+        {"id": s.get("id"), "name": s.get("name")}
+        for s in (market_sources if isinstance(market_sources, list) else [])
+        if s.get("id") in (72, 73, 84)
+    ]
+    
+    log(f"CDN props: top-level keys={top_keys}")
+    log(f"CDN props: propsPeopleEvents type={props_events_type}, len={props_events_len}")
+    log(f"CDN props: gameOddsEvents sections={game_odds_sections[:5]}")
+    log(f"CDN props: DFS sources in marketSources={dfs_in_sources}")
+    
+    DEBUG_LOG.append({
+        "note": "cdn_props_structure",
+        "top_level_keys": top_keys,
+        "propsPeopleEvents_type": props_events_type,
+        "propsPeopleEvents_len": props_events_len,
+        "gameOddsEvents_section_count": len(game_odds_sections),
+        "dfs_sources_in_marketSources": dfs_in_sources,
+        "diagnosis": (
+            "propsPeopleEvents is empty -- DFS props not in anonymous CDN response. "
+            "data.unabated.com/market/*/props/odds (the old working endpoint) returned 401. "
+            "No accessible CDN path for DFS props currently exists without auth."
+            if props_events_len == 0
+            else "propsPeopleEvents has data -- attempting to extract"
+        ),
+    })
+    
     try:
-        events = data.get("propsPeopleEvents", {})
-        if not isinstance(events, dict):
-            log("CDN props: no propsPeopleEvents key found")
+        if not isinstance(props_events, dict) or not props_events:
+            log(f"CDN props: propsPeopleEvents is {props_events_type} len={props_events_len} -- no DFS prop data available")
             return rows
-        league_events = events.get(f"lg{league_id}", events)
+        league_events = props_events.get(f"lg{league_id}", props_events)
         if isinstance(league_events, dict):
             for event_id, event_data in league_events.items():
                 rows.append({"event_id": event_id, "raw": event_data})
