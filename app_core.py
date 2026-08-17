@@ -13892,7 +13892,8 @@ def load_sport_data(sport):
                 record_line("consensus", _gkey, "total",  _g_total,  -110, -110)
     # Also record BetOnline and Bovada lines for cross-book steam detection
     _bol_lines = st.session_state.get("betonline_offering", [])
-    for _bl in _bol_lines:
+    if games and _bol_lines:
+      for _bl in _bol_lines:
         if _bl.get("game","") == _gkey and _bl.get("market","") == "Total":
             try:
                 _odds = float(str(_bl.get("odds","0")).replace("+","") or 0)
