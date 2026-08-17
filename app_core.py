@@ -11882,38 +11882,6 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
     else:
         signals["usage"] = 0.0
 
-    # ── ParlaySavant +EV confirmation overlay (2026-07 fix) ─────────────
-    # ps_ev_edge/ps_ev_confirm were being computed into ev_signal_lookup
-    # (second-source EV confirmation from parlaysavant.com) but nothing
-    # ever read them back — dead bookkeeping. This closes that loop.
-    # Matched by player only, not exact stat/prop key: ParlaySavant's own
-    # prop-name strings don't cleanly map to BetCouncil's short stat_key
-    # codes (e.g. "HR" vs "Home Runs"), so treat this as "an independent
-    # EV engine flagged something for this player" rather than a
-    # stat-specific confirmation. Capped small and additive, same
-    # conservative style as the usage signal above — not a replacement
-    # for BetCouncil's own edge, just a nudge.
-    if player_name:
-        _ps_conf_edge = 0.0
-        _pn_norm = normalize_name(player_name)
-        _ev_lookup_all = st.session_state.get("ev_signal_lookup", {})
-        _cmse_cache = compute_multi_signal_edge._ev_by_player_cache
-        _ev_id = id(_ev_lookup_all)
-        if _cmse_cache.get("_id") != _ev_id:
-            _by_player = {}
-            for (_lk_p, _lk_prop), _lk_v in _ev_lookup_all.items():
-                _by_player.setdefault(_lk_p, []).append(_lk_v)
-            _cmse_cache.clear()
-            _cmse_cache["_id"] = _ev_id
-            _cmse_cache["_index"] = _by_player
-        for _lk_v in _cmse_cache["_index"].get(_pn_norm, []):
-            if isinstance(_lk_v, dict) and _lk_v.get("ps_ev_confirm"):
-                _ps_raw = safe_float(_lk_v.get("ps_ev_edge", 0))
-                _ps_conf_edge = max(_ps_conf_edge, max(-0.03, min(0.03, _ps_raw)))
-        if _ps_conf_edge:
-            combined += _ps_conf_edge
-            signals["parlaysavant_confirm"] = _ps_conf_edge
-
     if odds_type == "demon":
         combined *= 0.85
     elif odds_type == "goblin":
@@ -11924,8 +11892,6 @@ line, player_avg, opp_def_rating, is_home, teammate_out_boost, side="OVER", stat
     prob = base_prob + signal_adjustment
     prob = max(0.20, min(0.80, prob))
     return combined, prob, signals
-
-compute_multi_signal_edge._ev_by_player_cache = {}
 
 # make_display_df — moved to bc_utils.py
 # fetch_dk_salaries → fetchers.py
@@ -13997,7 +13963,6 @@ def load_sport_data(sport):
     st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
-        ("fetch_parlaysavant_from_gist",       "parlaysavant_ev_h",      "parlaysavant_src"),
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
     ]
     if sport == "MLB" and baseballpress2_raw:
@@ -14725,36 +14690,6 @@ def load_sport_data(sport):
                         elif _rv <= -1.0: _sav_ars_edge =  0.01; _sav_ars_note = f"Arsenal {_pt} RV{_rv:+.1f}/100"
                     _sv.update({"sav_arsenal": _pa, "sav_ars_edge": _sav_ars_edge,
                                 "sav_ars_note": _sav_ars_note})
-    # ── ParlaySavant +EV confirmation ────────────────────────────────────────
-    # parlaysavant_ev_h: +EV props from parlaysavant.com/api/props (Python direct
-    # or Tampermonkey Gist). Second-source confirmation → small edge boost.
-    _ps_ev = st.session_state.get("parlaysavant_ev_h", {})
-    if _ps_ev:
-        _ps_items = (_ps_ev if isinstance(_ps_ev, list)
-                     else _ps_ev.get("props", _ps_ev.get("data", _ps_ev.get("picks", []))))
-        if isinstance(_ps_items, list) and _ps_items:
-            _ps_idx = {}
-            for _pi in _ps_items:
-                if not isinstance(_pi, dict): continue
-                _pp  = normalize_name(_pi.get("player","") or _pi.get("name","") or "")
-                _pr  = (_pi.get("prop","") or _pi.get("stat","") or _pi.get("market","") or "").strip().lower()
-                _pev = _pi.get("ev") or _pi.get("ev_pct") or _pi.get("edge") or _pi.get("value", 0)
-                if _pp and _pr:
-                    _ps_idx[(_pp, _pr)] = _pev
-            for _sk, _sv in _ev_signal_lookup.items():
-                _pn, _prop_l = _sk[0], _sk[1].lower()
-                _ps_match = _ps_idx.get((_pn, _prop_l))
-                if _ps_match is None:
-                    for (_kp, _kr), _kev in _ps_idx.items():
-                        if _kp == _pn and (_kr in _prop_l or _prop_l in _kr):
-                            _ps_match = _kev; break
-                if _ps_match is not None:
-                    try:
-                        _ps_e = float(_ps_match) if isinstance(_ps_match, (int, float)) else 0.015
-                    except (ValueError, TypeError):
-                        _ps_e = 0.015
-                    _sv.update({"ps_ev_confirm": True, "ps_ev_edge": _ps_e,
-                                "ps_ev_note": f"ParlaySavant +EV confirm"})
 
 
     # ── /api/recap — save yesterday's results to session_state ───────────────
