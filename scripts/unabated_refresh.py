@@ -542,6 +542,66 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
+    # Real fix: CDN test data is fully independent of the shared
+    # sharp_feeds.json file the rest of this script coordinates on --
+    # confirmed via SHARED_FILE usage below, only the later per-sport
+    # data needs that lock. Running this first, with its own direct,
+    # separate Gist push, means CDN data lands even when sharp_feeds
+    # is contested by one of the 5 other real scripts sharing that lock.
+    _cdn_now_iso = datetime.now(timezone.utc).isoformat()
+    _cdn_files_payload = {}
+    log("Trying CDN endpoint for MLB straight lines (lg5)...")
+    cdn_mlb = fetch_cdn_league_odds(5)
+    _cdn_files_payload["betcouncil_unabated_cdn_debug.json"] = {
+        "content": json.dumps({"captured_at": _cdn_now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
+    }
+    if cdn_mlb:
+        cdn_rows = flatten_cdn_straight_lines(cdn_mlb, 5)
+        log(f"  CDN: {len(cdn_rows)} MLB straight-line rows extracted")
+        if cdn_rows:
+            if len(cdn_rows) > MAX_ROWS_PER_FILE:
+                cdn_rows = cdn_rows[:MAX_ROWS_PER_FILE]
+            _cdn_files_payload["betcouncil_unabated_cdn_mlb.json"] = {
+                "content": json.dumps({
+                    "source": "unabated_cdn", "sport": "mlb",
+                    "captured_at": _cdn_now_iso, "total": len(cdn_rows),
+                    "rows": cdn_rows,
+                }, default=str)
+            }
+    else:
+        log("  CDN endpoint did not return usable data")
+
+    log("Trying CDN endpoint for props (b_gameodds.json)...")
+    cdn_props_raw = fetch_cdn_props()
+    _cdn_files_payload["betcouncil_unabated_cdn_props_debug.json"] = {
+        "content": json.dumps({"captured_at": _cdn_now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
+    }
+    if cdn_props_raw:
+        cdn_props_rows = flatten_cdn_props(cdn_props_raw, 5)
+        log(f"  CDN props: {len(cdn_props_rows)} MLB rows extracted")
+        if cdn_props_rows:
+            if len(cdn_props_rows) > MAX_ROWS_PER_FILE:
+                cdn_props_rows = cdn_props_rows[:MAX_ROWS_PER_FILE]
+            _cdn_files_payload["betcouncil_unabated_cdn_props_mlb.json"] = {
+                "content": json.dumps({
+                    "source": "unabated_cdn_props", "sport": "mlb",
+                    "captured_at": _cdn_now_iso, "total": len(cdn_props_rows),
+                    "rows": cdn_props_rows,
+                }, default=str)
+            }
+    else:
+        log("  CDN props endpoint did not return usable data")
+
+    try:
+        requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {github_token}", "Accept": "application/vnd.github+json"},
+            json={"files": _cdn_files_payload}, timeout=30,
+        )
+        log(f"  CDN files pushed independently: {list(_cdn_files_payload.keys())}")
+    except Exception as e:
+        log(f"  CDN independent push failed: {e}")
+
     import atexit
     _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="unabated", max_attempts=7)
     if not _lock_token:
@@ -563,52 +623,6 @@ def main() -> int:
     files_payload: dict = {}
     total_props_rows = 0
     total_straight_rows = 0
-
-    # Real fix attempt (2026-08-14): try the CDN endpoint for MLB (lg5)
-    # straight lines. Separate file, separate from the existing (broken)
-    # flow below -- this is a genuine test of an unverified claim, kept
-    # isolated so a wrong guess here doesn't take down what already runs.
-    log("Trying CDN endpoint for MLB straight lines (lg5)...")
-    cdn_mlb = fetch_cdn_league_odds(5)
-    files_payload["betcouncil_unabated_cdn_debug.json"] = {
-        "content": json.dumps({"captured_at": now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
-    }
-    if cdn_mlb:
-        cdn_rows = flatten_cdn_straight_lines(cdn_mlb, 5)
-        log(f"  CDN: {len(cdn_rows)} MLB straight-line rows extracted")
-        if cdn_rows:
-            if len(cdn_rows) > MAX_ROWS_PER_FILE:
-                cdn_rows = cdn_rows[:MAX_ROWS_PER_FILE]
-            files_payload["betcouncil_unabated_cdn_mlb.json"] = {
-                "content": json.dumps({
-                    "source": "unabated_cdn", "sport": "mlb",
-                    "captured_at": now_iso, "total": len(cdn_rows),
-                    "rows": cdn_rows,
-                }, default=str)
-            }
-    else:
-        log("  CDN endpoint did not return usable data")
-
-    log("Trying CDN endpoint for props (b_gameodds.json)...")
-    cdn_props_raw = fetch_cdn_props()
-    files_payload["betcouncil_unabated_cdn_props_debug.json"] = {
-        "content": json.dumps({"captured_at": now_iso, "debug": DEBUG_LOG[-3:]}, default=str)
-    }
-    if cdn_props_raw:
-        cdn_props_rows = flatten_cdn_props(cdn_props_raw, 5)
-        log(f"  CDN props: {len(cdn_props_rows)} MLB rows extracted")
-        if cdn_props_rows:
-            if len(cdn_props_rows) > MAX_ROWS_PER_FILE:
-                cdn_props_rows = cdn_props_rows[:MAX_ROWS_PER_FILE]
-            files_payload["betcouncil_unabated_cdn_props_mlb.json"] = {
-                "content": json.dumps({
-                    "source": "unabated_cdn_props", "sport": "mlb",
-                    "captured_at": now_iso, "total": len(cdn_props_rows),
-                    "rows": cdn_props_rows,
-                }, default=str)
-            }
-    else:
-        log("  CDN props endpoint did not return usable data")
 
     for sport in SPORTS:
         # Step 2: player names (per sport)
