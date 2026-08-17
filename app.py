@@ -683,19 +683,11 @@ with tabs[0]:
     # Display only — counts side/direction disagreements, doesn't touch
     # SEM/tiers/weights. Only checks SOVEREIGN/ELITE plays (keeps it fast
     # and keeps the count meaningful — LEAN/PASS disagreements aren't
-    # interesting). Props: LineTerminal, FavoredProps. Games: WagerBird,
-    # Dimers. Each source only counted where it actually has comparable
+    # interesting). Props: FavoredProps. Games: Dimers.
+    # Each source only counted where it actually has comparable
     # directional data for that pick — silence, not a guess, when absent.
     try:
         _xs_top_props = [p for p in _board_all if p.get("Tier") in ("SOVEREIGN", "ELITE")]
-        _xs_games_all = st.session_state.get("game_analysis", []) or []
-        _xs_top_games = []
-        for _g in _xs_games_all:
-            for _market_prefix in ("Spread", "Total", "ML"):
-                _g_tier = _g.get(f"{_market_prefix}Tier")
-                _g_pick = _g.get(f"{_market_prefix}Pick")
-                if _g_tier in ("SOVEREIGN", "ELITE") and _g_pick:
-                    _xs_top_games.append({"Matchup": _g.get("Matchup", ""), "Pick": _g_pick, "Market": _market_prefix})
 
         _xs_checked = 0
         _xs_agree = 0
@@ -709,22 +701,6 @@ with tabs[0]:
             _xp_player = _xp.get("Player", "")
             _xp_side = str(_xp.get("Side", "OVER")).upper()
             _xp_prop_l = str(_xp.get("Prop", "")).lower()
-
-            try:
-                _lt_prop_rows = fetch_lineterminal_player_props(_xp_player, sport=_xp_sport)
-            except Exception:
-                _lt_prop_rows = []
-            for _ltr in _lt_prop_rows:
-                if str(_ltr.get("stat_label", "")).lower() in _xp_prop_l or _xp_prop_l in str(_ltr.get("stat_label", "")).lower():
-                    _lt_side = str(_ltr.get("side", "")).upper()
-                    if _lt_side:
-                        _xs_checked += 1
-                        if _lt_side == _xp_side:
-                            _xs_agree += 1
-                        else:
-                            _xs_disagree += 1
-                            _xs_disagree_list.append(f"{_xp_player} {_xp.get('Prop','')}: you have {_xp_side}, LineTerminal has {_lt_side}")
-                    break
 
             try:
                 _fp_rows = fetch_favoredprops_from_gist("sportsbook", _xp_sport) or []
@@ -744,24 +720,6 @@ with tabs[0]:
                             _xs_disagree_list.append(f"{_xp_player} {_xp.get('Prop','')}: you have {_xp_side}, FavoredProps has {_fp_side}")
                     break
 
-        for _xg in _xs_top_games[:30]:
-            _xg_matchup = _xg.get("Matchup", "")
-            _xg_side = str(_xg.get("Pick", "")).upper()
-            if not _xg_matchup or not _xg_side:
-                continue
-            try:
-                _wb_pick = get_wagerbird_pick(_xg_matchup)
-            except Exception:
-                _wb_pick = {}
-            if _wb_pick and _wb_pick.get("pick_text"):
-                _wb_text_u = str(_wb_pick["pick_text"]).upper()
-                _xs_checked += 1
-                if _xg_side in _wb_text_u:
-                    _xs_agree += 1
-                else:
-                    _xs_disagree += 1
-                    _xs_disagree_list.append(f"{_xg_matchup}: you have {_xg_side}, WagerBird has \"{_wb_pick['pick_text']}\"")
-
         if _xs_checked > 0:
             _xs_c1, _xs_c2, _xs_c3 = st.columns(3)
             _xs_c1.metric("Cross-Checked", _xs_checked)
@@ -771,7 +729,7 @@ with tabs[0]:
                 with st.expander(f"⚠️ {_xs_disagree} disagreement(s) with public sources — see details"):
                     for _line in _xs_disagree_list[:20]:
                         st.caption(_line)
-            st.caption("Cross-Source Check: SOVEREIGN/ELITE plays only, vs LineTerminal + FavoredProps (props) and WagerBird (games). Display only — doesn't change your model.")
+            st.caption("Cross-Source Check: SOVEREIGN/ELITE plays only, vs FavoredProps (props). Display only — doesn't change your model.")
     except Exception:
         pass
 
@@ -2068,33 +2026,6 @@ with tabs[4]:
             else:
                 _row_bg = "transparent"
 
-            # LineTerminal comparison (MLB/WNBA only — matches by stat name)
-            _lt_signal = ""
-            _lt_detail = ""
-            if _sport in ("MLB", "WNBA"):
-                try:
-                    _lt_prop_rows = fetch_lineterminal_player_props(_player, sport=_sport)
-                except Exception:
-                    _lt_prop_rows = []
-                _prop_l = str(_p.get("Prop", "")).lower()
-                for _ltr in _lt_prop_rows:
-                    if str(_ltr.get("stat_label", "")).lower() in _prop_l or _prop_l in str(_ltr.get("stat_label", "")).lower():
-                        _lt_mp = _ltr.get("model_prob_pct")
-                        if isinstance(_lt_mp, (int, float)):
-                            _lt_diff = (_lt_mp / 100.0) - (_model_prob / 100.0)
-                            if _lt_diff >= 0.08:
-                                _lt_signal = "📈 LT+"
-                            elif _lt_diff <= -0.08:
-                                _lt_signal = "📉 LT-"
-                            else:
-                                _lt_signal = "✅ LT="
-                            _lt_detail = (
-                                f'LineTerminal says {_lt_mp}% probability, market says '
-                                f'{_ltr.get("implied_prob_pct","—")}%, edge = {_ltr.get("edge_pct","—")}% '
-                                f'· Your model says {_model_prob}%'
-                            )
-                        break
-
             _rows.append({
                 "_player":     _player,
                 "_team":       _p.get("Team",""),
@@ -2110,8 +2041,6 @@ with tabs[4]:
                 "_kalshi":     _kalshi_prob,
                 "_poly":       _poly_prob,
                 "_mkt_signal": _mkt_signal,
-                "_lt_signal":  _lt_signal,
-                "_lt_detail":  _lt_detail,
                 "_unabated": (
                     ("📈 MODEL+" if _p.get("UnabatedDirection") == "model_higher" else "📉 MKT+")
                     if _p.get("UnabatedFlag") else ("✅ AGREE" if _p.get("UnabatedFairProb") is not None else "")
@@ -2536,29 +2465,6 @@ with tabs[4]:
                 ("G",  "#22c55e" if _r.get("_model_prob", 0) and safe_float(str(_r.get("_model_prob",0)).replace("%",""), 0) >= 60 else "var(--bc-border)"),  # Grade
                 ("B",  "#e8a020" if _p_dict.get("BetterLineNote") else "var(--bc-border)"),  # Better line
             ]
-            # LineTerminal dot: tri-state like Unabated (agree/disagree/no
-            # data), not simple boolean, so kept separate from the loop
-            # above for the same reason Unabated is.
-            if _r.get("_lt_signal") == "📈 LT+":
-                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
-                           f'background:#22c55e;font-size:8px;font-weight:700;color:#ffffff;'
-                           f'text-align:center;line-height:13px;margin-right:2px;" '
-                           f'title="{_r.get("_lt_detail","")}">L</span>')
-            elif _r.get("_lt_signal") == "📉 LT-":
-                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
-                           f'background:#e04040;font-size:8px;font-weight:700;color:#ffffff;'
-                           f'text-align:center;line-height:13px;margin-right:2px;" '
-                           f'title="{_r.get("_lt_detail","")}">L</span>')
-            elif _r.get("_lt_signal") == "✅ LT=":
-                _lt_dot = (f'<span style="display:inline-block;width:13px;height:13px;border-radius:50%;'
-                           f'background:var(--bc-border);font-size:8px;font-weight:700;color:#ffffff;'
-                           f'text-align:center;line-height:13px;margin-right:2px;" '
-                           f'title="{_r.get("_lt_detail","")}">L</span>')
-            else:
-                _lt_dot = ('<span style="display:inline-block;width:13px;height:13px;'
-                           'border-radius:50%;border:1.5px solid var(--bc-border);'
-                           'background:transparent;margin-right:2px;" '
-                           'title="L: no LineTerminal data for this row"></span>')
             # Unabated dot handled separately (not in the loop below) because
             # it's tri-state (flagged / agreed / no data) where the other
             # dots are boolean present/absent — "no data" needs to look
@@ -2614,7 +2520,7 @@ with tabs[4]:
                 f'background:{col};font-size:8px;font-weight:700;color:#ffffff;'
                 f'text-align:center;line-height:13px;margin-right:2px;" title="{lbl}">{lbl[0]}</span>'
                 for lbl, col in _cons_sources
-            ]) + _unab_dot + _evs_dot + _lt_dot + _og_dot
+            ]) + _unab_dot + _evs_dot + _og_dot
             # Filled bar count for % display
             _filled = sum(1 for _, c in _cons_sources if c != "var(--bc-border)")
             _cons_pct = int(_filled / len(_cons_sources) * 100)
@@ -3945,22 +3851,6 @@ with tabs[3]:
                         _dm_text += f" · win prob {_dm_win:.0%}"
                     st.caption(_dm_text)
 
-            # WagerBird free MLB picks (SSR page, no auth) — independent
-            # third comparison source, display only, same pattern as
-            # Dimers above. MLB only.
-            if _gsport == "MLB":
-                try:
-                    _wb_pick = get_wagerbird_pick(_matchup)
-                except Exception:
-                    _wb_pick = {}
-                if _wb_pick and _wb_pick.get("pick_text"):
-                    _wb_text = f"🐦 WagerBird: {_wb_pick['pick_text']} {_wb_pick.get('odds','')}"
-                    if _wb_pick.get("confidence_score") is not None:
-                        _wb_text += f" · {_wb_pick.get('tier','')} {_wb_pick['confidence_score']}"
-                    if _wb_pick.get("other_picks_count"):
-                        _wb_text += f" (+{_wb_pick['other_picks_count']} more)"
-                    st.caption(_wb_text)
-
             # MyBookie (public SSR HTML) — real-book line comparison, display only.
             try:
                 _mb_match = get_mybookie_match(_matchup, _gsport)
@@ -4316,39 +4206,6 @@ with tabs[3]:
                            f"{int(_ayw_best['team1_price']):+d} ({_ayw_best['team1_book'].replace('_',' ').title()})")
             except (TypeError, ValueError):
                 pass
-
-        # LineTerminal real plain-language trend notes -- MLB only,
-        # matching this source's own real scope. Was captured but never
-        # shown anywhere. Matches by team name against the same
-        # _home_nm/_away_nm used elsewhere in this section.
-        _lt_matchup = None
-        if _gsport.upper() == "MLB":
-            try:
-                _lt_data = load_from_gist("lineterminal_pulse_MLB", None) or {}
-                for _lt_m in (_lt_data.get("data", {}) or {}).get("matchups", []):
-                    _lt_away_side = _lt_m.get("away", {})
-                    _lt_home_side = _lt_m.get("home", {})
-                    _lt_away_nm = _lt_away_side.get("teamName", "")
-                    _lt_home_nm = _lt_home_side.get("teamName", "")
-                    if _lt_away_nm and _lt_home_nm and _home_nm and _away_nm and (
-                        _lt_home_nm.lower() in _home_nm.lower() or _home_nm.lower() in _lt_home_nm.lower()
-                    ) and (
-                        _lt_away_nm.lower() in _away_nm.lower() or _away_nm.lower() in _lt_away_nm.lower()
-                    ):
-                        _lt_matchup = _lt_m
-                        break
-            except Exception:
-                _lt_matchup = None
-        if _lt_matchup:
-            _lt_notes = []
-            for _lt_side_key in ("away", "home"):
-                for _n in (_lt_matchup.get(_lt_side_key, {}) or {}).get("notes", [])[:2]:
-                    if _n.get("note"):
-                        _lt_notes.append(_n["note"])
-            if _lt_notes:
-                with st.expander(f"📋 LineTerminal trends ({len(_lt_notes)})", expanded=False):
-                    for _n in _lt_notes[:6]:
-                        st.caption(f"• {_n}")
 
         # Smarkets real betting-exchange prices -- a real, independent
         # money-backed probability (like Kalshi/Polymarket, which already
@@ -9388,48 +9245,6 @@ with tabs[8]:
                 if _de_stat_rows:
                     st.markdown(_bc_df_html(pd.DataFrame(_de_stat_rows)), unsafe_allow_html=True)
 
-            # ── LineTerminal (Inside Edge Inc): model prob vs market prob,
-            # tier, best book/price for every prop on this player. Display only.
-            try:
-                _lt_rows = fetch_lineterminal_player_props(pl_name_d, sport=_pl_sport_used)
-            except Exception:
-                _lt_rows = []
-            if _lt_rows:
-                st.markdown("#### 🎯 LineTerminal — Model vs Market Probability")
-                st.caption("Display only — not a model input. Source: lineterminal.com public API.")
-                _lt_table_rows = []
-                for _ltr in _lt_rows[:12]:
-                    _lt_table_rows.append({
-                        "Stat": _ltr.get("stat_label", ""), "Line": _ltr.get("point", ""),
-                        "Side": _ltr.get("side", ""), "Tier": _ltr.get("tier", ""),
-                        "Model Prob": f'{_ltr.get("model_prob_pct","—")}%',
-                        "Market Implied": f'{_ltr.get("implied_prob_pct","—")}%',
-                        "Edge": f'{_ltr.get("edge_pct","—")}%',
-                        "Best Price": f'{_ltr.get("best_price","—")} @ {_ltr.get("best_book","—")}',
-                        "Confidence": _ltr.get("confidence", ""),
-                    })
-                st.markdown(_bc_df_html(pd.DataFrame(_lt_table_rows)), unsafe_allow_html=True)
-
-                # Brief plain-language comparison against BetCouncil's own
-                # model read for the same stat, when this player is also on
-                # today's board. Display only — doesn't change board_props.
-                _lt_board_by_stat = {}
-                for _bp in locals().get("board_props", []) or []:
-                    _lt_board_by_stat.setdefault(str(_bp.get("Prop", "")).lower(), _bp)
-                for _ltr in _lt_rows[:12]:
-                    _lt_stat_l = str(_ltr.get("stat_label", "")).lower()
-                    _bp_match = _lt_board_by_stat.get(_lt_stat_l)
-                    if not _bp_match:
-                        continue
-                    _lt_edge = _ltr.get("edge_pct")
-                    _lt_edge_str = f"{_lt_edge:+.1f}%" if isinstance(_lt_edge, (int, float)) else "—"
-                    _lt_line = (
-                        f'**{_ltr.get("stat_label")}**: LineTerminal says {_ltr.get("model_prob_pct","—")}% probability, '
-                        f'market says {_ltr.get("implied_prob_pct","—")}%, edge = {_lt_edge_str} '
-                        f'· Your model says {_bp_match.get("ModelProb","—")} (Edge {_bp_match.get("EdgePct","—")})'
-                    )
-                    st.caption(_lt_line)
-
             # ── RotoGrinders: lineup confirmation + DFS projected points ──
             # Public JSON, no login. Real prop-picks tools are fully
             # paywalled (checked, no free preview) -- this is just lineup
@@ -11011,7 +10826,7 @@ with tabs[14]:
         _tpc = load_from_gist("third_party_calibration", None) or {}
         _tpc_display_names = {
             "favoredprops": "FavoredProps", "draftedge": "DraftEdge", "dimers": "Dimers",
-            "covers": "Covers", "lineterminal": "LineTerminal", "wagerbird": "WagerBird",
+            "covers": "Covers",
             "dk_most_bet": "DK Most Bet",
         }
         if not _tpc:
