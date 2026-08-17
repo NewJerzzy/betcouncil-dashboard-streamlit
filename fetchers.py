@@ -7699,11 +7699,26 @@ def fetch_game_lines(sport):
     path = slug_map.get(sport, "")
     if not path:
         return [], False, {}, {}
+    # Real fix (2026-08-17): ESPN's scoreboard endpoint returns 403/empty
+    # with only UA+Accept+Accept-Language (the shared global HEADERS) --
+    # confirmed live tonight this exact header set fails against ESPN even
+    # from non-datacenter IPs, while adding Origin+Referer+sec-fetch-*
+    # succeeds. Dedicated here rather than modifying the shared HEADERS,
+    # since other fetchers use that global for different domains where
+    # an ESPN-specific Origin/Referer would be wrong.
+    _espn_headers = {
+        **HEADERS,
+        "Origin": "https://www.espn.com",
+        "Referer": "https://www.espn.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+    }
     def _fetch_date(target_date):
         date_str = target_date.strftime("%Y%m%d")
         url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={date_str}"
         try:
-            resp = _http.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = _http.get(url, headers=_espn_headers, timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 events = data.get("events", [])
