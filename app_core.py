@@ -15440,6 +15440,7 @@ def load_sport_data(sport):
     # (once for opponent defense rating, once for sharp flag lookup)
     # and was re-scanned from scratch for every prop sharing a team.
     _team_matchup_cache = {}
+    _weather_cache = {}
     _bc_track("enrichment_setup", _time_mod.perf_counter() - _setup_t0,
               {"props": len(props)})
     _main_loop_t0 = _time_mod.perf_counter()
@@ -15698,7 +15699,9 @@ def load_sport_data(sport):
                 city = park.get("city", "")
                 is_outdoor = park.get("outdoor", True)
                 if city and is_outdoor:
-                    weather = fetch_weather_for_game(city, is_outdoor)
+                    if city not in _weather_cache:
+                        _weather_cache[city] = fetch_weather_for_game(city, is_outdoor)
+                    weather = _weather_cache[city]
                     weather_adj, weather_note = weather_edge_adjustment(weather, stat_norm, "OVER", sport)
         elif sport == "NFL":
             # NFL weather — use team's stadium coords, skip domes
