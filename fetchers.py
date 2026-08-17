@@ -17270,7 +17270,7 @@ def get_harvester_status(sport: str = "MLB") -> dict:
         ("Unabated props (PrizePicks)", f"betcouncil_unabated_prizepicks_{sport}.json", 180),
         ("Unabated props (Underdog)",   f"betcouncil_unabated_underdog_{sport}.json",   180),
         ("Unabated props (Pick6)",      f"betcouncil_unabated_pick6_{sport}.json",      180),
-        ("Unabated sharp lines",        f"betcouncil_unabated_odds_{sport}.json",  32),
+        ("Unabated sharp lines",        f"betcouncil_unabated_cdn_{sport.lower()}.json",  32),
         ("PrizePicks props",            "betcouncil_prizepicks_combined.json",     22),
         ("MyBookie lines",              f"betcouncil_mybookie_{sport}.json",       28),
         ("ParlaySavant +EV",            "betcouncil_parlaysavant_MLB_props_hits_batter.json", 22),
