@@ -11283,7 +11283,7 @@ with tabs[14]:
                 _p_edge = abs(float(p.get("Edge",0) or 0))
                 _p_sport = p.get("Sport", _audit_sport)
                 _p_tier = p.get("Tier","LEAN")
-                _expected = get_tier(_p_edge, _p_sport)
+                _expected = _get_cal_tier(_p_edge, _p_sport)
                 # Allow confidence-based downgrades — not a real mismatch
                 _conf = p.get("ProjConfidence", 100)
                 _conf_downgrade = (
