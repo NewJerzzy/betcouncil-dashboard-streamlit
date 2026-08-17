@@ -15438,6 +15438,7 @@ def load_sport_data(sport):
     # (once for opponent defense rating, once for sharp flag lookup)
     # and was re-scanned from scratch for every prop sharing a team.
     _team_matchup_cache = {}
+    _main_loop_t0 = _time_mod.perf_counter()
     for p in props:
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
@@ -16763,6 +16764,9 @@ def load_sport_data(sport):
         enriched[-1]["KellyAdaptiveFraction"] = _adapt_frac
         enriched[-1]["KellyCalibProb"]        = _cal_prob
         enriched[-1]["KellyDecayedEdge"]      = _decayed_edge
+    _bc_track("enrichment_main_loop", _time_mod.perf_counter() - _main_loop_t0,
+              {"props": len(props)})
+    _post_loop_t0 = _time_mod.perf_counter()
     # Add H2H signal to each prop (uses cached game logs if available)
     # Per-player logs cache within this loop: confirmed real redundant I/O
     # -- multiple props per player were each independently re-reading and
@@ -17592,6 +17596,8 @@ def load_sport_data(sport):
     if paddypower2_raw:
         st.session_state["paddypower_lines"] = paddypower2_raw
 
+    _bc_track("enrichment_post_loop", _time_mod.perf_counter() - _post_loop_t0,
+              {"props": len(enriched)})
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
 # =========================
