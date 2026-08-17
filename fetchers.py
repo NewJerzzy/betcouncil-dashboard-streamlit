@@ -1123,6 +1123,11 @@ def fetch_auto_scraped_props(sport="NBA"):
             log_error_to_session("fetch_auto_scraped_props", f"Loaded {len(props)} {sport} props from Gist", "info")
         else:
             log_error_to_session("fetch_auto_scraped_props", f"No {sport} props in Gist", "warning")
+        try:
+            import streamlit as _st
+            _st.session_state[f"auto_scraped_props_{sport}"] = props
+        except Exception:
+            pass
 
         return props
 
