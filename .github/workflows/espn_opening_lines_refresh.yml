@@ -20,4 +20,5 @@ jobs:
       - name: Run opening-lines capture
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          SCRAPEOPS_KEY_2: ${{ secrets.SCRAPEOPS_KEY_2 }}
         run: python scripts/espn_opening_lines_refresh.py
