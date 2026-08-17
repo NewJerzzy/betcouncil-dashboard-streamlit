@@ -8708,7 +8708,7 @@ def build_market_comparison(shortlist):
       - Covers: browser-harvested/scraped, already fetched every board
         load (public betting %, game lines)
     """
-    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "wagerbird": [], "lineterminal": [], "propsmadness": []}
+    result = {"dk_props": [], "fd_parlayhub": {}, "favoredprops": [], "bettingpros": [], "covers": [], "dimers": [], "draftedge": [], "mybookie": [], "vegasinsider": [], "sportsinsights": [], "scoresandodds": [], "pickswise": [], "actionnetwork": [], "betql": [], "propsmadness": []}
 
     sports_needed = {p["Sport"] for p in shortlist.get("props", [])} | \
                      {g["Sport"] for g in shortlist.get("games", [])}
