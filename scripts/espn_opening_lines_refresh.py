@@ -46,41 +46,7 @@ HEADERS = {
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    # These headers alone were tested live and do NOT fix the real problem:
-    # confirmed 2026-08-17 that the exact same headers return 200 from a
-    # non-GH-Actions IP but still 403 from real GitHub Actions runners.
-    # This is a genuine IP-level block on ESPN's side, not a headers issue --
-    # kept these since they're harmless and were part of an earlier real fix
-    # attempt, but the actual fix is the ScrapeOps proxy fallback below.
-    "Origin": "https://www.espn.com",
-    "Referer": "https://www.espn.com/",
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-site",
 }
-
-
-def _scrapeops_get(url: str, timeout: int = 30):
-    """Standalone residential-proxy fetch for GH Actions scripts -- the
-    same real ScrapeOps account already used elsewhere in this codebase
-    (fetchers.py's scrapeops_get, which is Streamlit-session-dependent
-    and can't be reused directly in a standalone script). Routes through
-    a residential IP so ESPN's real, confirmed GH-Actions-datacenter block
-    doesn't apply. Returns a requests.Response-like object or None."""
-    api_key = os.environ.get("SCRAPEOPS_KEY_2")
-    if not api_key:
-        return None
-    from urllib.parse import quote
-    encoded = quote(url, safe="")
-    try:
-        r = requests.get(
-            f"https://proxy.scrapeops.io/v1/?api_key={api_key}&url={encoded}&residential=true&country=us&render_js=false",
-            timeout=timeout,
-        )
-        return r
-    except Exception as e:
-        log(f"ScrapeOps proxy request failed: {e}")
-        return None
 
 
 def log(msg: str) -> None:
@@ -109,17 +75,6 @@ def fetch_espn_odds(sport: str) -> list:
     today_str = date.today().strftime("%Y%m%d")
     url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={today_str}"
     r = requests.get(url, headers=HEADERS, timeout=20)
-    if r.status_code == 403:
-        # Confirmed real IP block from GH Actions datacenter ranges (live-tested
-        # 2026-08-17, headers ruled out). Route through the residential proxy
-        # instead -- same real account already used elsewhere in this codebase.
-        log(f"  {sport}: direct request got 403 (confirmed IP block) -- trying ScrapeOps proxy")
-        r_proxy = _scrapeops_get(url)
-        if r_proxy is not None and r_proxy.status_code == 200:
-            r = r_proxy
-        else:
-            _proxy_status = r_proxy.status_code if r_proxy is not None else "no response"
-            raise RuntimeError(f"HTTP 403 direct, ScrapeOps proxy also failed ({_proxy_status})")
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code}")
     data = r.json()
@@ -207,9 +162,9 @@ def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
 
 
 def main() -> int:
-    github_token = os.environ.get("GITHUB_TOKEN")
+    github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
     if not github_token:
-        log("FATAL: GITHUB_TOKEN not set")
+        log("FATAL: neither GITHUB_TOKEN nor GITHUB_PERSONAL_ACCESS_TOKEN is set")
         return 1
 
     if not _rate_limit_ok(github_token):
