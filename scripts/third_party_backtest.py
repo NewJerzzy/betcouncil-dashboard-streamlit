@@ -29,6 +29,7 @@ pipeline on purpose.
 import json
 import os
 import sys
+import time
 from datetime import date, timedelta
 
 import requests
@@ -59,13 +60,22 @@ def gist_read(filename: str):
 
 
 def gist_write(token: str, filename: str, payload) -> bool:
-    resp = requests.patch(
-        f"https://api.github.com/gists/{GIST_ID}",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-        json={"files": {filename: {"content": json.dumps(payload, indent=2)}}},
-        timeout=30,
-    )
-    return resp.status_code in (200, 201)
+    for attempt in range(5):
+        resp = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {filename: {"content": json.dumps(payload, indent=2)}}},
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        if resp.status_code in (403, 429, 409) and attempt < 4:
+            wait = min(10 * (2 ** attempt), 90)
+            log(f"  Gist write got {resp.status_code} -- retrying in {wait}s (attempt {attempt+1}/5)")
+            time.sleep(wait)
+            continue
+        return False
+    return False
 
 
 def grade_props(records: list, target_date: str) -> list:
