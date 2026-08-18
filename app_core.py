@@ -13823,6 +13823,9 @@ def load_sport_data(sport):
         return _fetch_parallel(_fns, show_progress=False)
 
     _results = _get_parallel_results(sport)
+    _bc_track("enrichment_setup_fetch", _time_mod.perf_counter() - _setup_t0,
+              {"sport": sport})
+    _setup_post_fetch_t0 = _time_mod.perf_counter()
     (pp_props, ud_props_compare, dk_salaries, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
@@ -14922,7 +14925,10 @@ def load_sport_data(sport):
         except Exception:
             st.session_state.setdefault("line_deviation_lookup", {})
         st.session_state["ev_api_updated"]  = ev_api_raw.get("updated", {})
-        # Feed every book's line into alt sources for BetterLineNote detection
+        # Feed every book's line into alt sources for BetterLineNote detection,
+        # and build per-book odds lookup for CLV display -- merged into one
+        # pass, confirmed independent of each other.
+        _ev_book_lookup = {}
         for _evp in _ev_board_props:
             _ev_bk = _evp.get("Book", "")
             _ev_alt = {
@@ -14933,11 +14939,8 @@ def load_sport_data(sport):
             }
             if _ev_alt["Line"] is not None:
                 all_alt_sources.append((_ev_alt, _ev_bk))
-        # Per-book odds for CLV display
-        _ev_book_lookup = {}
-        for _evp in _ev_board_props:
             _k = (normalize_name(_evp.get("Player","")), _evp.get("Prop",""))
-            _ev_book_lookup.setdefault(_k, {})[_evp.get("Book","")] = {
+            _ev_book_lookup.setdefault(_k, {})[_ev_bk] = {
                 "odds_over":  _evp.get("OddsOver"),
                 "odds_under": _evp.get("OddsUnder"),
                 "line":       _evp.get("Line"),
@@ -15443,6 +15446,8 @@ def load_sport_data(sport):
     _weather_cache = {}
     _bc_track("enrichment_setup", _time_mod.perf_counter() - _setup_t0,
               {"props": len(props)})
+    _bc_track("enrichment_setup_postfetch", _time_mod.perf_counter() - _setup_post_fetch_t0,
+              {"props": len(props)})
     _main_loop_t0 = _time_mod.perf_counter()
     for p in props:
         stat_raw = p["Prop"]
@@ -15473,7 +15478,7 @@ def load_sport_data(sport):
                     "Edge": round(_gt_edge, 4),
                     "Prob": _gt_prob,
                     "Avg": safe_float(line),  # line IS the reference for game totals
-                    "Source": p.get("source",""),
+                    "Source": p.get("source","").title() or "Unknown",
                     "IsGameTotal": True,
                     "GameAnalysisRef": _gt_game.get("matchup",""),
                     "Narrative": f"Game total — routed from game model. {_gt_bb.get('note','')}",
@@ -17613,9 +17618,40 @@ for k, v in _ss.items():
         st.session_state[k] = v
 
 if "persistence_loaded" not in st.session_state:
-    gist_history = load_from_gist("history", None)
-    gist_locks = load_from_gist("locks", None)
-    gist_bankroll = load_from_gist("bankroll", None)
+    def _load_3_from_gist_once(_types):
+        """Real fix: fetch the Gist's file listing once instead of 3x
+        separately for history/locks/bankroll -- each of the 3 original
+        calls independently pulled the entire Gist's file listing, which
+        has grown substantially over a long session. One fetch, 3 extracts."""
+        _results = {t: None for t in _types}
+        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+            return _results
+        try:
+            _headers = {"Authorization": f"token {GITHUB_TOKEN}",
+                        "Accept": "application/vnd.github.v3+json"}
+            _resp = _http.get(f"{GIST_API}/{GITHUB_GIST_ID}", headers=_headers, timeout=10)
+            if _resp.status_code != 200:
+                return _results
+            _files = _resp.json().get("files", {})
+            for _t in _types:
+                _fd = _files.get(f"betcouncil_{_t}.json", {})
+                _content = (_fd.get("content") or "").strip()
+                if not _content and _fd.get("raw_url"):
+                    _raw_resp = _http.get(_fd["raw_url"], headers=_headers, timeout=15)
+                    if _raw_resp.status_code == 200:
+                        _content = _raw_resp.text.strip()
+                if _content:
+                    try:
+                        _results[_t] = json.loads(_content)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+        except (requests.RequestException, KeyError, ValueError):
+            pass
+        return _results
+    _gist_3 = _load_3_from_gist_once(["history", "locks", "bankroll"])
+    gist_history = _gist_3["history"]
+    gist_locks = _gist_3["locks"]
+    gist_bankroll = _gist_3["bankroll"]
     # Merge Gist + local cache — Gist is source of truth on Streamlit Cloud
     _local_history = load_json_data(HISTORY_PATH, [])
     _gist_history  = gist_history if isinstance(gist_history, list) else []
