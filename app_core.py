@@ -13726,7 +13726,6 @@ def load_sport_data(sport):
     def _pf_savant_arsenal():  return fetch_savant_pitch_arsenal() if sport == "MLB" else {}
     def _pf_savant_batted():   return fetch_savant_batted_ball() if sport == "MLB" else {}
     def _pf_mlb_lineups():     return fetch_mlb_lineups() if sport == "MLB" else {}
-    def _pf_ump_scorecards():  return fetch_ump_scorecards() if sport == "MLB" else {}
     def _pf_pinnacle_lines():
         # DNS pre-check — skips silently on Streamlit Cloud, works self-hosted
         import socket as _sock
@@ -13757,20 +13756,6 @@ def load_sport_data(sport):
         if result:
             st.session_state[_parlayapi_ev_key] = result
         return result
-    _parlayapi_arb_key = f'parlayapi_arb_{sport}'
-    def _pf_parlayapi_arb():
-        if _parlayapi_arb_key in st.session_state:
-            return st.session_state[_parlayapi_arb_key]
-        result = fetch_parlayapi_arbitrage(sport)
-        if result:
-            st.session_state[_parlayapi_arb_key] = result
-        return result
-    def _pf_unabated():
-        try:
-            _ub_data, _ = fetch_unabated_from_gist(sport)
-            return _ub_data
-        except Exception:
-            return []
 
     @st.cache_data(ttl=300, show_spinner=False)
     def _get_parallel_results(_cache_sport):
@@ -13792,11 +13777,11 @@ def load_sport_data(sport):
         _pf_betmgm_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines, _pf_sharpapi_lines,
         _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_numberfire, _pf_bobbys_picks, _pf_bobbys_props, _pf_bobbys_briefing, _pf_bobbys_scoreboard, _pf_bobbys_best_prices, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
-        _pf_mlb_lineups, _pf_ump_scorecards,
+        _pf_mlb_lineups,
         _pf_pinnacle_lines,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
-        _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_sharpapi_props,
+        _pf_parlayapi_ev, _pf_sharpapi_props,
         _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2, _pf_bovada_lines2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
@@ -13814,11 +13799,11 @@ def load_sport_data(sport):
      betmgm_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw, sharpapi_lines_raw,
      signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, numberfire_raw, bobbys_picks_raw, bobbys_props_raw, bobbys_briefing_raw, bobbys_scoreboard_raw, bobbys_best_prices_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
-     mlb_lineups_raw, ump_scorecards_raw,
+     mlb_lineups_raw,
      pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
-     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, sharpapi_props_raw,
+     parlayapi_ev_raw, sharpapi_props_raw,
      evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
@@ -13996,10 +13981,7 @@ def load_sport_data(sport):
     st.session_state["savant_arsenal"]       = savant_arsenal_raw  or {}
     st.session_state["savant_batted"]        = savant_batted_raw   or {}
     st.session_state["mlb_lineups"]          = mlb_lineups_raw     or {}
-    st.session_state["ump_scorecards"]       = ump_scorecards_raw  or {}
     st.session_state["parlayapi_ev"]         = parlayapi_ev_raw    or []
-    st.session_state["parlayapi_arb"]        = parlayapi_arb_raw   or []
-    st.session_state["unabated_lines"]       = unabated_raw        or []
     st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["pinnacle_game_lines"]   = pinnacle_lines_raw or []
     st.session_state["pinnacle_props"]        = []
