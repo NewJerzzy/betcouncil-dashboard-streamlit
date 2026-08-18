@@ -15453,6 +15453,7 @@ def load_sport_data(sport):
         stat_raw = p["Prop"]
         stat_norm = STAT_NORMALIZE.get((sport, stat_raw), stat_raw)
         player = p["Player"]
+        _player_norm = normalize_name(player)
         line = p["Line"]
         side = p.get("Side", "OVER")
 
@@ -15742,12 +15743,12 @@ def load_sport_data(sport):
 
         # ── EV API signal injection (S6 / S7 / S12 / pitcher) ─────────
         _ev_sig = st.session_state.get("ev_signal_lookup", {}).get(
-            (normalize_name(player), stat_raw), {}
+            (_player_norm, stat_raw), {}
         )
 
         # ── EV Movement signal injection (S8 / S9) ─────────────────────
         _mv_sig = st.session_state.get("ev_movement_lookup", {}).get(
-            (normalize_name(player), stat_raw), {}
+            (_player_norm, stat_raw), {}
         )
         ev_s8_vector  = _mv_sig.get("s8_vector", 0)   # -2 to +2
         ev_s9_boost   = _mv_sig.get("s9_boost", 0.0)  # 0 to +0.02
@@ -15889,7 +15890,7 @@ def load_sport_data(sport):
 
         ud_line_val = None
         for ud_p in (ud_props_compare or []):
-            if (normalize_name(ud_p.get("Player","")) == normalize_name(player) and ud_p.get("Prop","") == stat_raw):
+            if (normalize_name(ud_p.get("Player","")) == _player_norm and ud_p.get("Prop","") == stat_raw):
                 ud_line_val = ud_p.get("Line")
                 break
         std_dev_key = f"{stat_norm}_std"
@@ -15929,7 +15930,7 @@ def load_sport_data(sport):
         # Circa co-equal sharp anchor for NFL/props. Pinnacle leads MLB/NHL.
         # Prop markets are Pinnacle's weakest area — our model has sovereign advantage here.
         _ev_sig_local = st.session_state.get("ev_signal_lookup", {}).get(
-            (normalize_name(player), stat_raw), {}
+            (_player_norm, stat_raw), {}
         )
         _pn_nv    = _ev_sig_local.get("pn_novig")    if _ev_sig_local else ev_pn_novig
         _circa_nv = _ev_sig_local.get("circa_novig") if _ev_sig_local else ev_circa_novig
@@ -15976,7 +15977,7 @@ def load_sport_data(sport):
             from prop_normalizer import normalize_player_name as _np_fn, normalize_stat_name as _ns_fn
             _ld_key = (_np_fn(player), _ns_fn(stat_raw, sport))
         except Exception:
-            _ld_key = (normalize_name(player), stat_raw)
+            _ld_key = (_player_norm, stat_raw)
         _ld_sig = _ld_lookup.get(_ld_key, {})
         if _ld_sig and _ld_sig.get("consensus_prob") is not None:
             _ld_prob = float(_ld_sig["consensus_prob"])
@@ -16208,7 +16209,7 @@ def load_sport_data(sport):
         if player:
             try:
                 _gf_props = st.session_state.get("gamblingforecast_props", [])
-                _gf_norm = normalize_name(player)
+                _gf_norm = _player_norm
                 _gf_key = ("_gf_index", id(_gf_props))
                 if _gf_key not in _team_matchup_cache:
                     _gf_idx = {}
@@ -16241,7 +16242,7 @@ def load_sport_data(sport):
         if player:
             try:
                 _bp_props = st.session_state.get("bettingpros_props", [])
-                _bp_norm = normalize_name(player)
+                _bp_norm = _player_norm
                 _bp_cand_key = ("_bp_candidates", _bp_norm, id(_bp_props))
                 if _bp_cand_key not in _team_matchup_cache:
                     _team_matchup_cache[_bp_cand_key] = [
@@ -16297,7 +16298,7 @@ def load_sport_data(sport):
         if player:
             try:
                 _bbp_props = st.session_state.get("bobbys_bets_props", [])
-                _bbp_norm = normalize_name(player)
+                _bbp_norm = _player_norm
                 _bbp_cand_key = ("_bbp_candidates", _bbp_norm, id(_bbp_props))
                 if _bbp_cand_key not in _team_matchup_cache:
                     _team_matchup_cache[_bbp_cand_key] = [
@@ -16327,7 +16328,7 @@ def load_sport_data(sport):
         # ── FantasyPros projection cross-check ──────────────────────────────
         if player:
             try:
-                _fp  = st.session_state.get("fantasypros_proj",{}).get(normalize_name(player),{})
+                _fp  = st.session_state.get("fantasypros_proj",{}).get(_player_norm,{})
                 _fpp = _fp.get("projections",{})
                 _fpv = next((v for k,v in _fpp.items() if stat_norm and stat_norm[:4] in k.lower()),None)
                 if _fpv and float(line or 0) > 0:
@@ -16478,12 +16479,12 @@ def load_sport_data(sport):
             final_edge = round(max(-EDGE_CAP, min(EDGE_CAP, final_edge + _stat_adj)), 4)
 
         # ── Projection confidence score ─────────────────────────
-        _sn_key = ("_sample_n", normalize_name(player))
+        _sn_key = ("_sample_n", _player_norm)
         if _sn_key not in _team_matchup_cache:
             _team_matchup_cache[_sn_key] = len([h for h in st.session_state.get("history", [])
-                             if normalize_name(h.get("player","")) == normalize_name(player)])
+                             if normalize_name(h.get("player","")) == _player_norm])
         _sample_n = _team_matchup_cache[_sn_key]
-        _inj_status = injuries.get(normalize_name(player), {}).get("status","") if isinstance(injuries, dict) else ""
+        _inj_status = injuries.get(_player_norm, {}).get("status","") if isinstance(injuries, dict) else ""
         _lineup_conf = p.get("LineupStatus","").startswith("✅") if p.get("LineupStatus") else None
         # Real Pinnacle agreement: how close our model's probability is to
         # Pinnacle's no-vig probability for the same side. Small gap = they
@@ -16567,12 +16568,12 @@ def load_sport_data(sport):
                         except Exception:
                             # Can't parse time — only apply if lineups confirmed
                             _apply_fl = bool(_fl_data.get(
-                                normalize_name(player), {}
+                                _player_norm, {}
                             ).get("in_lineup", False))
                     else:
                         # No game time stored — check if lineup is confirmed
                         _apply_fl = bool(_fl_data.get(
-                            normalize_name(player), {}
+                            _player_norm, {}
                         ).get("in_lineup", False))
 
                 if _apply_fl:
