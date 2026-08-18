@@ -16774,6 +16774,15 @@ def load_sport_data(sport):
             prop["H2HRate"] = "—"
 
     # Add Pinnacle fair value signal to each prop
+    _bankroll_mult_data = compute_bankroll_multiplier()
+    _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
+    _cal_history = st.session_state.get("history", [])
+    # Memoize adaptive_kelly_fraction by its real varying inputs (confirmed
+    # pure function, no side effects, _cal_history fixed for this whole
+    # loop) -- this was recomputing the full Brier score from ~630+ history
+    # entries on every prop that lacked a pre-computed KellyAdaptiveFraction,
+    # the single most expensive call found in this whole enrichment pass.
+    _adapt_frac_cache = {}
     fd_dk_alts = _fd_dk_alts
     for prop in enriched:
         # ── Pinnacle fair value ──
@@ -16828,6 +16837,66 @@ def load_sport_data(sport):
             prop["FDDKConfirms"] = False
             prop["FDDKFades"] = False
 
+        # ── Tier-based Kelly sizing with Adaptive Calibration ────────────
+        _tier      = prop.get("Tier", "APPROVED")
+        _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
+        _edge      = prop.get("Edge", 0.0) or 0.0
+        _prop_sport = prop.get("Sport", sport)
+        _prop_market = prop.get("Prop", "GENERAL")
+
+        _precomputed = prop.get("KellyAdaptiveFraction")
+        if _precomputed:
+            _adapt_frac = _precomputed
+        else:
+            _afkey = (_tier_frac, _prop_sport, _prop_market)
+            if _afkey not in _adapt_frac_cache:
+                _adapt_frac_cache[_afkey] = adaptive_kelly_fraction(
+                    _tier_frac, _cal_history, sport=_prop_sport, market=_prop_market
+                )
+            _adapt_frac = _adapt_frac_cache[_afkey]
+        _eff_edge = prop.get("KellyDecayedEdge") or time_decay_edge_factor(_edge)
+
+        _odds_a = prop.get("BestOdds", prop.get("OverOdds", "-110"))
+        try:
+            _odds_f = float(str(_odds_a).replace("+","")) if _odds_a not in ("N/A","—","") else -110
+            if _odds_f > 0:
+                _b = _odds_f / 100
+            else:
+                _b = 100 / abs(_odds_f)
+            _p = _eff_edge + (1 / (1 + _b))
+            _p = min(max(_p, 0.01), 0.99)
+            _q = 1 - _p
+            _kelly_full = (_b * _p - _q) / _b
+            _kelly_full = max(0.0, _kelly_full)
+        except Exception:
+            _kelly_full = _eff_edge
+        _kelly_pct = round(_kelly_full * _adapt_frac * _bm_mult, 4)
+        _kelly_pct = min(_kelly_pct, KELLY_CAP)
+        prop["KellyFraction"]       = _adapt_frac
+        prop["KellyAdvisedPct"]     = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
+        prop["KellyEffectiveEdge"]  = round(_eff_edge, 4)
+
+        # ── Covariance Haircut ────────────────────────────────────────────
+        if _kelly_pct >= KELLY_MIN:
+            _open_bets = st.session_state.get("open_bets", [])
+            _matchup   = prop.get("Matchup") or prop.get("matchup") or ""
+            _team      = prop.get("Team") or prop.get("Opponent") or ""
+            _adj_kelly, _haircut, _haircut_note = covariance_haircut(
+                _kelly_pct, _matchup, _team, _open_bets
+            )
+            prop["KellyAdvisedPct"]    = _adj_kelly if _adj_kelly >= KELLY_MIN else 0.0
+            prop["KellyCovHaircut"]    = _haircut
+            prop["KellyCovNote"]       = _haircut_note
+
+        # ── Edge Type Classification ───────────────────────────────────────
+        _cons_gap  = abs(float(prop.get("ConsensusGap") or prop.get("LineGap") or 0))
+        _pinn_gap  = abs(float(prop.get("PinnacleGap") or prop.get("PnNovigGap") or 0))
+        _edge_type = classify_edge_type(prop, consensus_gap=_cons_gap, pinnacle_gap=_pinn_gap)
+        prop["EdgeType"]       = _edge_type["type"]
+        prop["EdgeTypeLabel"]  = _edge_type["label"]
+        prop["EdgeTypeAction"] = _edge_type["action"]
+        prop["EdgeTypeColor"]  = _edge_type["color"]
+        prop["EdgeTypeReason"] = _edge_type["reason"]
 
     # ── Kalshi + Polymarket + Covers + Action Network public (merged) ──
     # All 4 confirmed independent: no Tier writes, no cross-reads of each
@@ -17007,87 +17076,6 @@ def load_sport_data(sport):
 
 
 
-
-    # ── Tier-based Kelly sizing with Adaptive Calibration ───────────────────
-    # Apply KELLY_BY_TIER as base, then scale by per-sport Brier score and
-    # apply time-decay to edge before sizing (elite calibration loop).
-    _bankroll_mult_data = compute_bankroll_multiplier()
-    _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
-    _cal_history = st.session_state.get("history", [])
-    # Memoize adaptive_kelly_fraction by its real varying inputs (confirmed
-    # pure function, no side effects, _cal_history fixed for this whole
-    # loop) -- this was recomputing the full Brier score from ~630+ history
-    # entries on every prop that lacked a pre-computed KellyAdaptiveFraction,
-    # the single most expensive call found in this whole enrichment pass.
-    _adapt_frac_cache = {}
-    for prop in enriched:
-        _tier      = prop.get("Tier", "APPROVED")
-        _tier_frac = KELLY_BY_TIER.get(_tier, KELLY_FRACTION)
-        _edge      = prop.get("Edge", 0.0) or 0.0
-        _prop_sport = prop.get("Sport", sport)
-        _prop_market = prop.get("Prop", "GENERAL")
-
-        # Use pre-computed adaptive fraction if available (set during enrichment)
-        # otherwise compute it here (memoized -- same inputs give same output)
-        _precomputed = prop.get("KellyAdaptiveFraction")
-        if _precomputed:
-            _adapt_frac = _precomputed
-        else:
-            _afkey = (_tier_frac, _prop_sport, _prop_market)
-            if _afkey not in _adapt_frac_cache:
-                _adapt_frac_cache[_afkey] = adaptive_kelly_fraction(
-                    _tier_frac, _cal_history, sport=_prop_sport, market=_prop_market
-                )
-            _adapt_frac = _adapt_frac_cache[_afkey]
-        # Use pre-computed decayed edge if available, otherwise apply decay now
-        _eff_edge = prop.get("KellyDecayedEdge") or time_decay_edge_factor(_edge)
-
-        _odds_a = prop.get("BestOdds", prop.get("OverOdds", "-110"))
-        try:
-            _odds_f = float(str(_odds_a).replace("+","")) if _odds_a not in ("N/A","—","") else -110
-            if _odds_f > 0:
-                _b = _odds_f / 100
-            else:
-                _b = 100 / abs(_odds_f)
-            _p = _eff_edge + (1 / (1 + _b))
-            _p = min(max(_p, 0.01), 0.99)
-            _q = 1 - _p
-            _kelly_full = (_b * _p - _q) / _b
-            _kelly_full = max(0.0, _kelly_full)
-        except Exception:
-            _kelly_full = _eff_edge
-        _kelly_pct = round(_kelly_full * _adapt_frac * _bm_mult, 4)
-        _kelly_pct = min(_kelly_pct, KELLY_CAP)
-        prop["KellyFraction"]       = _adapt_frac
-        prop["KellyAdvisedPct"]     = _kelly_pct if _kelly_pct >= KELLY_MIN else 0.0
-        prop["KellyEffectiveEdge"]  = round(_eff_edge, 4)
-
-        # ── Covariance Haircut ─────────────────────────────────────────────
-        # Apply correlation-adjusted reduction when portfolio already has
-        # significant exposure to the same game or team, preventing the
-        # combined variance from exceeding single-game risk limits.
-        if _kelly_pct >= KELLY_MIN:
-            _open_bets = st.session_state.get("open_bets", [])
-            _matchup   = prop.get("Matchup") or prop.get("matchup") or ""
-            _team      = prop.get("Team") or prop.get("Opponent") or ""
-            _adj_kelly, _haircut, _haircut_note = covariance_haircut(
-                _kelly_pct, _matchup, _team, _open_bets
-            )
-            prop["KellyAdvisedPct"]    = _adj_kelly if _adj_kelly >= KELLY_MIN else 0.0
-            prop["KellyCovHaircut"]    = _haircut
-            prop["KellyCovNote"]       = _haircut_note
-
-        # ── Edge Type Classification ───────────────────────────────────────
-        # Classify every prop into Type A (Arbitrage), B (Alpha), or C (Noise)
-        # so the user knows WHY an edge exists and how to act on it.
-        _cons_gap  = abs(float(prop.get("ConsensusGap") or prop.get("LineGap") or 0))
-        _pinn_gap  = abs(float(prop.get("PinnacleGap") or prop.get("PnNovigGap") or 0))
-        _edge_type = classify_edge_type(prop, consensus_gap=_cons_gap, pinnacle_gap=_pinn_gap)
-        prop["EdgeType"]       = _edge_type["type"]
-        prop["EdgeTypeLabel"]  = _edge_type["label"]
-        prop["EdgeTypeAction"] = _edge_type["action"]
-        prop["EdgeTypeColor"]  = _edge_type["color"]
-        prop["EdgeTypeReason"] = _edge_type["reason"]
 
     # Add better line detection to each prop
     better_lines_lookup = st.session_state.get("better_lines_lookup", {})
