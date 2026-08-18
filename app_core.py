@@ -16774,7 +16774,9 @@ def load_sport_data(sport):
             prop["H2HRate"] = "—"
 
     # Add Pinnacle fair value signal to each prop
+    fd_dk_alts = _fd_dk_alts
     for prop in enriched:
+        # ── Pinnacle fair value ──
         pinn_prob, pinn_confirms, pinn_note = pinnacle_fair_value(
             prop.get("Player",""), prop.get("Prop",""),
             prop.get("Line",0), prop.get("Side","OVER"), sport
@@ -16795,9 +16797,7 @@ def load_sport_data(sport):
                 prop["Tier"] = "APPROVED"
                 prop["TierNote"] = "Downgraded: Pinnacle fades"
 
-    # FanDuel/DraftKings no-vig validation using alt lines
-    fd_dk_alts = _fd_dk_alts
-    for prop in enriched:
+        # ── FanDuel/DraftKings no-vig validation using alt lines ──
         player    = prop.get("Player","")
         stat_norm = STAT_NORMALIZE.get((sport, prop.get("Prop","")), prop.get("Prop",""))
         line      = prop.get("Line", 0)
