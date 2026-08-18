@@ -174,7 +174,7 @@ def push_files(files_payload: dict) -> int:
         except Exception:
             merged[key] = fbody["content"]
 
-    lock_token = acquire_lock(GIST_ID, github_token, "favoredprops_combined", holder="favoredprops")
+    lock_token = acquire_lock(GIST_ID, github_token, "favoredprops_combined", holder="favoredprops", max_attempts=7)
     if not lock_token:
         log("Could not acquire favoredprops_combined lock -- skipping this run to avoid a collision")
         return 0
