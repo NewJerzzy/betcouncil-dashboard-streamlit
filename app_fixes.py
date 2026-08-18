@@ -319,11 +319,15 @@ def update_sidebar_status_message():
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
     """
-    Fetch VSiN intelligence data from Gist (betcouncil_vsin_splits.json --
-    real fix 2026-08-15: was checking vsin_intelligence.json, a filename
-    the real scheduled workflow never wrote. The real file covers multiple
-    sports per file, so games are filtered by sport here rather than at
-    the top level).
+    Fetch VSiN intelligence data from Gist (betcouncil_sharp_feeds.json,
+    "vsin_splits" key -- real fix 2026-08-18: the writer script moved to
+    this shared file on 2026-08-01 due to a confirmed Gist new-file-
+    creation limitation, but this reader was never updated to follow that
+    move. Was checking the old, dedicated betcouncil_vsin_splits.json,
+    which has not been written to since 2026-08-01 -- causing "No VSiN
+    data" to show even when genuinely fresh data existed in the shared
+    file. The real file covers multiple sports per file, so games are
+    filtered by sport here rather than at the top level).
     Returns unified dict with lines, splits, makinen, team_summary,
     power_ratings, rlm_alerts, ats_signals.
     TTL: 10 minutes.
@@ -347,16 +351,17 @@ def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
             return empty
 
         files = r.json().get("files", {})
-        if "betcouncil_vsin_splits.json" not in files:
+        if "betcouncil_sharp_feeds.json" not in files:
             return empty
 
-        file_obj = files["betcouncil_vsin_splits.json"]
+        file_obj = files["betcouncil_sharp_feeds.json"]
         if file_obj.get("size", 0) > 900000:
             raw = requests.get(file_obj["raw_url"], timeout=10)
-            data = raw.json() if raw.status_code == 200 else empty
+            shared_data = raw.json() if raw.status_code == 200 else {}
         else:
             content = file_obj.get("content", "")
-            data = json.loads(content) if content else empty
+            shared_data = json.loads(content) if content else {}
+        data = shared_data.get("vsin_splits", {}) or empty
 
         # Real file covers multiple sports per file -- filter games by
         # each game's own "sport" field, not a top-level sport check.
