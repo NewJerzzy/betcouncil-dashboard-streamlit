@@ -17180,6 +17180,77 @@ def load_sport_data(sport):
     # Generates plain-English "why this makes sense" + "biggest
     # risk" for every SOVEREIGN/ELITE/APPROVED prop.
     # ═══════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════
+    # ENGINE 2 — LOSS PATTERN ANALYZER
+    # Runs after 20+ resolved bets. Detects patterns in losses
+    # and surfaces actionable diagnostics into session state.
+    # Moved before the combined Narrative+ContextualOverride loop --
+    # this is session-level history analysis, never touches individual
+    # props, so it doesn't need to sit between two per-prop loops.
+    # ═══════════════════════════════════════════════════════════
+    _history_all = st.session_state.get("history", [])
+    _resolved    = [h for h in _history_all if h.get("outcome") in ("WIN","LOSS")]
+    _loss_patterns = []
+    if len(_resolved) >= 20:
+        _losses = [h for h in _resolved if h.get("outcome") == "LOSS"]
+        _wins   = [h for h in _resolved if h.get("outcome") == "WIN"]
+        _total  = len(_resolved)
+        _wr     = len(_wins) / _total
+
+        # Pattern: away game losses
+        _away_losses = [h for h in _losses if not h.get("signals_active",{}).get("location_home", True)]
+        _away_total  = [h for h in _resolved if not h.get("signals_active",{}).get("location_home", True)]
+        if len(_away_total) >= 5:
+            _away_wr = sum(1 for h in _away_total if h.get("outcome") == "WIN") / len(_away_total)
+            if _away_wr < _wr - 0.10:
+                _loss_patterns.append(f"📍 Away game picks hitting only {_away_wr:.0%} vs {_wr:.0%} overall — location signal may be under-weighted")
+
+        # Pattern: back-to-back losses
+        _b2b_losses = [h for h in _losses if h.get("signals_active",{}).get("back_to_back", False)]
+        _b2b_total  = [h for h in _resolved if h.get("signals_active",{}).get("back_to_back", False)]
+        if len(_b2b_total) >= 3:
+            _b2b_wr = sum(1 for h in _b2b_total if h.get("outcome") == "WIN") / len(_b2b_total)
+            if _b2b_wr < 0.40:
+                _loss_patterns.append(f"😴 Back-to-back picks hitting only {_b2b_wr:.0%} — consider avoiding B2B props")
+
+        # Pattern: sport-specific underperformance
+        _sport_groups = {}
+        for h in _resolved:
+            sp = h.get("sport","?")
+            _sport_groups.setdefault(sp, []).append(h)
+        for sp, records in _sport_groups.items():
+            if len(records) >= 8:
+                sp_wr = sum(1 for h in records if h.get("outcome") == "WIN") / len(records)
+                if sp_wr < _wr - 0.12:
+                    _loss_patterns.append(f"📊 {sp} picking at only {sp_wr:.0%} vs {_wr:.0%} overall — review {sp} signal weights")
+
+        # Pattern: tier-level mismatch
+        for tier_check in ("SOVEREIGN","ELITE","APPROVED","LEAN"):
+            _tier_records = [h for h in _resolved if h.get("tier","") == tier_check]
+            if len(_tier_records) >= 5:
+                _tier_wr = sum(1 for h in _tier_records if h.get("outcome") == "WIN") / len(_tier_records)
+                _expected = {"SOVEREIGN": 0.65, "ELITE": 0.60, "APPROVED": 0.58, "LEAN": 0.55}.get(tier_check, 0.58)
+                if _tier_wr < _expected - 0.10:
+                    _loss_patterns.append(f"🎯 {tier_check} tier hitting {_tier_wr:.0%} vs expected {_expected:.0%} — thresholds may be too loose")
+                elif _tier_wr > _expected + 0.12 and len(_tier_records) >= 10:
+                    _loss_patterns.append(f"✅ {tier_check} tier crushing at {_tier_wr:.0%} — model is well-calibrated here")
+
+        # Pattern: default-average prop losses
+        _default_losses = [h for h in _losses if h.get("tier","") in ("SOVEREIGN","ELITE") and not h.get("signals_active",{}).get("base_positive", True)]
+        if len(_default_losses) >= 3:
+            _loss_patterns.append(f"⚠️ {len(_default_losses)} SOVEREIGN/ELITE losses came from props without strong base signal — review edge calculation on low-data props")
+
+    st.session_state["loss_patterns"] = _loss_patterns
+
+    # ═══════════════════════════════════════════════════════════
+    # ENGINE 1+3 (merged) — NARRATIVE + CONTEXTUAL OVERRIDE
+    # Both share the identical SOVEREIGN/ELITE/APPROVED tier filter,
+    # narrative runs first (matching original order, so narrative
+    # text reflects the pre-override tier, same as before this merge).
+    # ═══════════════════════════════════════════════════════════
+    _today_month = date.today().month
+    _is_late_season = _today_month in [3, 4, 6, 9]  # NBA/NHL playoffs, NFL preseason end, MLB late
+    _team_games_cache = {}
     for prop in enriched:
         if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
             prop["Narrative"] = ""
@@ -17258,77 +17329,7 @@ def load_sport_data(sport):
         prop["Narrative"]     = narrative
         prop["NarrativeRisk"] = f"⚠️ Risk: {risk}"
 
-    # ═══════════════════════════════════════════════════════════
-    # ENGINE 2 — LOSS PATTERN ANALYZER
-    # Runs after 20+ resolved bets. Detects patterns in losses
-    # and surfaces actionable diagnostics into session state.
-    # ═══════════════════════════════════════════════════════════
-    _history_all = st.session_state.get("history", [])
-    _resolved    = [h for h in _history_all if h.get("outcome") in ("WIN","LOSS")]
-    _loss_patterns = []
-    if len(_resolved) >= 20:
-        _losses = [h for h in _resolved if h.get("outcome") == "LOSS"]
-        _wins   = [h for h in _resolved if h.get("outcome") == "WIN"]
-        _total  = len(_resolved)
-        _wr     = len(_wins) / _total
-
-        # Pattern: away game losses
-        _away_losses = [h for h in _losses if not h.get("signals_active",{}).get("location_home", True)]
-        _away_total  = [h for h in _resolved if not h.get("signals_active",{}).get("location_home", True)]
-        if len(_away_total) >= 5:
-            _away_wr = sum(1 for h in _away_total if h.get("outcome") == "WIN") / len(_away_total)
-            if _away_wr < _wr - 0.10:
-                _loss_patterns.append(f"📍 Away game picks hitting only {_away_wr:.0%} vs {_wr:.0%} overall — location signal may be under-weighted")
-
-        # Pattern: back-to-back losses
-        _b2b_losses = [h for h in _losses if h.get("signals_active",{}).get("back_to_back", False)]
-        _b2b_total  = [h for h in _resolved if h.get("signals_active",{}).get("back_to_back", False)]
-        if len(_b2b_total) >= 3:
-            _b2b_wr = sum(1 for h in _b2b_total if h.get("outcome") == "WIN") / len(_b2b_total)
-            if _b2b_wr < 0.40:
-                _loss_patterns.append(f"😴 Back-to-back picks hitting only {_b2b_wr:.0%} — consider avoiding B2B props")
-
-        # Pattern: sport-specific underperformance
-        _sport_groups = {}
-        for h in _resolved:
-            sp = h.get("sport","?")
-            _sport_groups.setdefault(sp, []).append(h)
-        for sp, records in _sport_groups.items():
-            if len(records) >= 8:
-                sp_wr = sum(1 for h in records if h.get("outcome") == "WIN") / len(records)
-                if sp_wr < _wr - 0.12:
-                    _loss_patterns.append(f"📊 {sp} picking at only {sp_wr:.0%} vs {_wr:.0%} overall — review {sp} signal weights")
-
-        # Pattern: tier-level mismatch
-        for tier_check in ("SOVEREIGN","ELITE","APPROVED","LEAN"):
-            _tier_records = [h for h in _resolved if h.get("tier","") == tier_check]
-            if len(_tier_records) >= 5:
-                _tier_wr = sum(1 for h in _tier_records if h.get("outcome") == "WIN") / len(_tier_records)
-                _expected = {"SOVEREIGN": 0.65, "ELITE": 0.60, "APPROVED": 0.58, "LEAN": 0.55}.get(tier_check, 0.58)
-                if _tier_wr < _expected - 0.10:
-                    _loss_patterns.append(f"🎯 {tier_check} tier hitting {_tier_wr:.0%} vs expected {_expected:.0%} — thresholds may be too loose")
-                elif _tier_wr > _expected + 0.12 and len(_tier_records) >= 10:
-                    _loss_patterns.append(f"✅ {tier_check} tier crushing at {_tier_wr:.0%} — model is well-calibrated here")
-
-        # Pattern: default-average prop losses
-        _default_losses = [h for h in _losses if h.get("tier","") in ("SOVEREIGN","ELITE") and not h.get("signals_active",{}).get("base_positive", True)]
-        if len(_default_losses) >= 3:
-            _loss_patterns.append(f"⚠️ {len(_default_losses)} SOVEREIGN/ELITE losses came from props without strong base signal — review edge calculation on low-data props")
-
-    st.session_state["loss_patterns"] = _loss_patterns
-
-    # ═══════════════════════════════════════════════════════════
-    # ENGINE 3 — CONTEXTUAL OVERRIDE
-    # Detects real-world situations where math is right but
-    # context says otherwise. Warns AND downgrades with flag.
-    # User can manually override by re-locking post-override.
-    # ═══════════════════════════════════════════════════════════
-    _today_month = date.today().month
-    _is_late_season = _today_month in [3, 4, 6, 9]  # NBA/NHL playoffs, NFL preseason end, MLB late
-    _team_games_cache = {}
-    for prop in enriched:
-        if prop.get("Tier") not in ("SOVEREIGN","ELITE","APPROVED"):
-            continue
+        # ── ENGINE 3 — Contextual Override ──
         _overrides = []
         _original_tier = prop.get("Tier","")
         _player  = prop.get("Player","")
@@ -17339,7 +17340,6 @@ def load_sport_data(sport):
         _games   = games
 
         # Check 1: Clinched/Eliminated — team has nothing to play for
-        # Proxy: late season + heavy favorite spread (team resting starters)
         if _is_late_season and _team and _games:
             if _team not in _team_games_cache:
                 _team_games_cache[_team] = [g for g in _games if _team in g.get("Matchup","")]
@@ -17358,17 +17358,10 @@ def load_sport_data(sport):
                 except (ValueError, TypeError):
                     pass
 
-
-        # Check 2: Recent low minutes — player averaging far less than baseline
+        # Check 2: Recent low minutes
         _sample_size = prop.get("SampleSize", 0)
         _conf_mult = prop.get("ConfidenceMult", 1.0)
         if isinstance(_sample_size, (int,float)) and _sample_size >= 3:
-            # NOTE 2026-07-09: this threshold was previously < 0.80, which
-            # sample_size_confidence() can mathematically never return (0.80
-            # is its floor value, for n_games=0) - this check could never
-            # fire regardless of how thin the actual sample was. 0.92 catches
-            # genuinely small samples (n_games <= 4 per the function's curve)
-            # while leaving anything with reasonable game history alone.
             if _conf_mult < 0.92 and _original_tier in ("SOVEREIGN","ELITE"):
                 _overrides.append(f"📉 Confidence multiplier {_conf_mult:.0%} — small sample or recent minute restriction detected. Stats may not reflect current role.")
                 if _original_tier == "SOVEREIGN":
@@ -17388,7 +17381,7 @@ def load_sport_data(sport):
                 prop["Tier"] = "APPROVED"
                 prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: injury flag"
 
-        # Check 4: Line significantly above season average (fade signal)
+        # Check 4: Line significantly above season average
         if isinstance(_avg, (int,float)) and _avg > 0 and isinstance(_line, (int,float)) and _line > 0:
             pct_above = (_line - _avg) / _avg
             if pct_above > 0.20 and prop.get("Side","OVER") == "OVER":
@@ -17397,7 +17390,7 @@ def load_sport_data(sport):
                     prop["Tier"] = "ELITE"
                     prop["TierNote"] = prop.get("TierNote","") + f" | ⬇️ Contextual: line {pct_above:.0%} above avg"
 
-        # Check 5: Pinnacle AND FD/DK both fade — strong market disagreement
+        # Check 5: Pinnacle AND FD/DK both fade
         if prop.get("PinnacleConfirms") is False and prop.get("FDDKFades") is True:
             _overrides.append("🚫 Both Pinnacle AND FanDuel/DK fade this pick. Two sharp books disagree with model — high-confidence fade signal.")
             if _original_tier in ("SOVEREIGN","ELITE"):
@@ -17407,7 +17400,6 @@ def load_sport_data(sport):
                 prop["Tier"] = "LEAN"
                 prop["TierNote"] = prop.get("TierNote","") + " | ⬇️ Contextual: dual sharp fade"
 
-        # Store overrides and original tier for display
         prop["ContextOverrides"]  = _overrides
         prop["OriginalTier"]      = _original_tier if _overrides else ""
         prop["OverrideActive"]    = len(_overrides) > 0 and _original_tier != prop.get("Tier","")
