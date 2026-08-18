@@ -16774,6 +16774,8 @@ def load_sport_data(sport):
             prop["H2HRate"] = "—"
 
     # Add Pinnacle fair value signal to each prop
+    better_lines_lookup = st.session_state.get("better_lines_lookup", {})
+    _ev_lookup = st.session_state.get("ev_book_lookup", {})
     _bankroll_mult_data = compute_bankroll_multiplier()
     _bm_mult = _bankroll_mult_data.get("multiplier", 1.0) if isinstance(_bankroll_mult_data, dict) else 1.0
     _cal_history = st.session_state.get("history", [])
@@ -16808,6 +16810,7 @@ def load_sport_data(sport):
 
         # ── FanDuel/DraftKings no-vig validation using alt lines ──
         player    = prop.get("Player","")
+        _player_norm = normalize_name(player)
         stat_norm = STAT_NORMALIZE.get((sport, prop.get("Prop","")), prop.get("Prop",""))
         line      = prop.get("Line", 0)
         if fd_dk_alts:
@@ -16897,6 +16900,69 @@ def load_sport_data(sport):
         prop["EdgeTypeAction"] = _edge_type["action"]
         prop["EdgeTypeColor"]  = _edge_type["color"]
         prop["EdgeTypeReason"] = _edge_type["reason"]
+
+        # ── Better line detection ──
+        prop_key = (_player_norm, prop.get("Prop",""))
+        prop_line = prop.get("Line", 0)
+        prop_side = prop.get("Side", "OVER")
+        best_line_note = ""
+        best_line_source = ""
+        best_line_val = None
+        for alt in better_lines_lookup.get(prop_key, []):
+            alt_line = alt.get("line", 0)
+            alt_source = alt.get("source","")
+            if alt_line and alt_source:
+                is_better = (prop_side == "OVER" and float(alt_line) < float(prop_line)) or                             (prop_side == "UNDER" and float(alt_line) > float(prop_line))
+                if is_better:
+                    savings = round(abs(float(alt_line) - float(prop_line)), 1)
+                    if best_line_val is None or savings > abs(float(best_line_val) - float(prop_line)):
+                        best_line_val = alt_line
+                        best_line_source = alt_source
+                        best_line_note = f"Better on {alt_source}: {prop_side} {alt_line} (saves {savings})"
+        prop["BetterLineNote"] = best_line_note
+        prop["BetterLineSource"] = best_line_source
+        prop["BetterLineVal"] = best_line_val
+
+        # ── EV API enrichment — attach multi-book odds + EV/FV ──
+        if _ev_lookup:
+            _pk = (_player_norm, prop.get("Prop",""))
+            _ev_books = _ev_lookup.get(_pk, {})
+            if _ev_books:
+                prop["EVBooks"] = _ev_books
+                _best_ev, _best_fv, _best_link = None, None, None
+                for _bk, _bd in _ev_books.items():
+                    if _bd.get("ev") is not None:
+                        try:
+                            _ev_f = float(_bd["ev"])
+                            if _best_ev is None or _ev_f > _best_ev:
+                                _best_ev = _ev_f
+                                _best_link = _bd.get("bet_link")
+                        except (ValueError, TypeError):
+                            pass
+                    if _bd.get("fair_value") and _best_fv is None:
+                        _best_fv = _bd["fair_value"]
+                if _best_ev is not None:
+                    prop["EVSharpEV"]     = _best_ev
+                    prop["EVSharpFV"]     = _best_fv
+                    prop["EVSharpLink"]   = _best_link
+                    prop["EVSharpBooks"]  = len(_ev_books)
+            else:
+                prop["EVBooks"] = {}
+                prop["EVSharpEV"] = None
+                prop["EVSharpFV"] = None
+                prop["EVSharpLink"] = None
+                prop["EVSharpBooks"] = 0
+        else:
+            prop["EVBooks"] = {}
+            prop["EVSharpEV"] = None
+            prop["EVSharpFV"] = None
+            prop["EVSharpLink"] = None
+            prop["EVSharpBooks"] = 0
+
+        # ── AltLineUpgrade (confirmed dead stub, always None) ──
+        prop["AltLineUpgrade"] = None
+        prop["BestAltLine"] = None
+        prop["BestAltEV"] = None
 
     # ── Kalshi + Polymarket + Covers + Action Network public (merged) ──
     # All 4 confirmed independent: no Tier writes, no cross-reads of each
@@ -17076,74 +17142,6 @@ def load_sport_data(sport):
 
 
 
-
-    # Add better line detection to each prop
-    better_lines_lookup = st.session_state.get("better_lines_lookup", {})
-    _ev_lookup = st.session_state.get("ev_book_lookup", {})
-    for prop in enriched:
-        # ── Better line detection ──
-        player_norm = normalize_name(prop.get("Player",""))
-        prop_key = (player_norm, prop.get("Prop",""))
-        prop_line = prop.get("Line", 0)
-        prop_side = prop.get("Side", "OVER")
-        best_line_note = ""
-        best_line_source = ""
-        best_line_val = None
-        for alt in better_lines_lookup.get(prop_key, []):
-            alt_line = alt.get("line", 0)
-            alt_source = alt.get("source","")
-            if alt_line and alt_source:
-                is_better = (prop_side == "OVER" and float(alt_line) < float(prop_line)) or                             (prop_side == "UNDER" and float(alt_line) > float(prop_line))
-                if is_better:
-                    savings = round(abs(float(alt_line) - float(prop_line)), 1)
-                    if best_line_val is None or savings > abs(float(best_line_val) - float(prop_line)):
-                        best_line_val = alt_line
-                        best_line_source = alt_source
-                        best_line_note = f"Better on {alt_source}: {prop_side} {alt_line} (saves {savings})"
-        prop["BetterLineNote"] = best_line_note
-        prop["BetterLineSource"] = best_line_source
-        prop["BetterLineVal"] = best_line_val
-
-        # ── EV API enrichment — attach multi-book odds + EV/FV ──
-        if _ev_lookup:
-            _pk = (normalize_name(prop.get("Player","")), prop.get("Prop",""))
-            _ev_books = _ev_lookup.get(_pk, {})
-            if _ev_books:
-                prop["EVBooks"] = _ev_books
-                _best_ev, _best_fv, _best_link = None, None, None
-                for _bk, _bd in _ev_books.items():
-                    if _bd.get("ev") is not None:
-                        try:
-                            _ev_f = float(_bd["ev"])
-                            if _best_ev is None or _ev_f > _best_ev:
-                                _best_ev = _ev_f
-                                _best_link = _bd.get("bet_link")
-                        except (ValueError, TypeError):
-                            pass
-                    if _bd.get("fair_value") and _best_fv is None:
-                        _best_fv = _bd["fair_value"]
-                if _best_ev is not None:
-                    prop["EVSharpEV"]     = _best_ev
-                    prop["EVSharpFV"]     = _best_fv
-                    prop["EVSharpLink"]   = _best_link
-                    prop["EVSharpBooks"]  = len(_ev_books)
-            else:
-                prop["EVBooks"] = {}
-                prop["EVSharpEV"] = None
-                prop["EVSharpFV"] = None
-                prop["EVSharpLink"] = None
-                prop["EVSharpBooks"] = 0
-        else:
-            prop["EVBooks"] = {}
-            prop["EVSharpEV"] = None
-            prop["EVSharpFV"] = None
-            prop["EVSharpLink"] = None
-            prop["EVSharpBooks"] = 0
-
-        # ── AltLineUpgrade (confirmed dead stub, always None) ──
-        prop["AltLineUpgrade"] = None
-        prop["BestAltLine"] = None
-        prop["BestAltEV"] = None
 
     arb_opps = detect_arbitrage_opportunities(sport)
     st.session_state["arb_opportunities"] = arb_opps
