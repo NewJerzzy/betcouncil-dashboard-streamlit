@@ -13424,9 +13424,7 @@ def load_sport_data(sport):
     def _pf_wynnbet_lines():   return fetch_wynnbet_game_lines(sport)
     def _pf_unibet_lines():    return fetch_unibet_game_lines(sport)
     def _pf_bet365_lines():    return fetch_bet365_game_lines(sport)
-    def _pf_sharpapi_lines():  return []  # SharpAPI removed (Aug 1 2026) -- redundant with EVSharps (free EV) + ODDS_API_IO_KEY (Pinnacle), user declined to pay for anything SharpAPI would add
     def _pf_bookmaker_lines(): return fetch_bookmaker_game_lines(sport)
-    def _pf_heritage_lines():  return []  # Heritage Sports: confirmed dead end (needs a paid aggregator subscription, no free/credential path exists) -- removed Aug 2 2026
     def _pf_betmgm_lines():    return fetch_betmgm_game_lines(sport)
     def _pf_sportsline_lines(): return fetch_sportsline_game_lines(sport)
     def _pf_sbr_lines():        return fetch_sbr_game_lines(sport)
@@ -13438,9 +13436,6 @@ def load_sport_data(sport):
     def _pf_caesars_lines():
         return fetch_caesars_lines(sport)
     def _pf_caesars_props():   return fetch_caesars_props(sport)
-    def _pf_fd_props_sa():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
-    def _pf_sharpapi_drops(): return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
-    def _pf_sharpapi_ev():   return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_evbets2():
         try:
             from fetchers import fetch_evbets_from_gist as _fetch_evbets
@@ -13725,7 +13720,6 @@ def load_sport_data(sport):
             return _out
         except Exception:
             return []
-    def _pf_sharpapi_props():  return []  # SharpAPI removed (Aug 1 2026) -- see _pf_sharpapi_lines
     def _pf_savant_xstats():   return fetch_savant_statcast() if sport == "MLB" else {}
     def _pf_savant_sprint():   return fetch_savant_sprint_speed() if sport == "MLB" else {}
     def _pf_savant_expected(): return fetch_savant_expected_stats() if sport == "MLB" else {}
@@ -13796,14 +13790,14 @@ def load_sport_data(sport):
         _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
-        _pf_sharpapi_lines, _pf_sharpapi_props, _pf_betmgm_lines, _pf_heritage_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
+        _pf_betmgm_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines,
         _pf_signalodds, _pf_betslib, _pf_gamblingforecast, _pf_bettingpros, _pf_sportsinsights, _pf_mlb_pitchers, _pf_oddsportal, _pf_numberfire, _pf_sleeper, _pf_bobbys_picks, _pf_bobbys_props, _pf_bobbys_briefing, _pf_bobbys_scoreboard, _pf_bobbys_best_prices, _pf_betslib_live, _pf_fp_proj, _pf_def_rank, _pf_caesars_props, _pf_betonline_off, _pf_bovada_lines, _pf_bovada_props, _pf_bet365, _pf_mybookie, _pf_fanduel_lines, _pf_caesars_lines,
         _pf_savant_xstats, _pf_savant_sprint, _pf_savant_expected, _pf_savant_arsenal, _pf_savant_batted,
         _pf_mlb_lineups, _pf_openmeteo, _pf_ump_scorecards,
         _pf_pinnacle_lines,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
-        _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
+        _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated,
         _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2, _pf_bovada_lines2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
@@ -13818,14 +13812,14 @@ def load_sport_data(sport):
      an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
-     sharpapi_lines_raw, sharpapi_props_raw, betmgm_lines_raw, heritage_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
+     betmgm_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw,
      signalodds_raw, betslib_raw, gamblingforecast_raw, bettingpros_raw, sportsinsights_raw, mlb_pitchers_raw, oddsportal_raw, numberfire_raw, sleeper_raw, bobbys_picks_raw, bobbys_props_raw, bobbys_briefing_raw, bobbys_scoreboard_raw, bobbys_best_prices_raw, betslib_live_raw, fp_proj_raw, def_rank_raw, caesars_props_raw, betonline_off_raw, bovada_lines_raw, bovada_props_raw, bet365_raw, mybookie_raw, fanduel_lines_raw, caesars_lines_raw,
      savant_xstats_raw, savant_sprint_raw, savant_expected_raw, savant_arsenal_raw, savant_batted_raw,
      mlb_lineups_raw, openmeteo_raw, ump_scorecards_raw,
      pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
-     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw,
+     parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw,
      evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
@@ -13927,15 +13921,11 @@ def load_sport_data(sport):
     st.session_state["wynnbet_game_lines"]   = wynnbet_lines_raw   or []
     st.session_state["unibet_game_lines"]    = unibet_lines_raw    or []
     st.session_state["bet365_game_lines"]    = bet365_lines_raw    or bet365_raw or []
-    st.session_state["sharpapi_lines"]       = sharpapi_lines_raw  or []
-    st.session_state["sharpapi_props"]       = sharpapi_props_raw  or []
     st.session_state["betmgm_game_lines"]    = betmgm_lines_raw    or []
-    st.session_state["heritage_game_lines"]   = heritage_lines_raw  or []
     st.session_state["bookmaker_game_lines"]  = bookmaker_lines_raw or []
     st.session_state["sportsline_game_lines"] = sportsline_lines_raw or []
     st.session_state["sbr_game_lines"]        = sbr_lines_raw or []
     st.session_state["thescore_game_lines"]   = thescore_lines_raw or []
-    st.session_state["fanduel_props_sa"]    = fd_props_sa_raw     or []
     # Override with browser harvester if fresher
     try:
         from fetchers import fetch_fanduel_props_from_gist as _fd_gist
@@ -13943,14 +13933,9 @@ def load_sport_data(sport):
         if _fd_primary:
             st.session_state["fanduel_props"]    = _fd_primary
             st.session_state["fanduel_props_src"] = _fd_src
-        elif fd_props_sa_raw:
-            st.session_state["fanduel_props"]    = fd_props_sa_raw
-            st.session_state["fanduel_props_src"] = "sharpapi"
     except Exception:
         _logger.debug("Silent except at line 10717")
         pass
-    st.session_state["sharpapi_line_drops"] = sharpapi_drops_raw  or []
-    st.session_state["sharpapi_ev_opps"]    = sharpapi_ev_raw     or []
     # ── Browser harvester data → session state (primary/secondary) ─────────
     _harvester_sources = [
         ("fetch_linestar_props_from_gist",     "linestar_props_data",   "linestar_props_src"),
@@ -14001,10 +13986,6 @@ def load_sport_data(sport):
     st.session_state["fantasypros_proj"]    = fp_proj_raw         or {}
     st.session_state["defense_rankings"]    = def_rank_raw        or {}
     st.session_state["caesars_props"]        = caesars_props_raw   or []
-    # Merge SharpAPI FanDuel props into fanduel_props session key
-    _fd_sa = st.session_state.get("fanduel_props_sa", [])
-    if _fd_sa:
-        st.session_state["fanduel_props"] = _fd_sa
     st.session_state["betonline_offering"]   = betonline_off_raw   or []
     st.session_state["bovada_game_lines"]    = bovada_lines_raw    or []
     st.session_state["bovada_props"]         = bovada_props_raw    or []
@@ -16995,18 +16976,6 @@ def load_sport_data(sport):
     # two -- applying both in either order on the same prop gives the same
     # final result. Kept positioned after Pinnacle/FDDK, before Kelly,
     # matching original order.
-    _sharp_props = st.session_state.get("sharpapi_props", [])
-    _sharp_ev_set = {}
-    if _sharp_props:
-        for _sp in _sharp_props:
-            _spname = normalize_name(_sp.get("Player", ""))
-            _sstat  = str(_sp.get("Prop", "")).lower()
-            _ev    = _sp.get("ev_percent") or 0
-            _is_ev = _sp.get("is_ev_positive", False)
-            _skey = (_spname, _sstat)
-            if _skey not in _sharp_ev_set or _ev > _sharp_ev_set[_skey][0]:
-                _sharp_ev_set[_skey] = (_ev, _is_ev)
-
     _papi_ev = st.session_state.get("parlayapi_ev", [])
     _papi_ev_set = set()
     if _papi_ev:
@@ -17016,19 +16985,11 @@ def load_sport_data(sport):
             if _papname:
                 _papi_ev_set.add((_papname, _papstat))
 
-    if _sharp_ev_set or _papi_ev_set:
+    if _papi_ev_set:
         for prop in enriched:
             _pk = (normalize_name(prop.get("Player", "")), str(prop.get("Prop", "")).lower())
-            if _pk in _sharp_ev_set:
-                _ev_val, _is_ev = _sharp_ev_set[_pk]
-                prop["SharpAPIEV"]      = _is_ev
-                prop["SharpAPIEVPct"]   = round(_ev_val, 2)
-                if _is_ev and prop.get("Edge", 0) > 0.02:
-                    prop["Tier"] = "ELITE" if prop.get("Tier") == "APPROVED" else prop.get("Tier")
-                    prop["SignalNotes"] = prop.get("SignalNotes", "") + f" ⚡ SharpAPI EV+{_ev_val:.1f}%"
-            else:
-                prop["SharpAPIEV"]    = False
-                prop["SharpAPIEVPct"] = None
+            prop["SharpAPIEV"]    = False
+            prop["SharpAPIEVPct"] = None
             if _pk in _papi_ev_set:
                 prop["ParlayAPIEV"] = True
                 if prop.get("Tier") == "APPROVED" and prop.get("Edge", 0) > 0.03:
