@@ -13474,16 +13474,6 @@ def load_sport_data(sport):
             return fetch_bovada_lines(sport)
         except Exception:
             return None
-    def _pf_betonline_lines2():
-        try:
-            return fetch_betonline_lines(sport)
-        except Exception:
-            return None
-    def _pf_paddypower2():
-        try:
-            return fetch_paddypower_lines(sport)
-        except Exception:
-            return None
     def _pf_signalodds():    return fetch_signalodds_events(sport)
     def _pf_betslib():       return fetch_betslib_predictions(sport)
     def _pf_gamblingforecast(): return fetch_gamblingforecast_props(sport)
@@ -13818,7 +13808,6 @@ def load_sport_data(sport):
         _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
         _pf_parlayapi_ev, _pf_parlayapi_arb, _pf_unabated, _pf_fd_props_sa, _pf_sharpapi_drops, _pf_sharpapi_ev,
         _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2, _pf_bovada_lines2,
-        _pf_betonline_lines2, _pf_paddypower2,
     ]
         return _fetch_parallel(_fns, show_progress=False)
 
@@ -13840,8 +13829,7 @@ def load_sport_data(sport):
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
      ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
      parlayapi_ev_raw, parlayapi_arb_raw, unabated_raw, fd_props_sa_raw, sharpapi_drops_raw, sharpapi_ev_raw,
-     evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw,
-     betonline_lines2_raw, paddypower2_raw) = _results
+     evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw) = _results
 
     # ── Unabated player-props fair value — deliberately its own small batch,
     # NOT added to the _parallel_fns tuple above. That tuple is already a
@@ -17582,18 +17570,6 @@ def load_sport_data(sport):
     # enrichment pass)
     if bovada_lines2_raw:
         st.session_state["bovada_lines"] = bovada_lines2_raw
-
-    # BetOnline game lines — all sports, no auth required (moved into
-    # parallel batch above; was a sequential blocking call)
-    if betonline_lines2_raw:
-        st.session_state["betonline_lines"] = betonline_lines2_raw
-
-    # Paddy Power game lines — direct HTML harvest, no Odds API quota cost.
-    # UK book: strongest on soccer/tennis, thinner on NBA/NFL/NHL/MLB — used
-    # as a line-shop supplement, not a primary source. Moved into parallel
-    # batch above; was a sequential blocking call.
-    if paddypower2_raw:
-        st.session_state["paddypower_lines"] = paddypower2_raw
 
     _bc_track("enrichment_post_loop", _time_mod.perf_counter() - _post_loop_t0,
               {"props": len(enriched)})
