@@ -428,7 +428,7 @@ def main() -> int:
 
     # ── Step 4: Merge into shared file, preserving other scripts' keys ────
     log("Acquiring evbets_combined lock")
-    lock_token = acquire_lock(GIST_ID, github_token, "evbets_combined", holder="evbets")
+    lock_token = acquire_lock(GIST_ID, github_token, "evbets_combined", holder="evbets", max_attempts=7)
     if not lock_token:
         log("Could not acquire evbets_combined lock -- skipping this run to avoid a collision")
         return 0
