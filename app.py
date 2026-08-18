@@ -11,7 +11,21 @@ if "fetchers" in _sys_reload_guard.modules:
     # existed in the current fetchers.py source but were NameErrors at
     # runtime -- this is why. Reloading fetchers first, before app_core,
     # ensures app_core's wildcard import always sees the latest code.
+    #
+    # Real regression this introduced, fixed here too (2026-08-18): reloading
+    # fetchers wipes its module-level _FETCH_HEALTH dict back to {} every
+    # single rerun, since module-level state doesn't survive reload() --
+    # confirmed live via Fetch Function Health dropping to "8 OK | 233 never
+    # called" on a session that had genuinely made far more real calls than
+    # that. Saving and restoring that dict's contents across the reload so
+    # health tracking still accumulates properly across a session.
+    _fh_preserved = getattr(_sys_reload_guard.modules["fetchers"], "_FETCH_HEALTH", None)
     _importlib_reload_guard.reload(_sys_reload_guard.modules["fetchers"])
+    if _fh_preserved:
+        try:
+            _sys_reload_guard.modules["fetchers"]._FETCH_HEALTH.update(_fh_preserved)
+        except Exception:
+            pass
 if "app_core" in _sys_reload_guard.modules:
     # CRITICAL: app_core.py's module-level code (session_state defaults,
     # Gist history/locks loading, etc) must re-run on EVERY Streamlit
