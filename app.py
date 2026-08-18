@@ -10254,6 +10254,43 @@ with tabs[14]:
         st.success("✅ Brief ready — select all text above and copy.")
     st.markdown("---")
 
+    # ── Real Model Health (focused, plain-language summary) ──────────
+    # Built 2026-08-18 in direct response to real user feedback: the full
+    # Data Source Status section below lists 40+ sources, most of which
+    # are comparison/context data that never touches actual scoring --
+    # a wall of yellow warnings that looks alarming regardless of whether
+    # anything that matters is actually wrong. This surfaces only the
+    # handful of things that genuinely feed your board's real numbers.
+    st.markdown("### ✅ Model Health — What Actually Matters")
+    _mh_board = st.session_state.get("board_data", []) or []
+    _mh_games = st.session_state.get("games", []) or []
+    _mh_issues = []
+    _mh_good = []
+
+    if _mh_board:
+        _mh_good.append(f"**Props loaded:** {len(_mh_board)} real props on your board")
+    else:
+        _mh_issues.append("**No props loaded yet** — load a board to check")
+
+    if _mh_games:
+        _mh_good.append(f"**Game lines loaded:** {len(_mh_games)} real games")
+    else:
+        _mh_issues.append("**No game lines loaded** — real games may not have posted yet, or check the Game Lines tab directly")
+
+    if _mh_good:
+        for _g in _mh_good:
+            st.success(f"✅ {_g}")
+    for _i in _mh_issues:
+        st.warning(f"⚠️ {_i}")
+    st.caption(
+        "This checks only what actually feeds your model's real numbers — props and game "
+        "lines. Everything in the detailed section below (FavoredProps, DraftEdge, Kalshi, "
+        "Polymarket, and 30+ others) is comparison/context data shown for reference — none "
+        "of it being 'stale' changes what your board actually scores. For audit results and "
+        "calibration detail, see the Board Audit Engine and Confidence Calibration sections below."
+    )
+    st.markdown("---")
+
     # ── Data Source Status (from last board load) ────────────
     st.markdown("### 📊 Data Source Status")
     st.caption("Based on last board load — no API calls used. Load a board to update.")
