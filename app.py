@@ -1,5 +1,17 @@
 import sys as _sys_reload_guard
 import importlib as _importlib_reload_guard
+if "fetchers" in _sys_reload_guard.modules:
+    # Real fix (2026-08-18): app_core.py does "from fetchers import *" at
+    # its own module level. The app_core reload below only re-executes
+    # app_core's code -- it does NOT reload app_core's own dependencies.
+    # On a long-running worker, that means app_core's wildcard import can
+    # silently re-run against a stale, already-cached fetchers module,
+    # missing any function added to fetchers.py after that worker started.
+    # Confirmed live: fetch_sharpapi_lines/fetch_sharpapi_props genuinely
+    # existed in the current fetchers.py source but were NameErrors at
+    # runtime -- this is why. Reloading fetchers first, before app_core,
+    # ensures app_core's wildcard import always sees the latest code.
+    _importlib_reload_guard.reload(_sys_reload_guard.modules["fetchers"])
 if "app_core" in _sys_reload_guard.modules:
     # CRITICAL: app_core.py's module-level code (session_state defaults,
     # Gist history/locks loading, etc) must re-run on EVERY Streamlit
