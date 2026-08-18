@@ -321,7 +321,7 @@ with tabs[0]:
     except Exception:
         pass
 
-    _board_all   = st.session_state.board_data or []
+    _board_all   = st.session_state.get("board_data", []) or []
     _sov_all     = sum(1 for p in _board_all if p.get("Tier","") == "SOVEREIGN")
     _elite_all   = sum(1 for p in _board_all if p.get("Tier","") == "ELITE")
     _total_props = len(_board_all)
@@ -743,7 +743,7 @@ with tabs[0]:
         # SECTION 1 — TODAY'S CARD (first thing user sees)
         # ═══════════════════════════════════════════════════
         # ── 1. RECOMMENDED ACTION ──────────────────────────
-        board = st.session_state.board_data or []
+        board = st.session_state.get("board_data", []) or []
         game_analysis = st.session_state.get("game_analysis", [])
         sov_count     = sum(1 for p in board if p.get("Tier","") == "SOVEREIGN")
         elite_count   = sum(1 for p in board if p.get("Tier","") == "ELITE")
@@ -1827,7 +1827,7 @@ with tabs[0]:
 
 # ----- TAB 1: EV OPTIMIZER (DFF-style) -----
 with tabs[4]:
-    _board  = st.session_state.board_data or []
+    _board  = st.session_state.get("board_data", []) or []
     _sport  = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     _kalshi = st.session_state.get("kalshi_markets", [])
     _poly   = st.session_state.get("polymarket_markets", [])
@@ -7267,10 +7267,10 @@ with tabs[13]:
     if _view in ("Daily", "All"):
         st.markdown("### 🎯 Portfolio Exposure")
         st.caption("Am I over-concentrated? Checks sport, team, and player exposure across today's locked picks.")
-        _portfolio = compute_portfolio_exposure(st.session_state.board_data)
+        _portfolio = compute_portfolio_exposure(st.session_state.get("board_data", []))
         if _portfolio:
             # Prop correlation score
-            _active_for_corr = [p for p in (st.session_state.board_data or [])
+            _active_for_corr = [p for p in (st.session_state.get("board_data", []) or [])
                                 if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")][:8]
             _corr_score, _corr_groups = compute_prop_correlation_score(_active_for_corr)
             _corr_color = "#22c55e" if _corr_score < 0.25 else "#e8a020" if _corr_score < 0.50 else "#e04040"
@@ -7715,7 +7715,7 @@ with tabs[7]:
     st.markdown('<div class="bc-section-header">🔍 Slip Analyzer</div>', unsafe_allow_html=True)
     st.caption("Enter any prop slip — from PrizePicks, ParlayPlay, Underdog, or anywhere. The model analyzes each pick and scores the full parlay.")
 
-    board = st.session_state.board_data
+    board = st.session_state.get("board_data", [])
     board_loaded = bool(board)
 
     if not board_loaded:
@@ -8594,9 +8594,9 @@ with tabs[8]:
             # Lookup has its own independent sport selector, so "soto" typed
             # while the main board sits on NBA should still search MLB names.
             _board_names_this_sport = sorted(set(
-                p["Player"] for p in st.session_state.board_data
+                p["Player"] for p in st.session_state.get("board_data", [])
                 if p.get("Sport", "").upper() == pl_sport_sel.upper()
-            )) if st.session_state.board_data else []
+            )) if st.session_state.get("board_data", []) else []
             if pl_name_input and len(pl_name_input) >= 3:
                 _matches = [n for n in _board_names_this_sport if normalize_name(pl_name_input) in normalize_name(n)]
                 if _matches:
@@ -8604,7 +8604,7 @@ with tabs[8]:
                     if _selected and _selected != "— type to search —":
                         pl_name_input = _selected
                         # Auto-fill opponent from board data
-                        _board_match = next((p for p in st.session_state.board_data
+                        _board_match = next((p for p in st.session_state.get("board_data", [])
                                              if p["Player"] == _selected and p.get("Sport","").upper() == pl_sport_sel.upper()), None)
                         if _board_match and not st.session_state.get("pl_opp"):
                             st.session_state["pl_opp_autofill"] = _board_match.get("Opponent", "")
@@ -9046,7 +9046,7 @@ with tabs[8]:
                 st.markdown(_bc_df_html(log_df), unsafe_allow_html=True)
 
             # Find this player on today's board
-            board = st.session_state.board_data
+            board = st.session_state.get("board_data", [])
             if board:
                 norm_pl = normalize_name(pl_name_d)
                 board_props = [p for p in board if normalize_name(p.get("Player","")) == norm_pl]
@@ -9599,7 +9599,7 @@ with tabs[9]:
 with tabs[5]:
     st.markdown('<div class="bc-section-header">🛒 Line Shopping</div>', unsafe_allow_html=True)
     st.caption("Compares lines across all loaded sources — DFS platforms + sportsbooks. Load the board first to populate.")
-    board_ls = st.session_state.board_data
+    board_ls = st.session_state.get("board_data", [])
     if not board_ls:
         st.markdown(empty_state_html("🛒", "No board loaded yet",
                                       "Pick a sport and load the board to compare lines across books."),
