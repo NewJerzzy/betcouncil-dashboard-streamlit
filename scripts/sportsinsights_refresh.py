@@ -218,7 +218,7 @@ def main() -> int:
         return 1
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="sportsinsights")
+    _lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="sportsinsights", max_attempts=7)
     if not _lock_token:
         log("Could not acquire market_feeds lock after retries -- skipping this run to avoid a collision")
         return 1
