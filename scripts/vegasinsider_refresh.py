@@ -220,9 +220,27 @@ def main() -> None:
         )
         consensus = parse_consensus(consensus_html)
         log(f"Consensus lines: {len(consensus)} games parsed")
+        if not consensus and consensus_html:
+            # Real fix (2026-08-18): parse_consensus uses a regex-based
+            # scraper against specific CSS class names / HTML structure.
+            # "0 games parsed" with a real, non-empty HTML response almost
+            # always means the site's markup changed and the regex no
+            # longer matches -- but there was no way to see *what* changed
+            # without capturing the actual HTML. Saving a real snippet so
+            # the next failure's debug file shows the current structure.
+            _snippet = consensus_html[:4000]
+            _has_tbody = "<tbody>" in consensus_html
+            _has_game_odds_open = 'class="game-odds open"' in consensus_html
+            _has_game_odds_current = 'class="game-odds current"' in consensus_html
+            _has_data_abbr = "data-abbr=" in consensus_html
+            log(f"  DEBUG: html_len={len(consensus_html)} has_tbody={_has_tbody} "
+                f"has_game_odds_open={_has_game_odds_open} "
+                f"has_game_odds_current={_has_game_odds_current} "
+                f"has_data_abbr={_has_data_abbr}")
     except Exception as exc:
         log(f"ERROR fetching consensus: {exc}")
         consensus = []
+        _snippet = ""
 
     payload = {
         "source": "vegasinsider",
