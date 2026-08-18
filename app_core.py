@@ -16028,14 +16028,16 @@ def load_sport_data(sport):
         _sb_matchup = _cached_matchup or ""
         home_team = home_teams.get(_sb_matchup, "")
         away_team = away_teams.get(_sb_matchup, "")
+        _home_team_norm = normalize_name(home_team or "")
+        _away_team_norm = normalize_name(away_team or "")
         if home_team or away_team:
             try:
                 _sbd = st.session_state.get("scanbet_drops", [])
                 _sb_hit = next((d for d in _sbd
                     if d.get("is_steam") and abs(d.get("drop_pct",0)) > 0.02 and (
-                        normalize_name(home_team or "") in normalize_name(d.get("home",""))
-                        or normalize_name(away_team or "") in normalize_name(d.get("away",""))
-                        or normalize_name(home_team or "") in normalize_name(d.get("game",""))
+                        _home_team_norm in normalize_name(d.get("home",""))
+                        or _away_team_norm in normalize_name(d.get("away",""))
+                        or _home_team_norm in normalize_name(d.get("game",""))
                     )), None)
                 if _sb_hit:
                     _dp    = _sb_hit.get("drop_pct",0)
@@ -16087,8 +16089,8 @@ def load_sport_data(sport):
             _sbd_all = st.session_state.get("scanbet_drops",[])
             if _sbd_all and (home_team or away_team):
                 _scanbet_raw = next((d.get("raw",{}) for d in _sbd_all
-                    if normalize_name(home_team or "") in normalize_name(d.get("home",""))
-                    or normalize_name(away_team or "") in normalize_name(d.get("away",""))
+                    if _home_team_norm in normalize_name(d.get("home",""))
+                    or _away_team_norm in normalize_name(d.get("away",""))
                 ), None)
             _inj = [{"player":i,"role":"starter","status":"out"}
                     for i in prop.get("InjuryContext","").split(",") if i.strip()] if prop.get("InjuryContext") else []
@@ -16104,13 +16106,13 @@ def load_sport_data(sport):
         # ── EVBets +EV signal overlay ────────────────────────────────────────
         if home_team or away_team:
             try:
-                _evb_key = ("_evbets", home_team, away_team, normalize_name(player or ""))
+                _evb_key = ("_evbets", home_team, away_team, _player_norm)
                 if _evb_key not in _team_matchup_cache:
                     _evb = st.session_state.get("evbets_ev_picks",[]) + st.session_state.get("evbets_prop_picks",[])
                     _team_matchup_cache[_evb_key] = next((e for e in _evb
-                        if normalize_name(home_team or "") in normalize_name(e.get("event",""))
-                        or normalize_name(away_team or "") in normalize_name(e.get("event",""))
-                        or normalize_name(player or "") in normalize_name(e.get("event",""))
+                        if _home_team_norm in normalize_name(e.get("event",""))
+                        or _away_team_norm in normalize_name(e.get("event",""))
+                        or _player_norm in normalize_name(e.get("event",""))
                     ), None)
                 _evb_hit = _team_matchup_cache[_evb_key]
                 if _evb_hit:
