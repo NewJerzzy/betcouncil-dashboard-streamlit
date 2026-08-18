@@ -102,7 +102,7 @@ def push_to_gist(key: str, payload: dict) -> bool:
         log("ERROR: GITHUB_TOKEN not set")
         return False
     body = json.dumps({"files": {key: {"content": json.dumps(payload, indent=2)}}}).encode()
-    for attempt in range(4):
+    for attempt in range(6):
         req = urllib.request.Request(
             f"https://api.github.com/gists/{GIST_ID}",
             data=body,
@@ -122,8 +122,9 @@ def push_to_gist(key: str, payload: dict) -> bool:
                     log(f"Push returned 200 but {key} missing from response -- retrying")
         except Exception as e:
             log(f"Push attempt {attempt+1} failed: {e}")
-        if attempt < 3:
-            time.sleep(5 * (attempt + 1))
+        if attempt < 5:
+            wait = min(10 * (2 ** attempt), 90)
+            time.sleep(wait)
     return False
 
 
