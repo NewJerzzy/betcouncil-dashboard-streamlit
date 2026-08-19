@@ -8511,7 +8511,7 @@ def build_new_bettor_shortlist(max_props=6, max_games=6, min_tier="ELITE"):
             # fully-enriched board (real opp_def_rating, real is_home,
             # player_name passed so every signal fires, both OVER and
             # UNDER checked) -- not the old hardcoded/OVER-only fallback.
-            _nb_board, _, _, _, _, _ = load_sport_data(sport)
+            _nb_board, _, _, _, _, _ = load_sport_data_cached(sport)
             for p in (_nb_board or []):
                 tier = p.get("Tier", "")
                 if _BEGINNER_TIER_ORDER.get(tier, 0) < min_rank:
@@ -13144,6 +13144,35 @@ def _fetch_harvester_data_cached(sport, _fn_names_tuple):
         return dict(_hx.map(_run_one_harvester, _fn_names_tuple))
 
 
+def load_sport_data_cached(sport, force_refresh=False):
+    """
+    Real caching wrapper around load_sport_data (2026-08-19). Full
+    enrichment (fetch + score 500+ props) is genuinely expensive --
+    confirmed via real production timing, roughly 100+ seconds for a
+    full MLB slate. Most of that work is identical if called again
+    within a short window (odds/lineups rarely change meaningfully in
+    under 2 minutes). Caches the complete real result per sport with a
+    2-minute TTL in session_state -- a cache hit returns instantly
+    instead of re-running the full pipeline.
+    Honest tradeoff: data can be up to 2 minutes stale on a cache hit.
+    That's reasonable for props/lines that don't move that fast, but
+    real -- force_refresh=True always bypasses the cache for anyone who
+    needs guaranteed-current data before placing a bet.
+    """
+    _cache_key = f"_lsd_cache_{sport}"
+    _cached = st.session_state.get(_cache_key)
+    if not force_refresh and _cached is not None:
+        _age_seconds = _time_mod.time() - _cached["cached_at"]
+        if _age_seconds < 120:
+            st.session_state["_lsd_cache_hit"] = True
+            st.session_state["_lsd_cache_age"] = round(_age_seconds, 1)
+            return _cached["result"]
+    st.session_state["_lsd_cache_hit"] = False
+    result = load_sport_data(sport)
+    st.session_state[_cache_key] = {"result": result, "cached_at": _time_mod.time()}
+    return result
+
+
 def load_sport_data(sport):
     """Load all data for a sport: props, game lines, injuries, signals. Returns (board, games, n_defaults, n_edge, home_teams, away_teams)."""
     _setup_t0 = _time_mod.perf_counter()
@@ -15424,6 +15453,14 @@ def load_sport_data(sport):
               {"props": len(props)})
     _bc_track("enrichment_setup_postfetch", _time_mod.perf_counter() - _setup_post_fetch_t0,
               {"props": len(props)})
+    _MAX_PROPS_PER_LOAD = 500
+    if len(props) > _MAX_PROPS_PER_LOAD:
+        _dropped_count = len(props) - _MAX_PROPS_PER_LOAD
+        props = props[:_MAX_PROPS_PER_LOAD]
+        st.session_state["_props_dropped_this_load"] = _dropped_count
+        _logger.warning(f"Capped props at {_MAX_PROPS_PER_LOAD} -- {_dropped_count} real props dropped this load (no full enrichment) to keep load time bounded")
+    else:
+        st.session_state["_props_dropped_this_load"] = 0
     _main_loop_t0 = _time_mod.perf_counter()
     for p in props:
         stat_raw = p["Prop"]
@@ -18229,7 +18266,9 @@ with st.sidebar:
         _skeleton_ph.markdown(skeleton_rows_html(5, height_px=58), unsafe_allow_html=True)
         with st.spinner(f"Fetching {sport_sel} from PrizePicks/Underdog..."):
             _enrich_t0 = _time_mod.perf_counter()
-            board, games, n_def, n_edge, home_teams, away_teams = load_sport_data(sport_sel)
+            board, games, n_def, n_edge, home_teams, away_teams = load_sport_data_cached(sport_sel)
+            if st.session_state.get("_lsd_cache_hit"):
+                st.caption(f"⚡ Served from cache ({st.session_state.get('_lsd_cache_age', 0):.0f}s old, refreshes automatically after 2 minutes) — wait 2 minutes and click Load Board again for guaranteed-fresh odds right now.")
             _skeleton_ph.empty()
             _bc_track("enrichment", _time_mod.perf_counter() - _enrich_t0,
                       {"props": len(board), "sport": sport_sel})
