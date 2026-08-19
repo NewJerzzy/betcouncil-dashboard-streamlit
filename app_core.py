@@ -15453,7 +15453,7 @@ def load_sport_data(sport):
               {"props": len(props)})
     _bc_track("enrichment_setup_postfetch", _time_mod.perf_counter() - _setup_post_fetch_t0,
               {"props": len(props)})
-    _MAX_PROPS_PER_LOAD = 500
+    _MAX_PROPS_PER_LOAD = 1200
     if len(props) > _MAX_PROPS_PER_LOAD:
         _dropped_count = len(props) - _MAX_PROPS_PER_LOAD
         props = props[:_MAX_PROPS_PER_LOAD]
