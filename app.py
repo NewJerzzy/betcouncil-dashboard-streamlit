@@ -11085,6 +11085,18 @@ with tabs[14]:
         st.caption("⏱️ Performance telemetry activates after first board load.")
     st.markdown("---")
 
+    # ── MLB ML Divisor Diagnostic (real, 2026-08-18) ──────────────────
+    # Flags every MLB game this board load where the sigmoid formula
+    # produced an extreme win probability (>80% or <20%), with the real
+    # power_diff and divisor that produced it -- concrete evidence for
+    # whether _ml_divisor=1.5 needs real recalibration, not a guess.
+    _ml_diag = st.session_state.get("_ml_divisor_diag", [])
+    if _ml_diag:
+        with st.expander(f"🔬 MLB ML Divisor Diagnostic — {len(_ml_diag)} extreme probability(s) this session", expanded=False):
+            st.caption("Real power_diff/h_fair values behind any MLB moneyline edge flagged as extreme. Use this to judge whether the 1.5 divisor is producing realistic probabilities for the actual power-rating gaps seen today.")
+            for _d in reversed(_ml_diag):
+                st.caption(f"**{_d['matchup']}** — power_diff={_d['power_diff']:.1f} (÷{_d['divisor']}) → h_fair={_d['h_fair']:.1%}")
+
     # ── VSiN Intelligence Panel ───────────────────────────────
     st.markdown("### 🎯 VSiN Intelligence")
     _sport_vsin = st.session_state.get("last_sport", "MLB")
