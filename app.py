@@ -11085,6 +11085,11 @@ with tabs[14]:
         st.caption("⏱️ Performance telemetry activates after first board load.")
     st.markdown("---")
 
+    # ── Props Dropped Warning (real, 2026-08-19) ───────────────────────
+    _dropped_props = st.session_state.get("_props_dropped_this_load", 0)
+    if _dropped_props > 0:
+        st.warning(f"⚠️ {_dropped_props} real props were NOT scored this load — capped at 500 props to keep load time bounded. These props got zero enrichment, not just deferred scoring.")
+
     # ── MLB ML Divisor Diagnostic (real, 2026-08-18) ──────────────────
     # Flags every MLB game this board load where the sigmoid formula
     # produced an extreme win probability (>80% or <20%), with the real
