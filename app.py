@@ -11292,14 +11292,22 @@ with tabs[14]:
                 _cov_spread = sum(1 for g in _cov_base if _has_market(g, "SPREAD")) / _n_games
                 _cov_total  = sum(1 for g in _cov_base if _has_market(g, "TOTAL")) / _n_games
                 _cov_ml     = sum(1 for g in _cov_base if _has_market(g, "ML")) / _n_games
-                # MLB has thinner odds coverage (15 games/day, not all markets liquid)
-                _spread_threshold = 0.70 if _audit_sport == "MLB" else 0.80
-                _total_threshold  = 0.70 if _audit_sport == "MLB" else 0.80
-                _ml_threshold     = 0.65 if _audit_sport == "MLB" else 0.80
+                # MLB and WNBA both have thinner odds coverage and fewer
+                # games/day than NBA/NFL/NHL, and the ML "coverage" number
+                # here is really an edge-qualification rate (a MONEYLINE
+                # recommendation only gets built if best_ml_edge >= 0.02),
+                # not a measure of missing raw odds data. Confirmed: a game
+                # can have complete, real odds and legitimately not clear
+                # that threshold. Lower thresholds for both, and relabeled
+                # below so this doesn't read as a routing failure when it's
+                # actually just normal edge-detection variance.
+                _spread_threshold = 0.70 if _audit_sport in ("MLB","WNBA") else 0.80
+                _total_threshold  = 0.70 if _audit_sport in ("MLB","WNBA") else 0.80
+                _ml_threshold     = 0.55 if _audit_sport in ("MLB","WNBA") else 0.80
                 _cov_issues = []
                 if _cov_spread < _spread_threshold: _cov_issues.append(f"Spread {_cov_spread:.0%}")
                 if _cov_total  < _total_threshold:  _cov_issues.append(f"Total {_cov_total:.0%}")
-                if _cov_ml     < _ml_threshold:     _cov_issues.append(f"ML {_cov_ml:.0%} ← routing suspect")
+                if _cov_ml     < _ml_threshold:     _cov_issues.append(f"ML {_cov_ml:.0%} (few games clearing 2% edge threshold)")
                 if _cov_issues:
                     _audit_results.append(_audit_fail(
                         "Audit 2 — Market Coverage",
