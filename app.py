@@ -11338,7 +11338,7 @@ with tabs[14]:
             if _src_issues or len(_recent_errors) > 3:
                 _audit_results.append(_audit_warn(
                     "Audit 3 — Source Health",
-                    f"{len(_src_issues)} fetch failure(s) | {len(_recent_errors)} recent errors | Sources: {dict(list(_src_counts.items())[:4])}"
+                    f"{len(_src_issues)} fetch failure(s) | {len(_recent_errors)} recent errors | Props by source: {dict(list(_src_counts.items())[:4])}"
                 ))
             else:
                 _audit_results.append(_audit_pass(
