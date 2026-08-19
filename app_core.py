@@ -8005,6 +8005,29 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 _ml_divisor = {"NBA": 4, "NFL": 4, "WNBA": 4, "MLB": 1.5, "NHL": 7}.get(sport, 7)
                 h_fair = 1 / (1 + math.exp(-power_diff / _ml_divisor))
                 a_fair = 1 - h_fair
+                # Real diagnostic (2026-08-18): flagged after seeing MLB
+                # moneyline edges of 30%+ in production, well beyond typical
+                # real sports-betting edges. Can't verify from this
+                # environment whether _ml_divisor=1.5 is genuinely
+                # calibrated correctly without live power-rating data. If
+                # this sigmoid produces an extreme probability (outside a
+                # realistic single-game range), log the real inputs so the
+                # next board load gives concrete evidence -- not a guess --
+                # for whether this divisor needs real recalibration.
+                if sport == "MLB" and (h_fair > 0.80 or h_fair < 0.20):
+                    try:
+                        _diag = {
+                            "matchup": f"{home_team} vs {away_team}",
+                            "h_power": h_power, "a_power": a_power,
+                            "power_diff": power_diff, "divisor": _ml_divisor,
+                            "h_fair": round(h_fair, 4),
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                        _existing_diag = st.session_state.get("_ml_divisor_diag", [])
+                        _existing_diag.append(_diag)
+                        st.session_state["_ml_divisor_diag"] = _existing_diag[-20:]
+                    except Exception:
+                        pass
 
                 # NFL: Log5 adjustment using power-rating-implied win percentages.
                 # Log5 strips schedule bias from the sigmoid output, giving a
