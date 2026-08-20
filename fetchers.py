@@ -15333,7 +15333,7 @@ def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
     market_key, market_name, margin_percent, freshness_status, expires_at,
     legs: [{bookmaker, outcome, odds, stake_pct}], locked}
     """
-    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_signalodds_feed.json", cache_minutes=10)
     data = (combined or {}).get("signalodds", {}).get("opportunities", {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("opportunities", [])
@@ -15808,7 +15808,7 @@ HARVESTER_REGISTRY = {
     "fantasylabs":     ("betcouncil_fantasylabs_{sport}.json",       30, "signal"),
     "rotowire":        ("betcouncil_rotowire_{sport}.json",          15, "signal"),
     "numberfire":      ("betcouncil_numberfire_{sport}.json",        30, "signal"),
-    "sportsinsights":  ("betcouncil_market_feeds.json",              15, "signal"),
+    "sportsinsights":  ("betcouncil_sportsinsights_feed.json",              15, "signal"),
     "oddsshark":       ("betcouncil_oddsshark_{sport}.json",         20, "signal"),
     "vegasinsider":    ("betcouncil_vegasinsider_{sport}.json",      20, "signal"),
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
@@ -15873,7 +15873,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     # 2026-08-04 to reduce concurrent-writer collisions.
     MERGED_SOURCE_KEYS = {
         "underdog":       ("underdog", "betcouncil_underdog_feed.json"),
-        "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
+        "sportsinsights": ("sportsinsights", "betcouncil_sportsinsights_feed.json"),
         "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
         "bet365":         ("bet365_{sport}", "betcouncil_oddsapiio_combined.json"),
         "smarkets":       ("game_lines_{sport}", "betcouncil_smarkets_feed.json"),
@@ -16872,7 +16872,7 @@ def fetch_sportsinsights_trends_from_gist(sport: str, max_age_minutes: int = 60)
     Returns [] if no fresh data — treat as "no data," not "confirmed
     absent."
     """
-    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_sportsinsights_feed.json", cache_minutes=5)
     data = (combined or {}).get("sportsinsights", {}).get(sport.upper(), {})
     if data and _is_fresh(data, max_age_minutes=max_age_minutes):
         raw = data.get("games", [])
@@ -17122,7 +17122,7 @@ def fetch_theoddsgap_lines_from_gist(sport: str = None, max_age_minutes: int = 6
     the real best-book/best-odds structure (see normalize_game in
     scripts/theoddsgap_widget_refresh.py for the exact shape).
     """
-    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_theoddsgap_widget_feed.json", cache_minutes=5)
     data = (combined or {}).get("theoddsgap_lines", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17146,7 +17146,7 @@ def fetch_theoddsgap_edges_from_gist(sport: str = None, max_age_minutes: int = 6
     commence_time, link, mult?, mult_under?}. Filter by sport
     (e.g. "MLB") or pass None for all sports.
     """
-    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_theoddsgap_edges_feed.json", cache_minutes=5)
     data = (combined or {}).get("theoddsgap_edges", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17171,7 +17171,7 @@ def fetch_gamelinepicks_from_gist(sport: str = None, max_age_minutes: int = 60) 
     home_team, away_team, home_score, away_score}. Filter by sport
     (e.g. "MLB") or pass None for all sports.
     """
-    combined = _read_gist_file("betcouncil_market_feeds.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_gamelinepicks_feed.json", cache_minutes=5)
     data = (combined or {}).get("gamelinepicks", {})
     if not data or not _is_fresh(data, max_age_minutes=max_age_minutes):
         return []
@@ -17503,7 +17503,7 @@ def get_harvester_status(sport: str = "MLB") -> dict:
         ("PrizePicks props",            "betcouncil_prizepicks_combined.json",     22),
         ("MyBookie lines",              f"betcouncil_mybookie_{sport}.json",       28),
         ("Bet365 lines",                 "betcouncil_oddsapiio_combined.json",       28),
-        ("SportsInsights steam",         f"betcouncil_sportsinsights_{sport}.json", 18),
+        ("SportsInsights steam",         "betcouncil_sportsinsights_feed.json", 18),
         ("OddsShark consensus",          "betcouncil_oddsshark_consensus_combined.json", 22),
         ("VegasInsider lines",           "betcouncil_vegasinsider.json",            22),
         ("BettingPros consensus",        "betcouncil_bettingpros_combined.json",    22),
@@ -17523,6 +17523,8 @@ def get_harvester_status(sport: str = "MLB") -> dict:
                 data = data.get(f"bet365_{sport}", {})
             if name == "Smarkets exchange" and isinstance(data, dict):
                 data = data.get(f"game_lines_{sport}", {})
+            if name == "SportsInsights steam" and isinstance(data, dict):
+                data = data.get("sportsinsights", {}).get(sport.upper(), {})
             if not data:
                 status[name] = {"active":False,"age_minutes":None,
                                 "source":"none",
