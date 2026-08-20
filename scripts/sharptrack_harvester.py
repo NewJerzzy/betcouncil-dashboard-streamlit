@@ -419,7 +419,7 @@ def push_merged_to_gist(wallets_payload: dict, live_payload: dict) -> bool:
         return False
     SHARED_FILE = "betcouncil_sharp_feeds.json"
 
-    lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", holder="sharptrack")
+    lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", holder="sharptrack", max_attempts=7)
     if not lock_token:
         log("Could not acquire sharp_feeds lock -- skipping this run to avoid a collision")
         return False
