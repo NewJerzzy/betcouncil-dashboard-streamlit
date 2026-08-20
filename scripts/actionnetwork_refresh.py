@@ -61,17 +61,30 @@ def log(msg: str) -> None:
 def fetch_league_games(sport: str, league_slug: str) -> list:
     date_str = date.today().strftime("%Y%m%d")
     url = f"{BASE_URL}/{league_slug}"
-    r = requests.get(url, params={"date": date_str}, headers=HEADERS, timeout=20)
-    DEBUG_LOG.append({"sport": sport, "url": r.url, "status": r.status_code,
-                       "body_snippet": r.text[:600]})
-    if r.status_code != 200:
-        return []
-    try:
-        data = r.json()
-    except json.JSONDecodeError:
-        return []
-    games = data.get("games", [])
-    return games if isinstance(games, list) else []
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params={"date": date_str}, headers=HEADERS, timeout=20)
+            DEBUG_LOG.append({"sport": sport, "url": r.url, "status": r.status_code,
+                               "body_snippet": r.text[:600], "attempt": attempt + 1})
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except json.JSONDecodeError:
+                    return []
+                games = data.get("games", [])
+                return games if isinstance(games, list) else []
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"sport": sport, "url": url, "status": "exception",
+                               "body_snippet": str(e)[:300], "attempt": attempt + 1})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+    return []
 
 
 def normalize_game(sport: str, game: dict) -> dict:
