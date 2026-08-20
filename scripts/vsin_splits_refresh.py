@@ -341,11 +341,11 @@ def main() -> int:
         return 1
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="vsin_splits", max_attempts=7)
+    _lock_token = acquire_lock(GIST_ID, github_token, "vsin_splits_feed", holder="vsin_splits", max_attempts=7)
     if not _lock_token:
         log("Could not acquire sharp_feeds lock after retries -- skipping this run to avoid a collision")
         return 1
-    atexit.register(lambda: release_lock(GIST_ID, github_token, "sharp_feeds", _lock_token))
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "vsin_splits_feed", _lock_token))
 
     if not _rate_limit_ok(github_token):
         return 0
@@ -390,7 +390,7 @@ def main() -> int:
     # all session. Rather than fight for a new slot, merge into the
     # shared_combined file (shared with evbets_refresh.py, which already
     # writes there successfully) as a sibling top-level key.
-    SHARED_FILE = "betcouncil_sharp_feeds.json"
+    SHARED_FILE = "betcouncil_vsin_splits_feed.json"
     log(f"Merging into shared file '{SHARED_FILE}' (new-file creation confirmed unreliable on this gist)")
     try:
         r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
