@@ -149,11 +149,28 @@ def _find_dict_with_key(obj, target_key: str, depth=0, max_depth=15):
 
 def fetch_league_games(sport: str, league_path: str) -> list:
     url = f"{BASE_URL}/{league_path}/picks/"
-    r = requests.get(url, headers=HEADERS, timeout=25)
-    DEBUG_LOG.append({"sport": sport, "step": "picks_page", "url": url,
-                       "status": r.status_code, "body_len": len(r.text),
-                       "body_snippet": r.text[:400]})
-    if r.status_code != 200:
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+            DEBUG_LOG.append({"sport": sport, "step": "picks_page", "url": url,
+                               "status": r.status_code, "body_len": len(r.text),
+                               "body_snippet": r.text[:400], "attempt": attempt + 1})
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"sport": sport, "step": "picks_page", "url": url,
+                               "status": "exception", "body_snippet": str(e)[:300],
+                               "attempt": attempt + 1})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+    if r is None or r.status_code != 200:
         return []
 
     data = _extract_json_after_marker(r.text, '"initialData"')
@@ -187,8 +204,22 @@ def fetch_league_games(sport: str, league_path: str) -> list:
 
 def fetch_game_pick(league_path: str, slug: str) -> dict:
     url = f"{BASE_URL}/{league_path}/games/{slug}/picks/"
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    if r.status_code != 200:
+    r = None
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 1:
+                time.sleep(1.5)
+                continue
+            return {}
+        except requests.exceptions.RequestException:
+            if attempt < 1:
+                time.sleep(1.5)
+                continue
+            return {}
+    if r is None or r.status_code != 200:
         return {}
 
     chunks = _parse_rsc_chunks(r.text)
