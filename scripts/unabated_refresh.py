@@ -603,7 +603,7 @@ def main() -> int:
         log(f"  CDN independent push failed: {e}")
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="unabated", max_attempts=7)
+    _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="unabated", max_attempts=12)
     if not _lock_token:
         log("Could not acquire sharp_feeds lock after retries -- skipping this run to avoid a collision")
         return 1
