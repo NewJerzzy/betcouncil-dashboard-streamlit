@@ -66,10 +66,27 @@ def log(msg: str) -> None:
 
 def fetch_sport_page(sport: str, path: str) -> list:
     url = f"{BASE_URL}{path}"
-    r = requests.get(url, headers=HEADERS, timeout=25)
-    DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
-                       "body_len": len(r.text), "body_snippet": r.text[:600]})
-    if r.status_code != 200:
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+            DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
+                               "body_len": len(r.text), "body_snippet": r.text[:600],
+                               "attempt": attempt + 1})
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"sport": sport, "url": url, "status": "exception",
+                               "body_snippet": str(e)[:300], "attempt": attempt + 1})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+    if r is None or r.status_code != 200:
         return []
 
     soup = BeautifulSoup(r.text, "html.parser")
