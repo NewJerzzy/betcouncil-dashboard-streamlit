@@ -135,15 +135,17 @@ def build_contract(c: dict) -> dict:
 
 def push_files(files_payload: dict, github_token: str) -> int:
     """
-    Confirmed real bug (2026-08-07): betcouncil_smarkets_game_lines_MLB/
-    props_MLB/debug.json never once landed on this Gist despite the
-    fetch logic working. Merges into betcouncil_market_feeds.json
-    (matches this script's 30-min cadence group) under a "smarkets"
-    key, using the real distributed lock.
+    Real fix (2026-08-20): moved off the crowded market_feeds lock/file
+    onto its own dedicated betcouncil_smarkets_feed.json -- reduces
+    real contention on market_feeds, and fixes app.py's read, which
+    was looking for a standalone betcouncil_smarkets_game_lines_MLB.json
+    that (per the original 2026-08-07 note below) never actually landed
+    on this Gist as its own file -- the data only ever existed nested
+    under a stripped key inside whatever shared file this merged into.
     """
     if not _rate_limit_ok(github_token):
         return 0
-    SHARED_FILE = "betcouncil_market_feeds.json"
+    SHARED_FILE = "betcouncil_smarkets_feed.json"
     merged = {}
     for fname, fbody in files_payload.items():
         key = fname.replace("betcouncil_smarkets_", "").replace(".json", "")
@@ -152,9 +154,9 @@ def push_files(files_payload: dict, github_token: str) -> int:
         except Exception:
             merged[key] = fbody["content"]
 
-    lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="smarkets", max_attempts=7)
+    lock_token = acquire_lock(GIST_ID, github_token, "smarkets_feed", holder="smarkets", max_attempts=7)
     if not lock_token:
-        log("Could not acquire market_feeds lock -- skipping this run to avoid a collision")
+        log("Could not acquire smarkets_feed lock -- skipping this run to avoid a collision")
         return 0
     try:
         try:
@@ -196,7 +198,7 @@ def push_files(files_payload: dict, github_token: str) -> int:
             return 0
         return 0
     finally:
-        release_lock(GIST_ID, github_token, "market_feeds", lock_token)
+        release_lock(GIST_ID, github_token, "smarkets_feed", lock_token)
 
 
 def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
