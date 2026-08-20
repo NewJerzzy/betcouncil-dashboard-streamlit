@@ -132,7 +132,7 @@ def push_sport_files(by_sport: dict) -> int:
     # Added an outer retry: after a successful write, verify no
     # previously-present key vanished, and redo the whole cycle from a
     # fresh read if one did, up to 3 times total.
-    SHARED_FILE = "betcouncil_sharp_feeds.json"
+    SHARED_FILE = "betcouncil_underdog_feed.json"
     merged_payload = {sport_key: {
         "sport": sport_key, "captured_at": now_iso, "data": body,
         "source": "github_actions_public_api",
@@ -220,11 +220,11 @@ def main() -> int:
     github_token = os.environ["GITHUB_TOKEN"]
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="underdog")
+    _lock_token = acquire_lock(GIST_ID, github_token, "underdog_feed", holder="underdog")
     if not _lock_token:
-        log("Could not acquire sharp_feeds lock after retries -- skipping this run to avoid a collision")
+        log("Could not acquire underdog_feed lock after retries -- skipping this run to avoid a collision")
         return 1
-    atexit.register(lambda: release_lock(GIST_ID, github_token, "sharp_feeds", _lock_token))
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "underdog_feed", _lock_token))
 
     try:
         payload = fetch_all_lines()
