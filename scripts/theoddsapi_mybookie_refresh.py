@@ -223,9 +223,15 @@ def _rate_limit_ok(github_token: str, min_remaining: int = 150) -> bool:
 
 def main() -> int:
     github_token = os.environ.get("GITHUB_TOKEN")
-    api_key = os.environ.get("ODDS_API_KEY_MYBOOKIE")
+    # Real fix (2026-08-20): ODDS_API_KEY_MYBOOKIE was confirmed missing
+    # from Secrets, causing a 100% failure rate every run. Both this
+    # script and the existing, working ODDS_API_KEY use the same
+    # provider (api.the-odds-api.com) -- falling back to that shared key
+    # if the dedicated one isn't set, rather than hard-failing. If a
+    # dedicated key is ever added, it still takes priority.
+    api_key = os.environ.get("ODDS_API_KEY_MYBOOKIE") or os.environ.get("ODDS_API_KEY")
     if not github_token or not api_key:
-        log("FATAL: GITHUB_TOKEN or ODDS_API_KEY_MYBOOKIE not set")
+        log("FATAL: GITHUB_TOKEN or ODDS_API_KEY_MYBOOKIE/ODDS_API_KEY not set")
         return 1
 
     if not _rate_limit_ok(github_token):
