@@ -60,10 +60,26 @@ def log(msg: str) -> None:
 
 def fetch_sport_trends(sport: str, sport_id: int) -> list:
     url = f"{BASE_URL}/{sport_id}"
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
-                       "body_snippet": r.text[:600]})
-    if r.status_code != 200:
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            DEBUG_LOG.append({"sport": sport, "url": url, "status": r.status_code,
+                               "body_snippet": r.text[:600], "attempt": attempt + 1})
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"sport": sport, "url": url, "status": "exception",
+                               "body_snippet": str(e)[:300], "attempt": attempt + 1})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+    if r is None or r.status_code != 200:
         return []
     try:
         data = r.json()
