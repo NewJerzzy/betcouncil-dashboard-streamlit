@@ -38,7 +38,11 @@ import time
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://api.the-odds-api.com/v4"
-API_KEY = os.environ.get("ODDS_API_KEY_NOVIG", "")
+# Real fix (2026-08-20): ODDS_API_KEY_NOVIG confirmed missing from
+# Secrets, causing a 100% failure rate every run. Falls back to the
+# existing, working ODDS_API_KEY (same provider) if the dedicated key
+# isn't set. A dedicated key still takes priority if added later.
+API_KEY = os.environ.get("ODDS_API_KEY_NOVIG") or os.environ.get("ODDS_API_KEY", "")
 
 SPORT_KEYS = {"MLB": "baseball_mlb", "NFL": "americanfootball_nfl"}
 MARKETS = "h2h,spreads,totals"
