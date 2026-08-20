@@ -15801,7 +15801,7 @@ HARVESTER_REGISTRY = {
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
     "underdog":        ("betcouncil_underdog_feed.json",                20, "props"),
     "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
-    "polymarket":      ("betcouncil_sharp_feeds.json",               30, "signal"),
+    "polymarket":      ("betcouncil_sharptrack_live.json",               30, "signal"),
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
     "bet365":          ("betcouncil_bet365_games.json",              25, "lines"),
     "pregame":         ("betcouncil_pregame_{sport}.json",           30, "signal"),
@@ -15874,7 +15874,6 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     MERGED_SOURCE_KEYS = {
         "underdog":       ("underdog", "betcouncil_underdog_feed.json"),
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
-        "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
         "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
         "bet365":         ("bet365_{sport}", "betcouncil_oddsapiio_combined.json"),
         "smarkets":       ("game_lines_{sport}", "betcouncil_smarkets_feed.json"),
