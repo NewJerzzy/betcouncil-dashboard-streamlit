@@ -219,13 +219,11 @@ def main() -> int:
         log("FATAL: GITHUB_TOKEN not set")
         return 1
 
-    import atexit
-    lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="pinnacle", max_attempts=6)
-    if not lock_token:
-        log("Could not acquire sharp_feeds lock -- skipping this run")
-        return 1
-    atexit.register(lambda: release_lock(GIST_ID, github_token, "sharp_feeds", lock_token))
-
+    # Real fix (2026-08-20): this script never writes to the shared
+    # betcouncil_sharp_feeds.json -- it writes to its own dedicated
+    # files. The sharp_feeds lock was never actually needed here and
+    # was adding unnecessary contention for every other script sharing
+    # it. Removed.
     files_payload = {}
     now_iso = datetime.now(timezone.utc).isoformat()
     total_rows = 0
