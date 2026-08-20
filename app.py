@@ -4133,7 +4133,7 @@ with tabs[3]:
         # than creating a separate, redundant display.
         _wgt_game = None
         try:
-            _wgt_combined = load_from_gist("evbets_combined", None) or {}
+            _wgt_combined = load_from_gist("wiseguyteam_feed", None) or {}
             _wgt_data = (_wgt_combined.get("wiseguyteam") or {}).get(_gsport.upper(), {})
             for _wg in _wgt_data.get("games", []):
                 _wg_home, _wg_away = _wg.get("home_team", ""), _wg.get("away_team", "")
