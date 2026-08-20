@@ -15880,6 +15880,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
         "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
         "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
+        "bet365":         ("bet365_{sport}", "betcouncil_oddsapiio_combined.json"),
     }
 
     results = []
@@ -15889,6 +15890,8 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
             continue
         if name in MERGED_SOURCE_KEYS:
             merge_key, merged_fname = MERGED_SOURCE_KEYS[name]
+            if merge_key and "{sport}" in merge_key:
+                merge_key = merge_key.format(sport=sport)
             if merged_fname not in _merged_file_cache:
                 try:
                     _merged_file_cache[merged_fname] = _read_gist_file(merged_fname, cache_minutes=5) or {}
@@ -17503,7 +17506,7 @@ def get_harvester_status(sport: str = "MLB") -> dict:
         ("Unabated sharp lines",        f"betcouncil_unabated_cdn_{sport.lower()}.json",  32),
         ("PrizePicks props",            "betcouncil_prizepicks_combined.json",     22),
         ("MyBookie lines",              f"betcouncil_mybookie_{sport}.json",       28),
-        ("Bet365 lines",                 "betcouncil_bet365_games.json",       28),
+        ("Bet365 lines",                 "betcouncil_oddsapiio_combined.json",       28),
         ("SportsInsights steam",         f"betcouncil_sportsinsights_{sport}.json", 18),
         ("OddsShark consensus",          "betcouncil_oddsshark_consensus_combined.json", 22),
         ("VegasInsider lines",           "betcouncil_vegasinsider.json",            22),
@@ -17521,6 +17524,8 @@ def get_harvester_status(sport: str = "MLB") -> dict:
     for name, filename, max_age in checks:
         try:
             data = _read_gist_file(filename, cache_minutes=2)
+            if name == "Bet365 lines" and isinstance(data, dict):
+                data = data.get(f"bet365_{sport}", {})
             if not data:
                 status[name] = {"active":False,"age_minutes":None,
                                 "source":"none",
