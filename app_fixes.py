@@ -351,10 +351,10 @@ def fetch_vsin_intelligence(sport: str = "MLB") -> dict:
             return empty
 
         files = r.json().get("files", {})
-        if "betcouncil_sharp_feeds.json" not in files:
+        if "betcouncil_vsin_splits_feed.json" not in files:
             return empty
 
-        file_obj = files["betcouncil_sharp_feeds.json"]
+        file_obj = files["betcouncil_vsin_splits_feed.json"]
         if file_obj.get("size", 0) > 900000:
             raw = requests.get(file_obj["raw_url"], timeout=10)
             shared_data = raw.json() if raw.status_code == 200 else {}
