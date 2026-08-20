@@ -259,7 +259,7 @@ def push_files(files_payload: dict) -> int:
     opportunities/debug.json never once landed on this Gist despite the
     fetch logic itself working -- same proven-unreliable new-file-
     creation pattern as 8+ other sources this session. Merges into the
-    shared betcouncil_market_feeds.json (matches this script's 30-min
+    dedicated betcouncil_signalodds_feed.json (matches this script's 30-min
     cadence group) under a "signalodds" key, using the real distributed
     lock (gist_lock.py) to avoid the confirmed concurrent-writer race
     on that shared file.
@@ -267,7 +267,7 @@ def push_files(files_payload: dict) -> int:
     github_token = os.environ["GITHUB_TOKEN"]
     if not _rate_limit_ok(github_token):
         return 0
-    SHARED_FILE = "betcouncil_market_feeds.json"
+    SHARED_FILE = "betcouncil_signalodds_feed.json"
     merged = {}
     for fname, fbody in files_payload.items():
         key = fname.replace("betcouncil_signalodds_", "").replace(".json", "")
@@ -276,9 +276,9 @@ def push_files(files_payload: dict) -> int:
         except Exception:
             merged[key] = fbody["content"]
 
-    lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="signalodds", max_attempts=7)
+    lock_token = acquire_lock(GIST_ID, github_token, "signalodds_feed", holder="signalodds", max_attempts=7)
     if not lock_token:
-        log("Could not acquire market_feeds lock -- skipping this run to avoid a collision")
+        log("Could not acquire signalodds_feed lock -- skipping this run to avoid a collision")
         return 0
     try:
         try:
@@ -320,7 +320,7 @@ def push_files(files_payload: dict) -> int:
             return 0
         return 0
     finally:
-        release_lock(GIST_ID, github_token, "market_feeds", lock_token)
+        release_lock(GIST_ID, github_token, "signalodds_feed", lock_token)
 
 
 def _fetch_models(jwt: str | None) -> list | None:
