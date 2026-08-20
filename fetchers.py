@@ -17058,7 +17058,7 @@ def fetch_wiseguyteam_from_gist(sport: str, max_age_minutes: int = 60) -> list:
     "wiseguyteam" key (standalone per-sport files confirmed to never
     successfully land on this Gist -- see scripts/wiseguyteam_refresh.py).
     """
-    combined = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=10)
+    combined = _read_gist_file("betcouncil_wiseguyteam_feed.json", cache_minutes=10)
     data = (combined or {}).get("wiseguyteam", {}).get(sport.upper())
     if not data or not isinstance(data, dict):
         return []
