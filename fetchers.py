@@ -15816,7 +15816,6 @@ HARVESTER_REGISTRY = {
     "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
     "stokastic":       ("betcouncil_stokastic_{sport}.json",         30, "signal"),
     "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
-    "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
     "scoresandodds":   ("betcouncil_scoresandodds_{sport}.json",     15, "signal"),
     "kalshi":          ("betcouncil_kalshi_markets.json",            30, "signal"),
     "pickswise":       ("betcouncil_pickswise_{sport}.json",         30, "signal"),
@@ -15880,6 +15879,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
         "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
         "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
         "bet365":         ("bet365_{sport}", "betcouncil_oddsapiio_combined.json"),
+        "smarkets":       ("game_lines_{sport}", "betcouncil_smarkets_feed.json"),
     }
 
     results = []
@@ -17510,7 +17510,7 @@ def get_harvester_status(sport: str = "MLB") -> dict:
         ("OddsShark consensus",          "betcouncil_oddsshark_consensus_combined.json", 22),
         ("VegasInsider lines",           "betcouncil_vegasinsider.json",            22),
         ("BettingPros consensus",        "betcouncil_bettingpros_combined.json",    22),
-        ("Smarkets exchange",            f"betcouncil_smarkets_game_lines_{sport}.json", 28),
+        ("Smarkets exchange",            "betcouncil_smarkets_feed.json", 28),
         ("Pickswise expert picks",       f"betcouncil_pickswise_{sport}.json",      32),
         ("Weather data",                 f"betcouncil_weather_{sport}.json",        65),
         ("ScoresAndOdds %",              f"betcouncil_scoresandodds_{sport}.json",  18),
@@ -17524,6 +17524,8 @@ def get_harvester_status(sport: str = "MLB") -> dict:
             data = _read_gist_file(filename, cache_minutes=2)
             if name == "Bet365 lines" and isinstance(data, dict):
                 data = data.get(f"bet365_{sport}", {})
+            if name == "Smarkets exchange" and isinstance(data, dict):
+                data = data.get(f"game_lines_{sport}", {})
             if not data:
                 status[name] = {"active":False,"age_minutes":None,
                                 "source":"none",
