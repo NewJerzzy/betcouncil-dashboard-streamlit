@@ -41,7 +41,7 @@ from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 API_URL = "https://theoddsgap.com/api/dfs-edges"
-SHARED_FILE = "betcouncil_market_feeds.json"
+SHARED_FILE = "betcouncil_theoddsgap_edges_feed.json"
 MERGE_KEY = "theoddsgap_edges"
 
 HEADERS = {
@@ -171,11 +171,11 @@ def main() -> int:
         return 1
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "market_feeds", holder="theoddsgap_edges", max_attempts=7)
+    _lock_token = acquire_lock(GIST_ID, github_token, "theoddsgap_edges_feed", holder="theoddsgap_edges", max_attempts=7)
     if not _lock_token:
-        log("Could not acquire market_feeds lock after retries -- skipping this run to avoid a collision")
+        log("Could not acquire theoddsgap_edges_feed lock after retries -- skipping this run to avoid a collision")
         return 1
-    atexit.register(lambda: release_lock(GIST_ID, github_token, "market_feeds", _lock_token))
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "theoddsgap_edges_feed", _lock_token))
 
     try:
         raw_edges = fetch_edges()
