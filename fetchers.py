@@ -15800,7 +15800,7 @@ HARVESTER_REGISTRY = {
     "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
-    "underdog":        ("betcouncil_sharp_feeds.json",                20, "props"),
+    "underdog":        ("betcouncil_underdog_feed.json",                20, "props"),
     "bovada":          ("betcouncil_bovada_{sport}.json",            20, "lines"),
     "polymarket":      ("betcouncil_sharp_feeds.json",               30, "signal"),
     "mybookie":        ("betcouncil_mybookie_{sport}.json",          25, "lines"),
@@ -15874,7 +15874,7 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     # 2026-08-04 to reduce concurrent-writer collisions.
     MERGED_SOURCE_KEYS = {
         "unabated":       ("unabated", "betcouncil_sharp_feeds.json"),
-        "underdog":       ("underdog", "betcouncil_sharp_feeds.json"),
+        "underdog":       ("underdog", "betcouncil_underdog_feed.json"),
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
         "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
         "prizepicks":     (None, "betcouncil_prizepicks_combined.json"),
@@ -17666,7 +17666,7 @@ def fetch_underdog_from_gist(sport: str) -> tuple:
     (per-sport standalone files confirmed to never successfully land on
     this Gist -- see push_sport_files in underdog_ssr_scraper.py).
     SECONDARY: scraper."""
-    combined = _read_gist_file("betcouncil_sharp_feeds.json", cache_minutes=5)
+    combined = _read_gist_file("betcouncil_underdog_feed.json", cache_minutes=5)
     data = (combined or {}).get("underdog", {}).get(sport)
     if data and _is_fresh(data, max_age_minutes=100):
         raw = data.get("data",{})
