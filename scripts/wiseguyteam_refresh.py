@@ -216,7 +216,7 @@ def push_files(files_payload: dict, github_token: str) -> int:
     if one did, redo the entire read-modify-write cycle from a fresh
     read, up to 3 times total.
     """
-    SHARED_FILE = "betcouncil_sharp_feeds.json"
+    SHARED_FILE = "betcouncil_wiseguyteam_feed.json"
     merged = {}
     for fname, fbody in files_payload.items():
         key = fname.replace("betcouncil_wiseguyteam_", "").replace(".json", "")
@@ -327,11 +327,11 @@ def main() -> int:
         return 1
 
     import atexit
-    _lock_token = acquire_lock(GIST_ID, github_token, "sharp_feeds", holder="wiseguyteam")
+    _lock_token = acquire_lock(GIST_ID, github_token, "wiseguyteam_feed", holder="wiseguyteam")
     if not _lock_token:
-        log("Could not acquire sharp_feeds lock after retries -- skipping this run to avoid a collision")
+        log("Could not acquire wiseguyteam_feed lock after retries -- skipping this run to avoid a collision")
         return 1
-    atexit.register(lambda: release_lock(GIST_ID, github_token, "sharp_feeds", _lock_token))
+    atexit.register(lambda: release_lock(GIST_ID, github_token, "wiseguyteam_feed", _lock_token))
 
     if not _rate_limit_ok(github_token):
         return 0
