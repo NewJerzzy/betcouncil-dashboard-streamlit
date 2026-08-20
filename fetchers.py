@@ -15796,7 +15796,6 @@ HARVESTER_REGISTRY = {
     # Handled as a special case in check_harvester_health below via
     # MERGED_SOURCE_KEYS, not via a real fname_tmpl here. Kept as inert
     # placeholders so the tier/expected_minutes metadata isn't lost.
-    "unabated":        ("betcouncil_sharp_feeds.json",                30, "sharp"),
     "oddsjam":         ("betcouncil_oddsjam_{sport}.json",           20, "sharp"),
     "propswap":        ("betcouncil_propswap_{sport}.json",          30, "signal"),
     "evsharps_ev":     ("betcouncil_evsharps_dingers_MLB.json",      25, "sharp"),
@@ -15873,7 +15872,6 @@ def check_harvester_health(sport: str, tiers=("sharp", "lines", "props", "signal
     # timestamp for the whole shared file. Split across 3 files as of
     # 2026-08-04 to reduce concurrent-writer collisions.
     MERGED_SOURCE_KEYS = {
-        "unabated":       ("unabated", "betcouncil_sharp_feeds.json"),
         "underdog":       ("underdog", "betcouncil_underdog_feed.json"),
         "sportsinsights": ("sportsinsights", "betcouncil_market_feeds.json"),
         "polymarket":     ("sharptrack_live", "betcouncil_sharp_feeds.json"),
