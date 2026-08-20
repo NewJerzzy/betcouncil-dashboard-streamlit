@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from collections import defaultdict
 import random
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gist_lock import acquire_lock, release_lock
 
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -407,72 +406,56 @@ def push_to_gist(key: str, payload: dict) -> bool:
 
 def push_merged_to_gist(wallets_payload: dict, live_payload: dict) -> bool:
     """
-    Confirmed real bug (2026-08-07): betcouncil_sharptrack_wallets/
-    live.json never once landed on this Gist despite the harvester
-    itself completing real work every run (confirmed via job timing:
-    64s of real fetching, then a silent push failure). Merges both
-    into betcouncil_sharp_feeds.json under "sharptrack_wallets" /
-    "sharptrack_live" keys, using the real distributed lock.
+    Real fix (2026-08-20): the real SharpTrack tab (sharptrack.py) reads
+    two standalone files directly -- betcouncil_sharptrack_wallets.json
+    and betcouncil_sharptrack_live.json -- never the merged
+    betcouncil_sharp_feeds.json this function used to write to.
+    Confirmed genuinely broken before this change (the tab's own read
+    code never matched this function's write target). The "new-file-
+    creation unreliable" issue (2026-08-07) that led to this merge
+    workaround is confirmed no longer true -- proven by several new
+    dedicated files created successfully on this same Gist earlier
+    tonight. Writing directly to both standalone files now, and no lock
+    needed -- each file is only ever written by this one script.
     """
     if not GITHUB_TOKEN:
         log("ERROR: GITHUB_TOKEN not set")
         return False
-    SHARED_FILE = "betcouncil_sharp_feeds.json"
 
-    lock_token = acquire_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", holder="sharptrack", max_attempts=7)
-    if not lock_token:
-        log("Could not acquire sharp_feeds lock -- skipping this run to avoid a collision")
-        return False
-    try:
+    files_payload = {
+        "betcouncil_sharptrack_wallets.json": {"content": json.dumps(wallets_payload, default=str)},
+        "betcouncil_sharptrack_live.json": {"content": json.dumps(live_payload, default=str)},
+    }
+    body = json.dumps({"files": files_payload}).encode()
+
+    for attempt in range(4):
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GIST_ID}", data=body, method="PATCH",
+            headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json",
+                     "Content-Type": "application/json"})
         try:
-            req = urllib.request.Request(
-                f"https://api.github.com/gists/{GIST_ID}",
-                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                listing = json.loads(r.read())
-            r_files = listing.get("files", {})
-            if SHARED_FILE in r_files:
-                raw_url = r_files[SHARED_FILE]["raw_url"]
-                with urllib.request.urlopen(raw_url, timeout=15) as r2:
-                    existing = json.loads(r2.read())
-            else:
-                existing = {}
+            with urllib.request.urlopen(req, timeout=25) as r:
+                if r.status != 200:
+                    return False
+                resp_body = json.loads(r.read())
+                resp_files = resp_body.get("files") or {}
+                if all(f in resp_files for f in files_payload):
+                    return True
+                log("  Push returned 200 but expected files missing from response -- retrying")
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429, 409) and attempt < 3:
+                wait = 8 * (attempt + 1)
+                log(f"  Gist push got HTTP {e.code} -- retrying in {wait}s (attempt {attempt+1}/4)")
+                time.sleep(wait)
+                continue
+            log(f"  Gist push failed: HTTP {e.code}")
+            return False
         except Exception as e:
-            log(f"Could not read existing shared file, starting fresh: {e}")
-            existing = {}
-        existing["sharptrack_wallets"] = wallets_payload
-        existing["sharptrack_live"] = live_payload
-        body = json.dumps({"files": {SHARED_FILE: {"content": json.dumps(existing, default=str)}}}).encode()
-
-        for attempt in range(4):
-            req = urllib.request.Request(
-                f"https://api.github.com/gists/{GIST_ID}", data=body, method="PATCH",
-                headers={"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json",
-                         "Content-Type": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=25) as r:
-                    if r.status != 200:
-                        return False
-                    resp_body = json.loads(r.read())
-                    if SHARED_FILE in (resp_body.get("files") or {}):
-                        return True
-                    log(f"  Push returned 200 but {SHARED_FILE} missing from response -- retrying")
-            except urllib.error.HTTPError as e:
-                if e.code in (403, 429, 409) and attempt < 3:
-                    wait = 8 * (attempt + 1)
-                    log(f"  Gist push got HTTP {e.code} -- retrying in {wait}s (attempt {attempt+1}/4)")
-                    time.sleep(wait)
-                    continue
-                log(f"  Gist push failed: HTTP {e.code}")
-                return False
-            except Exception as e:
-                log(f"  Gist push failed: {e}")
-                return False
-            if attempt < 3:
-                time.sleep(5)
-        return False
-    finally:
-        release_lock(GIST_ID, GITHUB_TOKEN, "sharp_feeds", lock_token)
+            log(f"  Gist push failed: {e}")
+            return False
+        if attempt < 3:
+            time.sleep(5)
+    return False
 
 
 def run():
