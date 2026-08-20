@@ -67,19 +67,54 @@ def log(msg: str) -> None:
 
 def discover_event_ids(sport_path: str) -> list:
     url = ODDS_PAGE_URL.format(sport_path=sport_path)
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    DEBUG_LOG.append({"step": "discover", "url": url, "status": r.status_code, "body_len": len(r.text)})
-    if r.status_code != 200:
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            DEBUG_LOG.append({"step": "discover", "url": url, "status": r.status_code,
+                               "body_len": len(r.text), "attempt": attempt + 1})
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"step": "discover", "url": url, "status": "exception",
+                               "body_snippet": str(e)[:300], "attempt": attempt + 1})
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            return []
+    if r is None or r.status_code != 200:
         return []
     return sorted(set(re.findall(rf'data-event="({sport_path}/\d+)"', r.text)))
 
 
 def fetch_market(event_key: str, market: str) -> dict:
     params = {"event": event_key, "market": market}
-    r = requests.get(LAMBDA_URL, params=params, headers=HEADERS, timeout=15)
-    DEBUG_LOG.append({"step": "fetch_market", "event": event_key, "market": market,
-                       "status": r.status_code, "body_snippet": r.text[:400]})
-    if r.status_code != 200:
+    r = None
+    for attempt in range(2):
+        try:
+            r = requests.get(LAMBDA_URL, params=params, headers=HEADERS, timeout=15)
+            DEBUG_LOG.append({"step": "fetch_market", "event": event_key, "market": market,
+                               "status": r.status_code, "body_snippet": r.text[:400],
+                               "attempt": attempt + 1})
+            if r.status_code == 200:
+                break
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 1:
+                time.sleep(1.5)
+                continue
+            return {}
+        except requests.exceptions.RequestException as e:
+            DEBUG_LOG.append({"step": "fetch_market", "event": event_key, "market": market,
+                               "status": "exception", "body_snippet": str(e)[:300],
+                               "attempt": attempt + 1})
+            if attempt < 1:
+                time.sleep(1.5)
+                continue
+            return {}
+    if r is None or r.status_code != 200:
         return {}
     try:
         return r.json()
