@@ -21,4 +21,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
           ODDS_API_KEY_MYBOOKIE: ${{ secrets.ODDS_API_KEY_MYBOOKIE }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python scripts/theoddsapi_mybookie_refresh.py
