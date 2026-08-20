@@ -15815,7 +15815,6 @@ HARVESTER_REGISTRY = {
     "propscash":       ("betcouncil_propscash_{sport}.json",         20, "signal"),
     "bettingpros":     ("betcouncil_bettingpros_{sport}.json",       20, "signal"),
     "stokastic":       ("betcouncil_stokastic_{sport}.json",         30, "signal"),
-    "oddsportal":      ("betcouncil_oddsportal_{sport}.json",        300, "signal"),  # now ESPN opening-lines capture, once/day
     "outlier":         ("betcouncil_outlier_{sport}.json",           20, "signal"),
     "smarkets":        ("betcouncil_smarkets_{sport}.json",          25, "signal"),
     "scoresandodds":   ("betcouncil_scoresandodds_{sport}.json",     15, "signal"),
@@ -17511,7 +17510,6 @@ def get_harvester_status(sport: str = "MLB") -> dict:
         ("OddsShark consensus",          "betcouncil_oddsshark_consensus_combined.json", 22),
         ("VegasInsider lines",           "betcouncil_vegasinsider.json",            22),
         ("BettingPros consensus",        "betcouncil_bettingpros_combined.json",    22),
-        ("OddsPortal history",           f"betcouncil_oddsportal_{sport}.json",     65),
         ("Smarkets exchange",            f"betcouncil_smarkets_game_lines_{sport}.json", 28),
         ("Pickswise expert picks",       f"betcouncil_pickswise_{sport}.json",      32),
         ("Weather data",                 f"betcouncil_weather_{sport}.json",        65),
