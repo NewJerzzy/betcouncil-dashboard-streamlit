@@ -4242,7 +4242,8 @@ with tabs[3]:
         _smk_game = None
         if _gsport.upper() == "MLB":
             try:
-                _smk_data = load_from_gist("smarkets_game_lines_MLB", None) or {}
+                _smk_combined = load_from_gist("smarkets_feed", None) or {}
+                _smk_data = _smk_combined.get("game_lines_MLB", {})
                 for _smk_g in _smk_data.get("games", []):
                     _smk_evt = _smk_g.get("event_name", "")
                     if _smk_evt and _home_nm and _away_nm and (
