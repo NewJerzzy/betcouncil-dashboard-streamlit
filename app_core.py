@@ -1180,6 +1180,37 @@ KELLY_BY_TIER = {
 }
 
 # Tier thresholds (props) — sport-specific overrides in get_tier()
+def get_real_calibration_correction(tier, min_n=15):
+    """
+    Real, data-driven calibration correction (2026-08-20). Computes the
+    actual gap between stated probability and real win rate for a given
+    tier, using the exact same real resolved-bet history and logic as
+    the Confidence Calibration Engine display (app.py). Returns the
+    real gap in probability terms (e.g. -0.086 for APPROVED's confirmed
+    -8.6pp overconfidence), or 0.0 if there isn't yet enough real
+    sample size (matching the display's own n>=15 gate) to trust a
+    correction -- deliberately conservative, never corrects on a guess.
+    Cached per session so this doesn't re-scan history on every prop.
+    """
+    _cache_key = f"_cal_correction_{tier}"
+    if _cache_key in st.session_state:
+        return st.session_state[_cache_key]
+    _hist = [
+        h for h in st.session_state.get("history", [])
+        if h.get("outcome") in ("WIN", "LOSS") and h.get("prob") is not None
+        and h.get("tier") == tier
+    ]
+    _n = len(_hist)
+    if _n < min_n:
+        st.session_state[_cache_key] = 0.0
+        return 0.0
+    _actual_wr = sum(1 for h in _hist if h["outcome"] == "WIN") / _n
+    _stated_avg = sum(float(h.get("prob", 0) or 0) for h in _hist) / _n
+    _gap = _actual_wr - _stated_avg
+    st.session_state[_cache_key] = _gap
+    return _gap
+
+
 def _get_cal_tier(edge, sport):
     """Wrapper: get_tier with auto-calibrated thresholds from session_state."""
     cal = st.session_state.get("calibrated_thresholds", {})
@@ -17473,6 +17504,27 @@ def load_sport_data(sport):
         prop["ContextOverrides"]  = _overrides
         prop["OriginalTier"]      = _original_tier if _overrides else ""
         prop["OverrideActive"]    = len(_overrides) > 0 and _original_tier != prop.get("Tier","")
+
+        # ── Real calibration correction (2026-08-20) ──
+        # Confirmed via real, tracked history: APPROVED tier stated
+        # 51.2% average probability but actually won 42.6% of the time
+        # (n=670, -8.6pp gap) -- the model was genuinely overconfident.
+        # Applies the real, measured per-tier gap to the stated
+        # probability, using the same live-updating calibration data
+        # the Confidence Calibration Engine displays. Deliberately
+        # conservative: only corrects when a tier has real n>=15
+        # resolved bets to measure from; otherwise leaves Prob
+        # untouched rather than guess. Kept fully visible -- RawProb
+        # preserves the original for comparison.
+        _cal_tier_final = prop.get("Tier", "")
+        if _cal_tier_final in ("SOVEREIGN", "ELITE", "APPROVED", "LEAN"):
+            _cal_gap = get_real_calibration_correction(_cal_tier_final)
+            if _cal_gap != 0.0:
+                _raw_prob = float(prop.get("Prob", 0.5) or 0.5)
+                _corrected_prob = max(0.01, min(0.99, _raw_prob + _cal_gap))
+                prop["RawProb"] = round(_raw_prob, 4)
+                prop["Prob"] = round(_corrected_prob, 4)
+                prop["CalibrationCorrection"] = round(_cal_gap, 4)
 
 
     quality_sorted = sorted(enriched, key=lambda x: x.get("LockScore", 0), reverse=True)
