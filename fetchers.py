@@ -8681,6 +8681,28 @@ def fetch_oddswrap_props(sport):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
         if age_hours < 1:
             return _safe_load_pkl(cache_path)
+    # Real fix (2026-08-20): local pkl cache is confirmed ephemeral on
+    # Streamlit Cloud -- wiped on every redeploy/worker restart -- so
+    # this function was hitting its real, slow ~15s fetch on every
+    # single board load instead of the intended once-per-hour. The
+    # Gist genuinely persists across redeploys, so check it as a
+    # second layer before falling back to the real slow fetch.
+    _gist_cached = _read_gist_file(f"betcouncil_oddswrap_cache_{sport}.json", cache_minutes=60)
+    if _gist_cached and isinstance(_gist_cached, dict):
+        _cached_data = _gist_cached.get("data")
+        _cached_at = _gist_cached.get("captured_at", "")
+        if _cached_data and _cached_at:
+            try:
+                _age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(_cached_at)).total_seconds() / 3600
+                if _age_h < 1:
+                    try:
+                        with open(cache_path, "wb") as f:
+                            pickle.dump(_cached_data, f)
+                    except Exception:
+                        pass
+                    return _cached_data
+            except (ValueError, TypeError):
+                pass
     all_props = []
     _deadline = time.time() + 15
     try:
@@ -8711,6 +8733,10 @@ def fetch_oddswrap_props(sport):
         if all_props:
             with open(cache_path, "wb") as f:
                 pickle.dump(all_props, f)
+            try:
+                _write_gist_cache(f"betcouncil_oddswrap_cache_{sport}.json", all_props)
+            except Exception:
+                pass
     except (ValueError, TypeError, ZeroDivisionError) as e:
         pass
     return all_props
@@ -15702,6 +15728,32 @@ def _parse_legacy_scanbet(raw_list: list) -> list:
 # Primary source = browser harvester (residential IP, bypasses WAFs).
 # Secondary source = existing server-side scrapers (fallback if harvester fails).
 # Status tracking lets BetCouncil show which source is active.
+
+def _write_gist_cache(filename: str, data) -> bool:
+    """
+    Write a file to the BetCouncil Gist. Real fix (2026-08-20): local
+    disk caches (.pkl files) are confirmed ephemeral on Streamlit Cloud
+    -- wiped on every redeploy/worker restart -- while the Gist itself
+    genuinely persists across those. Used for caching slow, non-critical
+    fetches (like oddswrap_props) so a cold run doesn't repeat on every
+    single board load. No lock -- this is cache data, not critical
+    betting data, and a rare concurrent write just means one fresh
+    fetch overwrites another equally fresh one, not a real problem.
+    """
+    try:
+        payload = json.dumps({"captured_at": datetime.now(timezone.utc).isoformat(), "data": data})
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            data=json.dumps({"files": {filename: {"content": payload}}}).encode(),
+            method="PATCH",
+            headers={"Authorization": f"token {GITHUB_TOKEN}",
+                     "Accept": "application/vnd.github.v3+json",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
 
 def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
     """Read a file from the BetCouncil Gist. Cached locally."""
