@@ -1591,7 +1591,9 @@ with tabs[0]:
         avoid = [p for p in sorted(board, key=lambda x: x.get("Edge",0)) if p.get("Edge",0) < -0.05][:3]
         ev_html = ""
         for bp in plus_ev:
-            ev_html += f'<div style="background:var(--bc-bg-card);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{bp.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span><span style="color:#7f77dd;font-size:1.0rem;">{bp.get("Tier","")}</span><span style="color:#22c55e;font-weight:700;font-size:1.0rem;margin-left:auto;">{bp.get("EdgePct","—")} · EV {bp.get("EV_2pick","—")}</span></div>'
+            _bp_avg_odds = bp.get("AvgOdds")
+            _bp_avg_odds_str = f'<span style="color:#b8c6d6;font-size:0.9rem;">avg {_bp_avg_odds:+d}</span>' if isinstance(_bp_avg_odds, (int, float)) else ""
+            ev_html += f'<div style="background:var(--bc-bg-card);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{bp.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{bp.get("Side","")} {bp.get("Line","")} {bp.get("Prop","")}</span><span style="color:#7f77dd;font-size:1.0rem;">{bp.get("Tier","")}</span>{_bp_avg_odds_str}<span style="color:#22c55e;font-weight:700;font-size:1.0rem;margin-left:auto;">{bp.get("EdgePct","—")} · EV {bp.get("EV_2pick","—")}</span></div>'
         for ap in avoid:
             ev_html += f'<div style="background:var(--bc-bg-card);border-left:3px solid #e04040;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:center;gap:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{ap.get("Player","")}</span><span style="color:#b8c6d6;font-size:1.0rem;">{ap.get("Side","")} {ap.get("Line","")} {ap.get("Prop","")}</span><span style="color:#e04040;font-weight:700;font-size:1.0rem;">⚠ AVOID</span><span style="color:#e04040;font-size:1.0rem;margin-left:auto;">{ap.get("EdgePct","—")}</span></div>'
         if ev_html:
@@ -1940,6 +1942,9 @@ with tabs[4]:
             _pinn = _p.get("PinnacleOdds","")
             _dk   = _p.get("DKOdds","")
             _fd   = _p.get("FDOdds","")
+            _avg_odds_val = _p.get("AvgOdds")
+            _avg_odds_display = f"{_avg_odds_val:+d}" if isinstance(_avg_odds_val, (int, float)) else "—"
+            _avg_odds_books = _p.get("AvgOddsBookCount", 0)
 
             # Market intelligence
             _model_prob  = round(float(_p.get("Prob",0.5) or 0.5) * 100, 1)
@@ -2087,6 +2092,7 @@ with tabs[4]:
                 "_pinn":       str(_pinn) if _pinn else "—",
                 "_dk":         str(_dk)   if _dk   else "—",
                 "_fd":         str(_fd)   if _fd   else "—",
+                "_avg_odds":   f"{_avg_odds_display} ({_avg_odds_books}bk)" if _avg_odds_books else "—",
                 "_l5":         str(_l5)   if _l5   else "—",
                 "_l10":        str(_l10)  if _l10  else "—",
                 "_szn":        str(_szn)  if _szn  else "—",
@@ -2877,7 +2883,7 @@ with tabs[4]:
                     "Side": r["_side"], "Grade": r["_grade"],
                     "Edge%": r["_edge_pct"], "Model%": r["_model_prob"],
                     "L5": r["_l5"], "L10": r["_l10"], "Season": r["_szn"],
-                    "Pinnacle": r["_pinn"], "DK": r["_dk"], "FD": r["_fd"],
+                    "Pinnacle": r["_pinn"], "DK": r["_dk"], "FD": r["_fd"], "AvgOdds": r["_avg_odds"],
                     "Signal": r["_mkt_signal"], "Unabated": r["_unabated"], "Reliability": r["_rel"],
                 } for r in _rows]
                 _csv = _pd.DataFrame(_export).to_csv(index=False)
