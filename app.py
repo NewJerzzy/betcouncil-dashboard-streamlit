@@ -815,7 +815,7 @@ with tabs[0]:
                 </div>
                 <div style="flex:1;background:var(--bc-bg);border-radius:6px;padding:0.7rem;text-align:center;border:1px solid var(--bc-border);">
                     <div style="color:var(--bc-muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Total at Risk</div>
-                    <div style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("Kelly",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")), 1)}u</div>
+                    <div style="color:var(--bc-text);font-size:1.4rem;font-weight:700;">{round(sum(safe_float(p.get("KellyAdvisedPct",0)) for p in board if p.get("Tier") in ("SOVEREIGN","ELITE","APPROVED")) * st.session_state.get("bankroll", DEFAULT_BANKROLL) / max(active_unit(), 0.01), 1)}u</div>
                 </div>
                 <div style="flex:1;background:var(--bc-bg);border-radius:6px;padding:0.7rem;text-align:center;border:1px solid var(--bc-border);">
                     <div style="color:var(--bc-muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Game Edges</div>
@@ -11821,10 +11821,34 @@ with tabs[14]:
     _mi_c3.metric("Covers Consensus", len(_cov), help="Public betting % by matchup (needs COVERS_COOKIE)")
     if _kal:
         st.markdown("**Kalshi Top Markets:**")
-        _kal_sorted = sorted(_kal, key=lambda x: -x.get("volume",0))
-        _kal_valid = [k for k in _kal_sorted if isinstance(k, dict) and "event" in k and "implied_prob" in k and "volume" in k]
-        _kal_rows = [{"Event": k["event"][:50], "Implied %": f"{k['implied_prob']:.0%}", "Volume": f"{k['volume']:,}"} for k in _kal_valid[:5]]
-        st.markdown(_bc_df_html(pd.DataFrame(_kal_rows)), unsafe_allow_html=True)
+        def _mi_kev_volume(ev):
+            tot = 0.0
+            for m in ev.get("markets", []):
+                try:
+                    tot += float(m.get("volume") or 0)
+                except (TypeError, ValueError):
+                    pass
+            return tot
+        _kal_sorted = sorted(_kal, key=_mi_kev_volume, reverse=True)
+        _kal_rows = []
+        for _kev in _kal_sorted[:5]:
+            _kmkts = _kev.get("markets") or []
+            if not _kmkts:
+                continue
+            _top_m = max(_kmkts, key=lambda x: float(x.get("volume") or 0))
+            try:
+                _bid = float(_top_m.get("yes_bid") or 0)
+                _ask = float(_top_m.get("yes_ask") or 0)
+                _mid = (_bid + _ask) / 2 if (_bid or _ask) else float(_top_m.get("last_price") or 0)
+            except (TypeError, ValueError):
+                _mid = 0
+            _team_m = re.search(r"If (.+?) wins", _top_m.get("rules_primary", "") or "")
+            _label = _team_m.group(1) if _team_m else (_top_m.get("title") or _kev.get("title", ""))
+            _kal_rows.append({"Event": _label[:50], "Implied %": f"{_mid*100:.0f}%", "Volume": f"{_mi_kev_volume(_kev):,.0f}"})
+        if _kal_rows:
+            st.markdown(_bc_df_html(pd.DataFrame(_kal_rows)), unsafe_allow_html=True)
+        else:
+            st.caption("No Kalshi markets with real pricing data this load.")
     if _poly:
         st.markdown("**Polymarket Top Markets:**")
         _poly_sorted = sorted(_poly, key=lambda x: -x.get("volume",0))
