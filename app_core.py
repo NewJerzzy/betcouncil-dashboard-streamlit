@@ -7606,10 +7606,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _h_rs = _run_stats.get(h_full2, _run_stats.get(home_full, {}))
                     _a_rs = _run_stats.get(a_full2, _run_stats.get(away_full, {}))
                     if _h_rs and _a_rs:
-                        _h_rs_pg = _h_rs.get("rs_pg", _LEAGUE_AVG_RS)
-                        _h_ra_pg = _h_rs.get("ra_pg", _LEAGUE_AVG_RS)
-                        _a_rs_pg = _a_rs.get("rs_pg", _LEAGUE_AVG_RS)
-                        _a_ra_pg = _a_rs.get("ra_pg", _LEAGUE_AVG_RS)
+                        _h_rs_pg = _h_rs.get("RS", _LEAGUE_AVG_RS)
+                        _h_ra_pg = _h_rs.get("RA", _LEAGUE_AVG_RS)
+                        _a_rs_pg = _a_rs.get("RS", _LEAGUE_AVG_RS)
+                        _a_ra_pg = _a_rs.get("RA", _LEAGUE_AVG_RS)
                         _james_home = (_h_rs_pg * _a_ra_pg) / _LEAGUE_AVG_RS
                         _james_away = (_a_rs_pg * _h_ra_pg) / _LEAGUE_AVG_RS
                         _james_total = _james_home + _james_away
