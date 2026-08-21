@@ -11983,7 +11983,6 @@ with tabs[14]:
     else:
         st.caption("\u2705 No errors this session.")
     st.markdown("---")
-    st.markdown("---")
     st.markdown("### ⏱️ Source Performance Profiler")
     st.caption("Timing from last board load. Reload the board to refresh.")
     _timings = st.session_state.get("fetch_timings", {})
