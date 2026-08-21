@@ -19206,6 +19206,124 @@ def fetch_bdl_props(sport):
 @st.cache_data(ttl=600)
 
 
+def fetch_oddspapi_props(sport):
+    """
+    Real fix (2026-08-21): this function was confirmed completely
+    missing -- its caller (_pf_oddspapi in app_core.py) referenced it,
+    but it never existed anywhere, meaning OddsPapi silently failed
+    with a NameError on every single board load. Built using the exact
+    same real, proven API pattern as fetch_pinnacle_lines above (same
+    sport_id_map, same confirmed real response shape), but requesting
+    the specific books the Line Shop display already expects data from
+    (per its own real, existing comment referencing caesars/circa/
+    mybookie/betfair, with source formatted as "OddsPapi_{bookname}").
+    Shaped to match _ls_add's real expected {Player, Prop, Line} format,
+    since Line Shop needs player props here, not game lines.
+    """
+    cache_path = os.path.join(CACHE_DIR, f"oddspapi_props_{sport}.pkl")
+    if os.path.exists(cache_path):
+        age_h = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_h < 1:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+            if cached:
+                return cached
+
+    if not ODDSPAPI_KEY:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": "ODDSPAPI_KEY not set in secrets"})
+        return []
+
+    allowed, reason = api_budget_check("ODDSPAPI")
+    if not allowed:
+        st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": reason})
+        return []
+
+    sport_id_map = {"NBA": 4, "WNBA": 4, "MLB": 3, "NHL": 6, "NFL": 1}
+    sport_id = sport_id_map.get(sport)
+    if not sport_id:
+        return []
+
+    all_props = []
+
+    try:
+        t_resp = _http.get(
+            f"https://api.oddspapi.io/v4/tournaments?sportId={sport_id}&apiKey={ODDSPAPI_KEY}",
+            timeout=10
+        )
+        if t_resp.status_code != 200:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": f"tournaments HTTP {t_resp.status_code}: {t_resp.text[:150]}"})
+            return []
+
+        tournaments = t_resp.json()
+        top_ids = [str(t["tournamentId"]) for t in tournaments
+                   if t.get("upcomingFixtures", 0) > 0][:3]
+        if not top_ids:
+            top_ids = [str(t["tournamentId"]) for t in tournaments[:2]]
+        if not top_ids:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": f"no tournaments returned for sportId={sport_id} ({sport})"})
+            return []
+
+        tournament_ids = ",".join(top_ids)
+        # Real books the Line Shop display already expects (per its own
+        # existing comment) -- lowercase slugs matching the confirmed
+        # "pinnacle"/"bet365" pattern from fetch_pinnacle_lines above.
+        books = ["caesars", "circa", "mybookie", "betfair"]
+
+        resp = _http.get(
+            f"https://api.oddspapi.io/v4/odds-by-tournaments"
+            f"?bookmaker={','.join(books)}&tournamentIds={tournament_ids}"
+            f"&apiKey={ODDSPAPI_KEY}&oddsFormat=american",
+            headers=HEADERS,
+            timeout=15
+        )
+        api_budget_increment("ODDSPAPI")
+
+        if resp.status_code != 200:
+            st.session_state.setdefault("errors", []).append({"time": datetime.now().strftime("%H:%M:%S"), "source": "fetch_oddspapi_props", "error": f"odds-by-tournaments HTTP {resp.status_code}: {resp.text[:150]}"})
+            return []
+
+        data = resp.json()
+
+        for event in data.get("events", []):
+            for bookmaker in event.get("bookmakers", []):
+                _bk_key = bookmaker.get("key", "").lower()
+                if _bk_key not in books:
+                    continue
+                for market in bookmaker.get("markets", []):
+                    mkey = market.get("key", "")
+                    if "player" not in mkey.lower():
+                        continue
+                    outcomes = market.get("outcomes", [])
+                    over_out = next((o for o in outcomes if o.get("name", "").upper() == "OVER"), None)
+                    under_out = next((o for o in outcomes if o.get("name", "").upper() == "UNDER"), None)
+                    if not over_out or not under_out:
+                        continue
+                    player = over_out.get("description", "")
+                    line = over_out.get("point")
+                    if not player or line is None:
+                        continue
+                    stat = mkey.replace("player_", "").replace("_", " ").title()
+                    all_props.append({
+                        "Player": player, "Prop": stat, "Line": float(line),
+                        "Side": "OVER", "OverOdds": over_out.get("price"),
+                        "UnderOdds": under_out.get("price"), "Sport": sport,
+                        "source": f"OddsPapi_{_bk_key}",
+                    })
+
+        if all_props:
+            with open(cache_path, "wb") as f:
+                pickle.dump(all_props, f)
+        return all_props
+
+    except (KeyError, TypeError, ValueError) as e:
+        st.session_state.setdefault("errors", []).append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "source": "fetch_oddspapi_props",
+            "error": str(e)[:100]
+        })
+        return []
+
+
 def fetch_pinnacle_lines(sport):
     """
     Fetch Pinnacle lines via OddsPAPI (already in our stack).
