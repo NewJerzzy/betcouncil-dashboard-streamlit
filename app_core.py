@@ -43,7 +43,7 @@ except ImportError:
     cf = None
 
 # --- Module imports ---
-from bc_utils import (safe_float, normalize_name, american_to_prob, no_vig_prob,
+from bc_utils import (safe_float, normalize_name, american_to_prob, prob_to_american, no_vig_prob,
     calibrate_tier_thresholds, compute_clv_with_tier, adjusted_edge, analyze_loss_postmortem,
     correlated_parlay_kelly,
     normalize_stat_type, hot_streak_regression_risk,
@@ -17030,6 +17030,26 @@ def load_sport_data(sport):
             _ev_books = _ev_lookup.get(_pk, {})
             if _ev_books:
                 prop["EVBooks"] = _ev_books
+                # Real avg odds across books: average the implied
+                # probability (mathematically correct), then convert
+                # back to American odds -- averaging raw American odds
+                # directly would be wrong, since they're not linear.
+                _side_key = "odds_over" if prop.get("Side", "OVER") == "OVER" else "odds_under"
+                _real_odds_list = []
+                for _bd_avg in _ev_books.values():
+                    _o = _bd_avg.get(_side_key)
+                    if _o is not None:
+                        try:
+                            _real_odds_list.append(float(_o))
+                        except (TypeError, ValueError):
+                            pass
+                if _real_odds_list:
+                    _avg_prob = sum(american_to_prob(o) for o in _real_odds_list) / len(_real_odds_list)
+                    prop["AvgOdds"] = int(prob_to_american(_avg_prob))
+                    prop["AvgOddsBookCount"] = len(_real_odds_list)
+                else:
+                    prop["AvgOdds"] = None
+                    prop["AvgOddsBookCount"] = 0
                 _best_ev, _best_fv, _best_link = None, None, None
                 for _bk, _bd in _ev_books.items():
                     if _bd.get("ev") is not None:
@@ -17049,12 +17069,16 @@ def load_sport_data(sport):
                     prop["EVSharpBooks"]  = len(_ev_books)
             else:
                 prop["EVBooks"] = {}
+                prop["AvgOdds"] = None
+                prop["AvgOddsBookCount"] = 0
                 prop["EVSharpEV"] = None
                 prop["EVSharpFV"] = None
                 prop["EVSharpLink"] = None
                 prop["EVSharpBooks"] = 0
         else:
             prop["EVBooks"] = {}
+            prop["AvgOdds"] = None
+            prop["AvgOddsBookCount"] = 0
             prop["EVSharpEV"] = None
             prop["EVSharpFV"] = None
             prop["EVSharpLink"] = None
