@@ -19265,9 +19265,26 @@ def fetch_oddspapi_props(sport):
 
         tournament_ids = ",".join(top_ids)
         # Real books the Line Shop display already expects (per its own
-        # existing comment) -- lowercase slugs matching the confirmed
-        # "pinnacle"/"bet365" pattern from fetch_pinnacle_lines above.
-        books = ["caesars", "circa", "mybookie", "betfair"]
+        # existing comment). Real fix (2026-08-21): rather than assume
+        # the slugs, discover them from the real, confirmed GET
+        # /v4/bookmakers endpoint via name-matching -- avoids guessing
+        # wrong and silently returning nothing for a book.
+        _target_names = {"caesars": "Caesars", "circa": "Circa", "mybookie": "MyBookie", "betfair": "Betfair"}
+        if "_oddspapi_book_slugs" not in st.session_state:
+            _slug_map = {}
+            try:
+                _bk_resp = _http.get(f"https://api.oddspapi.io/v4/bookmakers?apiKey={ODDSPAPI_KEY}", timeout=10)
+                if _bk_resp.status_code == 200:
+                    for _bk in _bk_resp.json():
+                        _bk_name_low = str(_bk.get("bookmakerName", "")).lower()
+                        for _key, _needle in _target_names.items():
+                            if _needle.lower() in _bk_name_low and _key not in _slug_map:
+                                _slug_map[_key] = _bk.get("slug", _key)
+            except Exception:
+                pass
+            st.session_state["_oddspapi_book_slugs"] = _slug_map
+        _discovered = st.session_state.get("_oddspapi_book_slugs", {})
+        books = [_discovered.get(k, k) for k in _target_names]
 
         resp = _http.get(
             f"https://api.oddspapi.io/v4/odds-by-tournaments"
