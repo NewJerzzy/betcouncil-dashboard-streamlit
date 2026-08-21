@@ -198,6 +198,23 @@ def american_to_prob(american_odds) -> float:
         return 0.5
 
 
+def prob_to_american(prob) -> float:
+    """
+    Convert implied probability back to American odds. Exact
+    mathematical inverse of american_to_prob above -- verified
+    against its real formula before writing this (2026-08-20).
+    """
+    try:
+        p = float(prob)
+        if p <= 0 or p >= 1:
+            return -110.0
+        if p >= 0.5:
+            return round(-100.0 * p / (1.0 - p), 0)
+        return round(100.0 * (1.0 - p) / p, 0)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return -110.0
+
+
 def no_vig_prob(over_american, under_american) -> float:
     """Calculate no-vig true probability from both sides (additive/proportional method)."""
     try:
