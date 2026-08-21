@@ -10920,7 +10920,7 @@ with tabs[14]:
         _tpc_display_names = {
             "favoredprops": "FavoredProps", "draftedge": "DraftEdge", "dimers": "Dimers",
             "covers": "Covers",
-            "dk_most_bet": "DK Most Bet",
+            "dk_most_bet": "DK Most Bet", "bettingpros": "BettingPros",
         }
         if not _tpc:
             st.caption("No comparison data yet.")
