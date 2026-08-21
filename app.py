@@ -1,5 +1,16 @@
 import sys as _sys_reload_guard
 import importlib as _importlib_reload_guard
+if "bc_utils" in _sys_reload_guard.modules:
+    # Real fix (2026-08-20): app_core.py also does "from bc_utils import
+    # (...)" at module level -- the exact same vulnerability already
+    # fixed below for fetchers, but never extended to this second
+    # dependency. Confirmed live: prob_to_american genuinely existed in
+    # the current bc_utils.py source (verified via direct import test)
+    # but caused a real ImportError at runtime on a long-running worker
+    # that had bc_utils cached from before that function was added.
+    # No state to preserve here -- confirmed bc_utils.py has no mutable
+    # module-level tracking dicts the way fetchers.py does.
+    _importlib_reload_guard.reload(_sys_reload_guard.modules["bc_utils"])
 if "fetchers" in _sys_reload_guard.modules:
     # Real fix (2026-08-18): app_core.py does "from fetchers import *" at
     # its own module level. The app_core reload below only re-executes
