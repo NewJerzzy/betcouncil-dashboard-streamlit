@@ -1381,20 +1381,32 @@ with tabs[0]:
                 _clv = _clv if isinstance(_clv, dict) else {}
             except Exception:
                 _clv = {}
+            try:
+                _gclv = get_game_clv_summary(st.session_state.get("history", []))
+                _gclv = _gclv if isinstance(_gclv, dict) else {}
+            except Exception:
+                _gclv = {}
+
+            _clv_parts = []
             if _clv and isinstance(_clv.get("avg_clv"), (int, float)):
                 _clv_color = "#22c55e" if _clv.get("avg_clv", 0) > 0 else "#e04040"
-                _sharp_edge = _clv.get("consensus_sharp_edge", _clv.get("pinnacle_avg_edge", 0)) or 0
-                _sharp_color = "#22c55e" if _sharp_edge > 0 else "#e04040"
-                _n_books = _clv.get("n_sharp_books", 1)
-                _book_label = f"vs {_n_books} sharp book{'s' if _n_books > 1 else ''}"
-                _clv_html = (
-                    f'<div style="font-size:20px;font-weight:700;color:{_clv_color};">{_clv.get("avg_clv", 0):+.2f}</div>'
-                    f'<div style="font-size:10px;color:var(--bc-muted);">Avg CLV</div>'
-                    f'<div style="font-size:11px;color:{_sharp_color};margin-top:3px;">{_book_label}: {_sharp_edge:+.1%}</div>'
-                    f'<div style="font-size:10px;color:var(--bc-dim);">{_clv.get("total_tracked", _clv.get("n_resolved", 0))} bets tracked</div>'
+                _clv_parts.append(
+                    f'<div style="font-size:18px;font-weight:700;color:{_clv_color};">{_clv.get("avg_clv", 0):+.2f}</div>'
+                    f'<div style="font-size:10px;color:var(--bc-muted);">Avg CLV — Props ({_clv.get("n_resolved", 0)} bets)</div>'
                 )
             else:
-                _clv_html = '<div style="font-size:11px;color:var(--bc-dim);">CLV activates<br>after 5 bets</div>'
+                _clv_parts.append('<div style="font-size:11px;color:var(--bc-dim);">Prop CLV: no resolved prop bets with CLV data yet</div>')
+
+            if _gclv and isinstance(_gclv.get("avg_clv_points"), (int, float)):
+                _gclv_color = "#22c55e" if _gclv.get("avg_clv_points", 0) > 0 else "#e04040"
+                _clv_parts.append(
+                    f'<div style="font-size:18px;font-weight:700;color:{_gclv_color};margin-top:6px;">{_gclv.get("avg_clv_points", 0):+.2f}pts</div>'
+                    f'<div style="font-size:10px;color:var(--bc-muted);">Avg CLV — Games ({_gclv.get("n_resolved", 0)} bets)</div>'
+                )
+            else:
+                _clv_parts.append('<div style="font-size:11px;color:var(--bc-dim);margin-top:6px;">Game CLV: no resolved game bets with CLV data yet</div>')
+
+            _clv_html = "".join(_clv_parts)
             st.markdown(
                 f'<div style="background:var(--bc-bg);border:1px solid var(--bc-border);border-radius:8px;padding:0.8rem;">'
                 f'<div style="color:var(--bc-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">📈 CLV Tracker</div>'
