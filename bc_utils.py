@@ -4058,6 +4058,39 @@ def analyze_loss_postmortem(record: dict, all_history: list = None) -> dict:
     }
 
 
+def get_game_clv_summary(history):
+    """
+    Real, separate CLV summary for game-line bets (SPREAD/TOTAL/ML).
+    Kept apart from get_clv_summary (props) because the two use
+    genuinely different scales -- confirmed via the actual write code
+    in app_core.py: props store clv_vs_novig (a probability-percentage
+    move), game bets store clv_points (raw spread/total points). Mixing
+    them into one average would be a real, misleading number, so this
+    stays a separate, honestly-labeled metric rather than a fabricated
+    combined score. Deliberately does not assign a grade tier -- unlike
+    the prop version, there's no real, established threshold for what
+    counts as good/bad CLV in raw points, so none is invented here.
+    """
+    resolved = [
+        r for r in (history or [])
+        if r.get("clv_capture", {}).get("clv_resolved")
+        and r.get("clv_capture", {}).get("clv_points") is not None
+        and r.get("bet_type") == "game"
+    ]
+    if not resolved:
+        return {"avg_clv_points": None, "beat_rate": None, "n_resolved": 0}
+
+    clv_values = [r["clv_capture"]["clv_points"] for r in resolved]
+    avg_clv_points = round(sum(clv_values) / len(clv_values), 2)
+    beat_rate       = round(sum(1 for v in clv_values if v > 0) / len(clv_values), 3)
+
+    return {
+        "avg_clv_points": avg_clv_points,
+        "beat_rate":       beat_rate,
+        "n_resolved":       len(resolved),
+    }
+
+
 def get_clv_summary(history):
     """
     Compute CLV statistics across all resolved bets.
