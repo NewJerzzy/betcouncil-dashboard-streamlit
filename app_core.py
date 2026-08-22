@@ -13301,7 +13301,7 @@ def load_sport_data(sport):
                 props  = _pp_fb if _pp_fb else _gist_fb
                 st.info(f"📡 PrizePicks loaded from local scraper ({len(props)} props). Run script daily to keep fresh.")
             else:
-                st.warning(f"⚠️ PrizePicks data for {sport} is stale or unavailable. Visit PrizePicks' {sport} page in your browser (with the harvester active) to refresh it.")
+                st.warning(f"⚠️ PrizePicks data for {sport} is stale or unavailable right now. This refreshes automatically every 15 minutes via an automated workflow -- no action needed, just reload in a few minutes.")
                 return [], [], 0, 0, {}, {}
 
         # ── Score each prop via standalone model (ESPN live stats) ───────────
