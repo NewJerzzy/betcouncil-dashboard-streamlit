@@ -133,7 +133,7 @@ with st.sidebar:
     except Exception:
         st.caption("Unavailable right now.")
 
-tabs = st.tabs(["📋 Summary", "🎯 Pick For You", "🔮 Predictions", "🏟️ Game Lines", "📊 Full Board", "🛒 Line Shop", "🔭 Market Scanner", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🔒 Locks & Ledger", "🦈 SharpTrack", "📅 Preview", "📈 History", "⚙️ System"])
+tabs = st.tabs(["🎯 Pick For You", "📋 Summary", "🔮 Predictions", "🏟️ Game Lines", "📊 Full Board", "🛒 Line Shop", "🔭 Market Scanner", "🔍 Slip Analyzer", "🔎 Player Lookup", "📝 Log Bet", "🔒 Locks & Ledger", "🦈 SharpTrack", "📅 Preview", "📈 History", "⚙️ System"])
 
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
@@ -159,11 +159,12 @@ if _qs_count:
         for l in list(reversed(_qs_show_locks))[:6]
     )
     st.markdown(
-        f'''<div style="position:fixed;bottom:18px;right:18px;z-index:200;width:220px;
+        f'''<div style="position:fixed;top:80px;bottom:18px;right:0;z-index:200;width:230px;
              background:linear-gradient(160deg,#0d1520f2,#060c14f2);backdrop-filter:blur(10px);
-             border:1px solid rgba(30,144,255,0.40);border-radius:10px;
-             box-shadow:0 6px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(232,160,32,0.08);
-             padding:10px 12px;">
+             border-left:1px solid rgba(30,144,255,0.40);border-top:1px solid rgba(30,144,255,0.40);
+             border-bottom:1px solid rgba(30,144,255,0.40);border-radius:10px 0 0 10px;
+             box-shadow:-6px 0 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(232,160,32,0.08);
+             padding:10px 12px;overflow-y:auto;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <span style="font-size:11px;font-weight:700;letter-spacing:0.6px;color:#f5c518;text-transform:uppercase;">
               🎯 {_qs_label}
@@ -226,7 +227,7 @@ if _board_loaded and _auto_refresh_on and (_now_ts - _last_ev_refresh) >= _EV_RE
         st.rerun()
 
 
-with tabs[0]:
+with tabs[1]:
     # ═══════════════════════════════════════════════════════
     # SUMMARY TAB — DARK UI OVERHAUL
     # ═══════════════════════════════════════════════════════
@@ -12572,7 +12573,7 @@ with tabs[11]:
         st.caption("This is isolated to this tab — the rest of the app is unaffected.")
 
 
-with tabs[1]:
+with tabs[0]:
     st.markdown(
         '<div style="background:linear-gradient(90deg,#0a5fa8,#0a1628);border-left:4px solid #1e90ff;'
         'border-radius:6px;padding:12px 16px;margin-bottom:14px;">'
