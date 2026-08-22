@@ -13301,7 +13301,7 @@ def load_sport_data(sport):
                 props  = _pp_fb if _pp_fb else _gist_fb
                 st.info(f"📡 PrizePicks loaded from local scraper ({len(props)} props). Run script daily to keep fresh.")
             else:
-                st.warning("⚠️ PrizePicks unavailable. Run betcouncil_auto_scraper.py on your PC to populate data.")
+                st.warning(f"⚠️ PrizePicks data for {sport} is stale or unavailable. Visit PrizePicks' {sport} page in your browser (with the harvester active) to refresh it.")
                 return [], [], 0, 0, {}, {}
 
         # ── Score each prop via standalone model (ESPN live stats) ───────────
