@@ -12587,6 +12587,53 @@ with tabs[0]:
         unsafe_allow_html=True,
     )
 
+    _hero_shortlist = st.session_state.get("nb_shortlist")
+    if _hero_shortlist and (_hero_shortlist.get("best_props") or _hero_shortlist.get("best_games")):
+        _hero_norm = []
+        for _hp in _hero_shortlist.get("best_props", []):
+            _hero_norm.append({
+                "label": _hp.get("Player", ""), "tier": _hp.get("Tier", ""),
+                "edge_pct": _hp.get("EdgePct", "0%")
+            })
+        for _hg in _hero_shortlist.get("best_games", []):
+            _hg_bb = _hg.get("best_bet") or {}
+            _hero_norm.append({
+                "label": f'{_hg.get("away","")} @ {_hg.get("home","")}',
+                "tier": _hg_bb.get("tier", ""), "edge_pct": _hg_bb.get("edge_pct", "0%")
+            })
+        _hero_items = sorted(
+            _hero_norm,
+            key=lambda x: float(str(x["edge_pct"]).replace("%", "").replace("+", "") or 0),
+            reverse=True
+        )[:5]
+        st.markdown(
+            '<div style="color:var(--bc-dim);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">🔥 Best Opportunities Today</div>',
+            unsafe_allow_html=True
+        )
+        _hero_cols = st.columns(len(_hero_items))
+        for _hi, _hitem in enumerate(_hero_items):
+            with _hero_cols[_hi]:
+                _hero_label = _hitem["label"]
+                _hero_tier = _hitem["tier"]
+                _hero_tier_color = "#f5c518" if _hero_tier == "SOVEREIGN" else "#22c55e"
+                st.markdown(
+                    f'<div style="background:linear-gradient(160deg,#0f1c2e,#0a1420);border:1px solid rgba(30,144,255,0.35);'
+                    f'border-radius:10px;padding:10px 12px;text-align:center;">'
+                    f'<div style="font-size:9.5px;font-weight:700;color:{_hero_tier_color};text-transform:uppercase;letter-spacing:0.5px;">{_hero_tier}</div>'
+                    f'<div style="font-size:12.5px;font-weight:700;color:var(--bc-text);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{_hero_label[:22]}</div>'
+                    f'<div style="font-size:16px;font-weight:800;color:#22c55e;margin-top:4px;">{_hitem["edge_pct"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="background:var(--bc-bg-card);border:1px dashed rgba(30,144,255,0.3);border-radius:10px;'
+            'padding:14px;text-align:center;color:var(--bc-dim);font-size:12px;margin-bottom:10px;">'
+            '🔥 Build your shortlist below to see today\'s best opportunities here.</div>',
+            unsafe_allow_html=True
+        )
+
     st.caption(
         "Scans every active sport's board and game lines, keeps only SOVEREIGN/ELITE plays, checks them "
         "against DraftKings/FavoredProps/BettingPros/Covers/Dimers/FanDuel, and drops anything too "
