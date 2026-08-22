@@ -13336,6 +13336,29 @@ with tabs[2]:
         except Exception:
             pass
 
+    # ── FavoredProps (real, independent multi-book comparison -- "sportsbook"
+    # kind specifically, confirmed via direct live-data check to carry real
+    # traditional lines; "dfs" kind is pick'em-style with no real direction,
+    # same limitation as Pick6, deliberately not used here) ──────────────
+    _pred_fp_sports = [s for s in ("MLB", "NBA", "NHL", "WNBA") if _pred_sport_match(s)]
+    _pred_fp_fns = [(lambda _s=_s: fetch_favoredprops_from_gist("sportsbook", _s)) for _s in _pred_fp_sports]
+    _pred_fp_results = _fetch_parallel(_pred_fp_fns, show_progress=False)
+    for _pred_sport, _fp_props_for_sport in zip(_pred_fp_sports, _pred_fp_results):
+        try:
+            for fp in (_fp_props_for_sport or []):
+                _fp_bet = str(fp.get("bet", "")).upper()
+                _fp_direction = "Over" if _fp_bet.startswith("O") else "Under"
+                _fp_avg_odds = fp.get("avg_odds")
+                _fp_note = f"{fp.get('n_books','?')} books, avg {_fp_avg_odds:+d}" if isinstance(_fp_avg_odds, (int, float)) else f"{fp.get('n_books','?')} books"
+                _pred_pp_items.append({
+                    "sport": _pred_sport, "player": fp.get("player", ""),
+                    "line": fp.get("line", ""), "prop": fp.get("stat_type", ""),
+                    "pick": _fp_direction, "source": "FavoredProps", "note": _fp_note,
+                    "image": "", "team": fp.get("team", ""), "position": fp.get("position", "")
+                })
+        except Exception:
+            pass
+
     # ── GROUP by player -- keep the first real headshot/team/position seen
     # (only BettingPros provides these) so the card has something to show
     # even though most sources don't carry player metadata. ──────────────
@@ -13380,6 +13403,17 @@ with tabs[2]:
     # Sort by real cross-source agreement (most-confirmed players first),
     # same fix and same reasoning as the game-line groups above.
     _pred_pp_groups.sort(key=lambda g: len(set(p["source"] for p in g["props"])), reverse=True)
+    _pred_source_desc = {
+        "BetQL": "Betting analytics site — model-driven player prop projections.",
+        "BettingPros": "Consensus site — best line + cross-book pricing on player props.",
+        "Bobby's Bets": "Independent capper — published picks with public reasoning.",
+        "GamblingForecast": "Model-driven prop projections and picks.",
+        "GameLinePicks": "Free, no-auth game-line picks site.",
+        "Pickswise": "Editorial sports betting picks site.",
+        "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
+        "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
+        "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
+    }
     if _pred_pp_groups:
         _pp_per_row = 3
         for _pi in range(0, len(_pred_pp_groups), _pp_per_row):
@@ -13415,7 +13449,7 @@ with tabs[2]:
                         f'<div style="font-size:11px;color:var(--bc-dim);margin-top:8px;">{_team_pos}</div>'
                         f'<div style="font-weight:700;font-size:15px;color:var(--bc-text);margin-top:2px;">{_grp["player"]}</div>'
                         f'<div style="font-size:16px;font-weight:800;color:var(--bc-text);margin-top:8px;">{_headline}</div>'
-                        f'<div style="font-size:10.5px;color:var(--bc-dim);margin-top:2px;">{_p0["source"]}</div>'
+                        f'<div style="font-size:10.5px;color:var(--bc-dim);margin-top:2px;" title="{_pred_source_desc.get(_p0["source"], "")}">{_p0["source"]}</div>'
                         f'{_sub_html}{_more_html}'
                         f'</div>',
                         unsafe_allow_html=True
