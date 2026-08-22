@@ -72,7 +72,7 @@ Sharp: Pinnacle(GAME LINES via arcadia API,auto,GHA▸props unavailable)▸EVSha
 Lines: BetOnline▸Bovada▸BetMGM(auto,GHA)▸Caesars▸DK(auto,GHA)▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
 New(auto,GHA): Kambi/BetRivers(props)▸TheScore(consensus+move)▸areyouwatchingthis(29books,lines,no props)▸ScoresAndOdds(FD+7bk)▸OddsAPI props(budget-capped)▸Savant(6h)▸Smarkets(back/lay)▸Bet365(lines+props,odds-api.io)▸FD props(odds-api.io)▸Bovada props(odds-api.io,SEPARATE acct)▸MyBookie(lines,TheOddsAPI)▸Caesars props(ParlayAPI,$0)▸ATP tennis(tennismylife.org,ATP ONLY)
 Unabated: CONFIRMED LIVE server-side (api-k.unabated.com/api/markets/changes/query, no auth) — real MLB/NFL/CFB lines flowing, 15min. PRIMARY for MLB HR breakeven; DISPLAY ONLY for other props. Not a dead-end (prior note was wrong).
-DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS▸ParlaySavant
+DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS
 Signals: ActionNetwork(auto,GHA,+opening line)▸Covers▸Pregame▸Pickswise
 Projections: FantasyPros▸StatMuse▸FantasyLabs▸NumberFire▸Rotowire▸Sleeper
 Markets: Kalshi▸Polymarket(NOTE: polymarket_markets/kalshi_markets session keys never populated — Game Lines badge always empty, no raw-market harvester exists, found not fixed 7/18)
