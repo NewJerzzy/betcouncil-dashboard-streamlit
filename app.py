@@ -13033,7 +13033,14 @@ with tabs[2]:
         unsafe_allow_html=True
     )
 
-    _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC", "TENNIS"], key="pred_sport_filter")
+    _pred_filter_col1, _pred_filter_col2 = st.columns([1, 1])
+    with _pred_filter_col1:
+        _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC", "TENNIS"], key="pred_sport_filter")
+    with _pred_filter_col2:
+        _pred_min_sources = st.select_slider(
+            "Min sources agreeing", options=[1, 2, 3, 4, 5], value=1, key="pred_min_sources",
+            help="Only show games/props where at least this many independent sources have a pick."
+        )
 
     def _pred_sport_match(s):
         return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
@@ -13212,6 +13219,12 @@ with tabs[2]:
     # happened to run and append, not prioritized by the actual signal
     # this section is built around.
     _pred_gl_groups.sort(key=lambda g: len(set(it["source"] for it in g["items"])), reverse=True)
+    _pred_gl_prefilter_count = len(_pred_gl_groups)
+    if _pred_min_sources > 1:
+        _pred_gl_groups = [g for g in _pred_gl_groups if len(set(it["source"] for it in g["items"])) >= _pred_min_sources]
+    if "pred_pinned_games" not in st.session_state:
+        st.session_state["pred_pinned_games"] = set()
+    _pred_gl_groups.sort(key=lambda g: f"{g['away']}_{g['home']}" in st.session_state["pred_pinned_games"], reverse=True)
 
     # ══════════════════════════════════════════════════════════════════
     # RENDER — Game Lines: one card per matchup, each source's pick as a
@@ -13246,6 +13259,14 @@ with tabs[2]:
             _gl_cols = st.columns(_pred_gl_per_row)
             for _gj, _grp in enumerate(_pred_gl_groups[_gi:_gi + _pred_gl_per_row]):
                 with _gl_cols[_gj]:
+                    _gl_game_key = f"{_grp['away']}_{_grp['home']}"
+                    _gl_is_pinned = _gl_game_key in st.session_state["pred_pinned_games"]
+                    if st.button("★ Pinned" if _gl_is_pinned else "☆ Pin", key=f"pin_gl_{_gl_game_key}_{_gi}_{_gj}"):
+                        if _gl_is_pinned:
+                            st.session_state["pred_pinned_games"].discard(_gl_game_key)
+                        else:
+                            st.session_state["pred_pinned_games"].add(_gl_game_key)
+                        st.rerun()
                     _rows_html = "".join(
                         f'<div style="padding:5px 0;border-top:1px solid var(--bc-bg2);font-size:12.5px;color:var(--bc-text);display:flex;align-items:center;gap:6px;">'
                         + (f'<img src="https://www.google.com/s2/favicons?domain={_pred_source_domains[it["source"]]}&sz=32" '
@@ -13255,17 +13276,30 @@ with tabs[2]:
                         for it in _grp["items"]
                     )
                     _n_sources = len(set(it["source"] for it in _grp["items"]))
+                    if _n_sources >= 3:
+                        _cons_bg, _cons_fg, _cons_label = "rgba(34,197,94,0.15)", "#22c55e", "High agreement"
+                    elif _n_sources == 2:
+                        _cons_bg, _cons_fg, _cons_label = "rgba(232,160,32,0.15)", "#e8a020", "Mixed"
+                    else:
+                        _cons_bg, _cons_fg, _cons_label = "var(--bc-bg2)", "var(--bc-dim)", "Single source"
                     st.markdown(
-                        f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:10px;'
-                        f'padding:12px 14px;margin-bottom:12px;">'
+                        f'<style>@keyframes bcFadeIn{{from{{opacity:0;transform:translateY(4px);}}to{{opacity:1;transform:translateY(0);}}}}'
+                        f'.bc-gl-card{{transition:box-shadow 0.2s;}}.bc-gl-card:hover{{box-shadow:0 0 0 1px rgba(30,144,255,0.4);}}</style>'
+                        f'<div class="bc-gl-card" style="background:var(--bc-bg-card);border:1px solid var(--bc-bg2);border-radius:10px;'
+                        f'padding:12px 14px;margin-bottom:12px;animation:bcFadeIn 0.35s ease-out;">'
                         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                        f'<span style="font-weight:700;font-size:14.5px;color:var(--bc-text);">{_grp["away"]} @ {_grp["home"]}</span>'
-                        f'<span style="color:var(--bc-dim);font-size:11px;">{_n_sources} source{"s" if _n_sources != 1 else ""}</span>'
+                        f'<span style="font-weight:800;font-size:15px;color:var(--bc-text);letter-spacing:0.2px;">{_grp["away"]} @ {_grp["home"]}</span>'
+                        f'<span title="{_cons_label} — {_n_sources} source{"s" if _n_sources != 1 else ""} on this game" '
+                        f'style="background:{_cons_bg};color:{_cons_fg};font-size:10.5px;font-weight:700;'
+                        f'padding:2px 8px;border-radius:10px;">{_n_sources} source{"s" if _n_sources != 1 else ""}</span>'
                         f'</div>{_rows_html}</div>',
                         unsafe_allow_html=True
                     )
     else:
-        st.caption("No game-line picks loaded for this sport right now.")
+        if _pred_gl_prefilter_count > 0:
+            st.caption(f"No games meet the {_pred_min_sources}+ source filter right now — try lowering it.")
+        else:
+            st.caption("No game-line picks loaded for this sport right now.")
 
     # ══════════════════════════════════════════════════════════════════
     # COLLECT — player props from every source into one flat list.
@@ -13414,6 +13448,10 @@ with tabs[2]:
     # Sort by real cross-source agreement (most-confirmed players first),
     # same fix and same reasoning as the game-line groups above.
     _pred_pp_groups.sort(key=lambda g: len(set(p["source"] for p in g["props"])), reverse=True)
+    _pred_pp_prefilter_count = len(_pred_pp_groups)
+    if _pred_min_sources > 1:
+        _pred_pp_groups = [g for g in _pred_pp_groups if len(set(p["source"] for p in g["props"])) >= _pred_min_sources]
+    _pred_pp_groups.sort(key=lambda g: g["props"][0].get("player", "") in st.session_state["pred_pinned_games"], reverse=True)
     if _pred_pp_groups:
         _pp_per_row = 3
         for _pi in range(0, len(_pred_pp_groups), _pp_per_row):
@@ -13421,6 +13459,14 @@ with tabs[2]:
             for _pj, _grp in enumerate(_pred_pp_groups[_pi:_pi + _pp_per_row]):
                 with _pp_cols[_pj]:
                     _p0 = _grp["props"][0]
+                    _pp_player_key = _p0.get("player", f"row{_pi}_{_pj}")
+                    _pp_is_pinned = _pp_player_key in st.session_state["pred_pinned_games"]
+                    if st.button("★ Pinned" if _pp_is_pinned else "☆ Pin", key=f"pin_pp_{_pp_player_key}_{_pi}_{_pj}"):
+                        if _pp_is_pinned:
+                            st.session_state["pred_pinned_games"].discard(_pp_player_key)
+                        else:
+                            st.session_state["pred_pinned_games"].add(_pp_player_key)
+                        st.rerun()
                     _headline = _pred_pick_line(_p0)
                     _sub_sources = _grp["props"][1:4]
                     _sub_html = "".join(
@@ -13455,4 +13501,7 @@ with tabs[2]:
                         unsafe_allow_html=True
                     )
     else:
-        st.caption("No player props loaded for this sport right now.")
+        if _pred_pp_prefilter_count > 0:
+            st.caption(f"No props meet the {_pred_min_sources}+ source filter right now — try lowering it.")
+        else:
+            st.caption("No player props loaded for this sport right now.")
