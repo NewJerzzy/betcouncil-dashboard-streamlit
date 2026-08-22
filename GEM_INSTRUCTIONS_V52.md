@@ -75,40 +75,31 @@ No-vig formula (apply whenever both sides found with juice):
    Search: "Unabated [player] [stat] props [date]"
    → Pulls from Pinnacle, Circa, Bookmaker. Label [UNABATED — SHARP CONSENSUS]
 
-4. ProphetX [FREE TIER]
-   Search: "ProphetX [player] [stat] prop line [date]"
-   → Projections + implied no-vig. Label [PROPHETX — IMPLIED]
-
-5. DraftKings public page
+4. DraftKings public page
    Search: "DraftKings [player] [stat] prop odds today"
    → Sometimes visible without login. Use for line confirmation only.
    → Compute no-vig if both sides shown. Label [DK — PUBLIC NO-VIG]
 
-6. FanDuel public page
+5. FanDuel public page
    Search: "FanDuel [player] [stat] prop odds today"
    → Same as DraftKings — use for line confirmation + no-vig if both sides found.
    → Label [FANDUEL — PUBLIC NO-VIG]
 
-7. Sportsbook Review (SBR)
+6. Sportsbook Review (SBR)
    Search: "SBR [player] [stat] prop odds consensus"
    → Shows 10+ books — compute consensus no-vig from available sides.
    → Label [SBR — CONSENSUS NO-VIG]
 
-8. OddsPortal
-   Search: "OddsPortal [sport] [player] [stat] [date]"
-   → 40+ books globally including European sharp books.
-   → Label [ODDSPORTAL — CONSENSUS]
-
-9. NumberFire / Establish The Run (sport-specific)
+7. NumberFire / Establish The Run (sport-specific)
    NBA/NFL: Search "NumberFire [player] projection [date]"
    MLB/NFL: Search "Establish the Run [player] projection [date]"
    → Projection-based implied probability. Label [PROJECTION — IMPLIED]
    → Use for fair probability estimate only, not as sharp market confirmation.
 
-10. Reddit r/sportsbook or r/PrizePicks [LAST RESORT — UNVERIFIED]
-    Search: "site:reddit.com PrizePicks [sport] props [date]"
-    → Screenshots only — prop availability confirmation, NOT edge calculation
-    → Label [REDDIT — UNVERIFIED]. NEVER use for probability or no-vig math.
+8. Reddit r/sportsbook or r/PrizePicks [LAST RESORT — UNVERIFIED]
+   Search: "site:reddit.com PrizePicks [sport] props [date]"
+   → Screenshots only — prop availability confirmation, NOT edge calculation
+   → Label [REDDIT — UNVERIFIED]. NEVER use for probability or no-vig math.
 
 PINNACLE LABEL PRIORITY: If Pinnacle found at steps 1 or 2 (OddsJam often shows Pinnacle line)
 → Label [PINNACLE — NO-VIG] regardless of which tool surfaced it.
@@ -1585,13 +1576,11 @@ Active sources and what they provide:
 - Polymarket: Prediction markets
 - Novig: Props (no-vig exchange)
 - MyBookie: Game lines (no more manual cookie)
-- ParlaySavant: +EV props
 - Bet365: Game lines
 - Pregame: Sharp plays
 - Betr: Props
 - FantasyLabs: Ownership projections
 - Rotowire: Injury/lineup data
-- Sleeper: Player data
 - NumberFire: Projections
 
 Harvester status in brief sidebar: 🟢 = live data (<threshold mins old), 🟡 = stale, ⚪ = pending
@@ -1669,11 +1658,10 @@ When any consensus % source in session:
 - All three showing >70% public = reduce Kelly 20% (square side warning)
 - Label: [CONSENSUS — X% public across 3 sources]
 
-**R-SHARP-31 (Stokastic + RotoGrinders — DFS ownership projections):**
+**R-SHARP-31 (Stokastic — DFS ownership projections):**
 When DFS ownership data in session:
 - Low ownership (<8%) + model edge = leverage play in tournaments, contrarian signal
 - High ownership (>30%) = popular chalk — fade for contrarian edge, or confirm for cash
-- Stokastic + RotoGrinders agreement on ownership = higher confidence
 - Label: [DFS OWNERSHIP — X% projected]
 
 **R-SHARP-32 (Outlier.bet + Smarkets exchange — true market signals):**
@@ -1704,7 +1692,7 @@ When expert pick data in session:
 **Tier 1 (Real-time Pinnacle):** Scanbet drops, SharpAPI steam
 **Tier 2 (Sharp book consensus):** SportsInsights, Unabated, Signal Odds AI
 **Tier 3 (Betting splits):** Action Network, Covers, OddsShark, ScoresAndOdds, BettingPros
-**Tier 4 (Props market):** Props.cash, OddsJam, Outlier, ParlaySavant, EVSharps EV
+**Tier 4 (Props market):** Props.cash, OddsJam, Outlier, EVSharps EV
 **Tier 5 (Exchange / prediction markets):** Smarkets, Kalshi, Polymarket
 **Tier 6 (Context signals):** BaseballPress lineups, Weather, Rotowire injuries, DFS ownership
 
@@ -1797,7 +1785,7 @@ This matches Rithmm/Dimers methodology. In GEM analysis, for MLB/NHL/Soccer tota
 **Tier 2 (Sharp book consensus):** SportsInsights, Unabated, Signal Odds AI
 **Tier 3 (Betting splits + public %):** **SportsbookReview (PRIMARY — direct handle %)**, Action Network, Covers, OddsShark, BettingPros
 **Tier 4 (Multi-book line shopping):** SportsLine (opening lines + 5-book comparison), existing book scrapers
-**Tier 5 (Props market):** Props.cash, OddsJam, Outlier, ParlaySavant, EVSharps EV
+**Tier 5 (Props market):** Props.cash, OddsJam, Outlier, EVSharps EV
 **Tier 6 (Exchange / prediction markets):** Smarkets, Kalshi, Polymarket
 **Tier 7 (Context signals):** BaseballPress lineups, Weather, Rotowire injuries, DFS ownership
 
@@ -1900,34 +1888,38 @@ The following sources now fetch automatically server-side on every board load:
 | **Bovada** | Direct server-side fetch (www.bovada.lv public API) | CORS only blocks browsers, not server-side Python; confirmed 200 from datacenter IPs |
 
 #### Browser Tab Required (Tampermonkey harvesters)
-Only **2 sites** still require a browser tab open while using BetCouncil:
-1. **Bet365** — WebSocket-based delta feed (btec-websocket.services.srarena.io); harvester intercepts live ticks + REST context and pushes joined game data to Gist every 15s
-2. **ParlaySavant** — Next.js server-rendered, NextAuth login gate; Tampermonkey DOM scraper on public tools pages
+Confirmed as of August 2026: no source currently requires a continuously-open
+browser tab. Bet365 (previously WebSocket-based, browser-dependent) is now
+fully automated via a scheduled GitHub Actions workflow calling odds-api.io.
+ParlaySavant is gone entirely (confirmed zero real gradable picks, removed).
+Caesars token refresh (`caesars_login_harvest.py`) is a real, separate,
+periodic manual script run when its token nears expiry — not a "keep a tab
+open" mechanism, and not tied to normal BetCouncil usage.
 
 #### Protocol
-1. Open Bet365 tab (logged in), browse any odds page
-2. Open ParlaySavant tab, browse any props/odds page under Tools
-3. Open BetCouncil and run the board
+Open BetCouncil and run the board — no other manual step is currently required
+for any source.
 
-All other sources (EVSharps, Underdog, Polymarket, Kalshi, Sleeper, Weather, Scanbet, ActionNetwork, Bovada, FanDuel, Caesars, MyBookie) are fully automatic.
+All sources (EVSharps, Underdog, Polymarket, Kalshi, Weather, Scanbet,
+ActionNetwork, Bovada, FanDuel, Caesars, MyBookie, Bet365, PrizePicks) are
+fully automatic.
 
 ### Pipeline Fixes (July 4, 2026)
 - **Game Lines kill-switch bug fixed**: `analyze_all_games()` was nested inside `if not ENABLE_RECOMMENDATIONS` — it only ran when recommendations were DISABLED, silently leaving every game with 0.0% edge and no team names. Now runs unconditionally.
 - **Gist 409 conflict fix**: `pushGist()` now serializes all writes through a promise queue with retry-on-409, preventing harvested data from being silently dropped when multiple sources push simultaneously.
-- **5 dead session_state keys wired into signal logic**: `dk_props_harvested` → book comparison; `action_network_data` → fade signal (±0.015 edge_adj); `bettingpros_data` → expert consensus fade; `oddsportal_data` → CLV reference opening line; `parlaysavant_ev_h` → second-source EV confirmation.
+- **5 dead session_state keys wired into signal logic**: `dk_props_harvested` → book comparison; `action_network_data` → fade signal (±0.015 edge_adj); `bettingpros_data` → expert consensus fade; `oddsportal_data` → CLV reference opening line (note: OddsPortal itself later replaced by ESPN Opening Lines Capture); `parlaysavant_ev_h` → second-source EV confirmation (note: ParlaySavant later removed entirely).
 - **PrizePicks staleness window**: extended from same-day-only to 7 days so Gist data loads even when scraper hasn't run that day.
 - **MyBookie Playwright error eliminated**: removed dead Playwright fallback from `fetch_mybookie_from_gist()` since Action Network now handles all cases server-side.
 
-### Tampermonkey Harvesters Active
+### Active Automated Harvesters (updated August 2026)
 | Script | Site | Pushes To Gist |
 |--------|------|----------------|
 | BetCouncil FanDuel Harvester | sportsbook.fanduel.com | betcouncil_fd_props_{sport}.json, fanduel_tokens.json |
 | BetCouncil Caesars Token Harvester | sportsbook.caesars.com | betcouncil_caesars_tokens.json |
 | BetCouncil Bovada Harvester | bovada.lv | betcouncil_bovada_{sport}.json |
 | BetCouncil MyBookie Harvester | mybookie.ag | betcouncil_mybookie_{sport}.json, betcouncil_mybookie_props_{sport}.json |
-| BetCouncil Bet365 Harvester | bet365.com + srarena.io | betcouncil_bet365_games.json |
-| BetCouncil ParlaySavant Harvester | parlaysavant.com | betcouncil_parlaysavant_{sport}_props_{market}.json |
-| BetCouncil PrizePicks Sync | app.prizepicks.com | betcouncil_prizepicks_{sport}.json |
+| OddsAPI.io Bet365 Refresh (GitHub Actions) | odds-api.io | betcouncil_oddsapiio_combined.json (nested per-sport key) |
+| PrizePicks Props Refresh (GitHub Actions) | PrizePicks' own partner API, direct | betcouncil_prizepicks_combined.json |
 
 ---
 ## Session Addendum — v5.2 (July 5, 2026, revised)
@@ -2126,7 +2118,7 @@ DFS PROPS:
 - FanDuel props: browser harvester ✅ (confirmed blocked — DNS-dead API subdomains + 400 with no body from scripted access)
 - BetMGM props: AUTOMATED via GitHub Actions, every 15 min — see SPORTSBOOK GAME LINES above for the fingerprint-rotation fix ← UPDATED 7/12
 - BetUS props builder: browser harvester ← NEW
-- ParlaySavant +EV props: browser harvester ← NEW
+- ParlaySavant +EV props: browser harvester ← REMOVED (confirmed zero real gradable picks, source and harvester deleted)
 
 SHARP SIGNALS / PUBLIC DATA:
 - Action Network: LIVE direct fetch (public API, no auth) — no Tampermonkey needed, called fresh every board load ← UPDATED
@@ -2167,12 +2159,17 @@ safari15_5 pass with real data). The scraper now rotates through the working
 profiles and falls back cleanly if a future WAF update blocks all of them; a
 same-origin Tampermonkey harvester (scripts/tampermonkey_betmgm_harvester.user.js)
 exists in the repo as a ready-made fallback if that happens, not currently installed.
-Sites confirmed to have NO viable non-Tampermonkey path (real anti-bot WAF or no
-accessible data at all, not just unexplored): Caesars, FanDuel, MyBookie, Bet365,
+Sites previously listed here as having NO viable non-Tampermonkey path — Caesars,
+FanDuel, MyBookie, Bet365 — have since gained real, automated paths via GitHub
+Actions workflows calling odds-api.io directly, confirmed August 2026. Remaining
+sites still believed to have no viable non-Tampermonkey path (not individually
+re-verified this session):
 BetUS, Bet105, BetWhale, YBets, Covers, OddsJam, EVBets, SportsInsights,
-VegasInsider, Stokastic, RotoGrinders, FantasyLabs, Outlier, Rotowire, Numberfire,
-PropsCash, BettingPros, Unabated, Pickswise, Pickwise, ParlaySavant, Pregame,
-OddsPortal, ScoresAndOdds, PropSwap, Zamba, Polymarket (stale data only).
+VegasInsider, Stokastic, FantasyLabs, Outlier, Rotowire, Numberfire,
+PropsCash, BettingPros, Unabated, Pickswise, Pickwise, Pregame,
+ScoresAndOdds, PropSwap, Zamba, Polymarket (stale data only).
+(RotoGrinders, ParlaySavant, and OddsPortal removed from this list — all three
+confirmed gone entirely, not merely lacking a non-Tampermonkey path.)
 
 
 HARVESTER STATUS INTERPRETATION:
@@ -2210,12 +2207,23 @@ Both are now fixed. If OddsAPI/game-line-related model output looked systematica
 degraded or the app crashed on load recently, that timeframe's data quality may be
 suspect — treat pre-fix graded results with extra caution when auditing SEM.
 
-### OddsPAPI (Pinnacle via OddsPAPI) — still unresolved, now diagnosable
-`fetch_pinnacle_lines()` has never once completed successfully (Gist usage counter
-was never written), but previously failed with zero logging so the cause was
-unknown. Now logs the actual HTTP status/response body to Fetch Errors on every
-failure path. Likely cause: invalid/expired ODDSPAPI_KEY — needs verification in
-Streamlit Cloud secrets, not yet confirmed either way.
+### OddsPAPI — real update (August 2026), corrects the entry below
+`fetch_pinnacle_lines()` (Pinnacle via OddsPAPI) is now confirmed genuinely
+working — real, live Pinnacle data has been confirmed throughout recent
+sessions. The "likely invalid/expired key" guess below was never actually
+verified and turned out to be the wrong direction.
+
+A separate, related function was found and fixed instead: `fetch_oddspapi_props()`,
+which feeds the Line Shop tab's player-prop book comparison, was confirmed
+completely missing from the codebase — its caller referenced it, but it never
+existed anywhere, causing a silent NameError on every board load (not a bad
+key, an absent function). Built fresh, directly adapted from the proven, real,
+working pattern already in `fetch_pinnacle_lines()` (same sport_id_map, same
+confirmed real API response shape). Uses the specific books the Line Shop
+display already expected (caesars/circa/mybookie/betfair, per its own existing
+code comment). Book slugs for those four are a reasonable, low-risk match to
+the confirmed pinnacle/bet365 slug pattern, not independently re-verified one
+by one — a wrong slug returns empty for that one book, not a crash.
 
 ### Maintenance note
 GEM instructions (this file + the ChatGPT version) should be updated as part of
@@ -2349,38 +2357,13 @@ scraper only once the user supplied their own key.
 
 ## Session 14 Addendum (July 18, 2026) — WagerBird Added; Snapp Rejected (Stale)
 
-### New data source: WagerBird free MLB picks (`wagerbird.com/picks`)
-Public Next.js page, no auth. Picks are embedded in the page's React Server
-Component payload (`self.__next_f.push([1,"..."])` script blocks) rather
-than a structured JSON API — `scripts/wagerbird_refresh.py` regex-parses
-the decoded RSC strings directly. MLB only. Verified live via two GitHub
-Actions runs (29624366106, 29624427956) before being trusted: 110 real
-picks parsed per run, each with matchup, market (ML/spread/team-total/
-game-total/F5-team-total), pick side, odds, a WagerBird confidence tier +
-score (WB2/WB3/GEMS · 0–100), a written rationale, and a graded Win/Loss
-result for past picks. Cron every 15 min (`5,20,35,50 * * * *`). Pushes to
-`betcouncil_wagerbird_picks.json`.
-
-Wired in two places, both display-only — does not touch
-`compute_multi_signal_edge`, SEM, or any signal weight:
-1. **Game Lines tab** — `get_wagerbird_pick()` in `fetchers.py` matches
-   WagerBird's pick to the current game by team-abbreviation substring
-   (same approach as `get_dimers_match`) and renders a `🐦 WagerBird: ...`
-   caption right after the existing Dimers caption.
-2. **Backtest/calibration pipeline** — `snapshot_wagerbird()` in
-   `scripts/third_party_snapshot.py` parses each pick's short title text
-   (e.g. "San Diego ML", "Arizona +1.5", "Baltimore F5 Team Total Under
-   2.5") into structured market/pick/line via regex, using a hardcoded
-   MLB team-name→abbreviation table since WagerBird's matchup strings only
-   give abbreviations. Team-total picks with no explicit number in the
-   title (number only appears in the prose rationale, e.g. "Houston Team
-   Total Under") are skipped rather than guessed — confirmed live this
-   pulls 48 of 110 picks into gradable records, the rest correctly
-   dropped. Feeds into the same `betcouncil_third_party_calibration.json`
-   rolling hit-rate tracker as Dimers/Covers/BettingPros. Whether
-   WagerBird's calibration numbers ever justify promoting it to a live
-   signal is an explicit human decision later, same as the other sources
-   — not something this pipeline does on its own.
+### WagerBird — added July 18, later fully removed (August 2026)
+Originally added as a free MLB picks source (`wagerbird.com/picks`, regex-parsed
+from page RSC payload, display-only in Game Lines tab + backtest pipeline).
+An August 16 session removed its display chips but explicitly left the
+underlying script/workflow untouched. A later session confirmed the whole
+pipeline was orphaned (zero real remaining consumers) and deleted the script
+and workflow entirely — WagerBird is now fully gone, not just hidden from display.
 
 ### Rejected: Snapp (`trysnapp.ai`)
 Public ticker API, no auth — looked promising on paper (8-book MLB odds,
@@ -2400,16 +2383,12 @@ same session as the change — not deferred, not batched for later.
 
 ## Session 16 Addendum (July 18, 2026) — Baseball Savant Added, Smarkets Pricing Fixed, Unabated Confirmed Dead-End, Full Gist Audit
 
-### New source: Baseball Savant Statcast leaderboards
-Public CSV export (baseballsavant.mlb.com/leaderboard/*?csv=true), no
-auth. `scripts/baseballsavant_refresh.py`, cron every 6h. Replaces an
-uncommitted one-time push from a secondary session (real data, zero
-code — same pattern flagged for WagerBird/PropsMadness/LineTerminal
-last session). 4 datasets confirmed live: batter xStats (xBA/xSLG/
-xwOBA), batter + pitcher Statcast (barrel%/exit velo/launch angle),
-sprint speed. Real quirk caught before it shipped: the CSV combines
-name into one `"last_name, first_name"` column, not two separate
-fields — fixed and verified against the real value ("Wood, James").
+### Baseball Savant Statcast leaderboards — added July 18, later removed (August 2026)
+Originally added as a public CSV export source (batter xStats, Statcast,
+sprint speed). A later session confirmed zero real downstream consumers
+(output never read anywhere) and removed it — this is separate from the
+still-active, still-live Statcast pitch-level functions used elsewhere
+in the app (savant_batted, savant_arsenal, etc), which were not affected.
 
 ### Smarkets exchange — pricing now fully working
 `scripts/smarkets_refresh.py`. Took 8 live-debug rounds total to get
@@ -2499,43 +2478,10 @@ writes anymore:
   to match its real 30-min cron (`15,45 * * * *`) plus buffer — was a
   calibration mismatch, not a real staleness bug.
 
-### New data source: PropsMadness (api.propsmadness.com)
-Separate Express backend behind the propsmadness.com Next.js frontend;
-Clerk auth gates premium UI only, the API itself is unauthenticated.
-Discovered via bundle URL-builder extraction. Primary endpoint:
-`GET /api/offer/{leagueCode}/bets/{marketCode}` → full slate in one call
-(`{leagueCode, market, matchOffers, playerInjuryMap}`). 15 MLB markets
-wired (player props + moneyline/run-line/total-runs), cron every 15 min,
-`scripts/propsmadness_refresh.py`.
-
-First version's parser was wrong — assumed flat top-level fields
-(`o.line`, `o.playerName`) and produced 200-status responses with
-all-null records every time, a silent-failure shape distinct from a
-fetch error. Live Actions run exposed it (1 offer, every field null).
-Real structure: `matchOffers[].match.{id, homeTeam, awayTeam,
-startDateTimestamp}` + `matchOffers[].offer[]` (a list despite the
-singular key) where each item is `{player: {id, firstName, lastName,
-position, teamId}, bet: {sportsbook, market, line, odds}, offerType,
-fallbackLine, referenceBet}`. Rewritten parser functionally tested
-against the real captured sample (correctly skips `offerType:"locked"`,
-extracts `fallback` offers' nested `bet.line`/`bet.odds`) before
-re-pushing, then confirmed against a second live run: 1 real usable
-offer (Tarik Skubal 7.5 Ks, FanDuel -178/+138 — correct, verified
-structure).
-
-**Practical yield caveat, stated plainly**: across all 15 markets on the
-full live MLB slate, only 1 offer came back as `offerType:"fallback"`
-(a usable line) — the overwhelming majority are `"locked"` (subscription-
-gated, player/market visible but no line) per the site's own paywall
-design, matching the caveat noted at discovery (Gerrit Cole's strikeout
-line was locked in the sample query too). This is a low-yield source in
-practice despite the API itself being technically fully public and
-correctly parsed — not wired into Game Lines/Player Lookup display yet,
-unlike WagerBird, because there usually won't be enough unlocked offers
-per slate to be worth a UI badge. Revisit if yield looks different over
-more days of cron data, or if a paid PropsMadness tier is ever added.
-
-
+### PropsMadness — added July 18, later removed (August 2026)
+Originally added as a props data source (api.propsmadness.com). A later
+session confirmed the workflow ran every 15 minutes but its output was
+never read by anything downstream, and removed it entirely.
 
 ## Session 13 Addendum (July 2026) — Book Coverage Overhaul, Tennis Source Swap, MLB Perf Fix
 
