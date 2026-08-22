@@ -11361,7 +11361,7 @@ def score_pick_standalone(player, stat, line, side, sport, is_home=False):
         except Exception:
             prob = 0.5 + z * 0.08
         prob = max(0.20, min(0.80, prob))
-        edge = round(calculate_edge(prob, side, sport), 4)
+        edge = round(prob - prizepicks_breakeven_prob(2), 4)
 
     tier = _get_cal_tier(edge, sport)
     ev_2 = f"{calculate_prizepicks_ev(prob, 2):+.1%}"
