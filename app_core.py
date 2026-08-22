@@ -6843,6 +6843,28 @@ def _fetch_live_team_woba_splits() -> dict:
                 _logger.debug("Silent except at line 5547")
                 pass
 
+    # Real fix (2026-08-21): this function makes one real network call per
+    # MLB team (30 teams), explaining its real ~6.7s timing. Same class of
+    # bug as oddswrap_props -- the local pkl cache is confirmed ephemeral
+    # on Streamlit Cloud, wiped on every redeploy. Check the Gist (genuinely
+    # persists) before falling through to the real, slow per-team fetch.
+    try:
+        _gist_cached = _read_gist_file("betcouncil_team_woba_splits_cache.json", cache_minutes=360)
+        if _gist_cached and isinstance(_gist_cached, dict):
+            _cached_data = _gist_cached.get("data")
+            _cached_at = _gist_cached.get("captured_at", "")
+            if _cached_data and _cached_at:
+                _age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(_cached_at)).total_seconds() / 3600
+                if _age_h < 6:
+                    try:
+                        with open(cache_path, "wb") as f:
+                            pickle.dump(_cached_data, f)
+                    except Exception:
+                        pass
+                    return _cached_data
+    except (ValueError, TypeError, KeyError):
+        pass
+
     season = date.today().year
     # Get all MLB team IDs
     teams_url = f"https://statsapi.mlb.com/api/v1/teams?sportId=1&season={season}"
@@ -6900,6 +6922,10 @@ def _fetch_live_team_woba_splits() -> dict:
                 pickle.dump(result, f)
         except Exception:
             _logger.debug("Silent except at line 5604")
+            pass
+        try:
+            _write_gist_cache("betcouncil_team_woba_splits_cache.json", result)
+        except Exception:
             pass
     return result
 
