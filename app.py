@@ -13229,6 +13229,17 @@ with tabs[2]:
         "Pickswise": "pickswise.com", "WiseGuyTeam": "wiseguyteam.com",
         "GameLinePicks": "gamelinepicks.com",
     }
+    _pred_source_desc = {
+        "BetQL": "Betting analytics site — model-driven player prop projections.",
+        "BettingPros": "Consensus site — best line + cross-book pricing on player props.",
+        "Bobby's Bets": "Independent capper — published picks with public reasoning.",
+        "GamblingForecast": "Model-driven prop projections and picks.",
+        "GameLinePicks": "Free, no-auth game-line picks site.",
+        "Pickswise": "Editorial sports betting picks site.",
+        "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
+        "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
+        "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
+    }
     if _pred_gl_groups:
         _pred_gl_per_row = 2
         for _gi in range(0, len(_pred_gl_groups), _pred_gl_per_row):
@@ -13240,7 +13251,7 @@ with tabs[2]:
                         + (f'<img src="https://www.google.com/s2/favicons?domain={_pred_source_domains[it["source"]]}&sz=32" '
                            f'style="width:14px;height:14px;border-radius:3px;flex-shrink:0;" />'
                            if it["source"] in _pred_source_domains else '')
-                        + f'<span><b>{it["source"]}</b>: {it["text"]}</span></div>'
+                        + f'<span title="{_pred_source_desc.get(it["source"], "")}"><b>{it["source"]}</b>: {it["text"]}</span></div>'
                         for it in _grp["items"]
                     )
                     _n_sources = len(set(it["source"] for it in _grp["items"]))
@@ -13403,17 +13414,6 @@ with tabs[2]:
     # Sort by real cross-source agreement (most-confirmed players first),
     # same fix and same reasoning as the game-line groups above.
     _pred_pp_groups.sort(key=lambda g: len(set(p["source"] for p in g["props"])), reverse=True)
-    _pred_source_desc = {
-        "BetQL": "Betting analytics site — model-driven player prop projections.",
-        "BettingPros": "Consensus site — best line + cross-book pricing on player props.",
-        "Bobby's Bets": "Independent capper — published picks with public reasoning.",
-        "GamblingForecast": "Model-driven prop projections and picks.",
-        "GameLinePicks": "Free, no-auth game-line picks site.",
-        "Pickswise": "Editorial sports betting picks site.",
-        "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
-        "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
-        "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
-    }
     if _pred_pp_groups:
         _pp_per_row = 3
         for _pi in range(0, len(_pred_pp_groups), _pp_per_row):
