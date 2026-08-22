@@ -18276,16 +18276,16 @@ with st.sidebar:
 
     # SEM tile
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
-        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">↗ SEM</div>'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;" title="Standard Error of the Mean — how much wiggle room the model gives itself before tightening or loosening the minimum edge it will act on.">↗ SEM</div>'
         f'<div style="font-size:13px;font-weight:700;color:#22c55e;letter-spacing:1px;">● {_regime_label.upper()}</div>'
         f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">({_edge_thresh:.1%} edge threshold)</div>'
         f'</div>', unsafe_allow_html=True)
     # Unit + Session tile
     _unit_val = active_unit()
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">'
-        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">⊚ UNIT SIZE</div>'
+        f'<div style="font-size:10px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;" title="Your standard bet size for this session, sized as a fraction of your real bankroll.">⊚ UNIT SIZE</div>'
         f'<div style="font-size:24px;font-weight:800;color:var(--bc-text);">${_unit_val:.2f}</div>'
-        f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;">{KELLY_FRACTION:.2f} Kelly Fraction</div>'
+        f'<div style="font-size:11px;color:#4a6a8a;margin-top:2px;" title="What fraction of the full, mathematically-optimal Kelly bet size the model actually uses — kept low on purpose to reduce variance.">{KELLY_FRACTION:.2f} Kelly Fraction</div>'
         f'</div>', unsafe_allow_html=True)
     st.markdown(f'<div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;">'
@@ -18566,11 +18566,11 @@ st.markdown(f"""
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">
     <div class="metric-box"><div class="metric-label">Bankroll</div><div class="metric-value gold-text">${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}</div><div style="font-size:15px;color:{dc_color};">{dc} today</div></div>
-    <div class="metric-box"><div class="metric-label">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
-    <div class="metric-box"><div class="metric-label">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
-    <div class="metric-box"><div class="metric-label">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
+    <div class="metric-box"><div class="metric-label" title="Your standard bet size for this session, sized as a fraction of your real bankroll.">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
+    <div class="metric-box"><div class="metric-label" title="The minimum projected edge a prop needs to appear on your board at all.">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
+    <div class="metric-box"><div class="metric-label" title="What fraction of the full, mathematically-optimal Kelly bet size the model actually uses -- kept low on purpose to reduce variance.">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
     <div class="metric-box"><div class="metric-label">Props Loaded</div><div class="metric-value teal-text">{len(st.session_state.board_data)}</div></div>
-    <div class="metric-box{_staleness_pulse_class}"><div class="metric-label">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
+    <div class="metric-box{_staleness_pulse_class}"><div class="metric-label" title="How old the underlying odds and lines are since they were last refreshed.">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
   </div>
 </div>""", unsafe_allow_html=True)
 
