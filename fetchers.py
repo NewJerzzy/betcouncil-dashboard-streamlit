@@ -12776,6 +12776,30 @@ def fetch_mlb_rolling_averages():
             if cached:
                 return cached
 
+    # Real fix (2026-08-21): same class of bug as oddswrap_props and
+    # _fetch_live_team_woba_splits -- the local pkl cache above is
+    # confirmed vulnerable to being wiped on every Streamlit Cloud
+    # redeploy, and this function's worst case (750+ sequential
+    # per-player calls, per its own comment above) is the most severe
+    # of the three. Check the Gist (genuinely persists) before falling
+    # through to the real, expensive per-player fetch.
+    try:
+        _gist_cached = _read_gist_file("betcouncil_mlb_rolling_avgs_cache.json", cache_minutes=20)
+        if _gist_cached and isinstance(_gist_cached, dict):
+            _cached_data = _gist_cached.get("data")
+            _cached_at = _gist_cached.get("captured_at", "")
+            if _cached_data and _cached_at:
+                _age_m = (datetime.now(timezone.utc) - datetime.fromisoformat(_cached_at)).total_seconds() / 60
+                if _age_m < 20:
+                    try:
+                        with open(cache_path, "wb") as f:
+                            pickle.dump(_cached_data, f)
+                    except Exception:
+                        pass
+                    return _cached_data
+    except (ValueError, TypeError, KeyError):
+        pass
+
     all_roster_ids = st.session_state.get("mlb_roster_ids") or MLB_PLAYER_IDS
     _errors = []
 
@@ -12875,6 +12899,10 @@ def fetch_mlb_rolling_averages():
         if rolling:
             with open(cache_path, "wb") as f:
                 pickle.dump(rolling, f)
+            try:
+                _write_gist_cache("betcouncil_mlb_rolling_avgs_cache.json", rolling)
+            except Exception:
+                pass
     except Exception:
         pass
     return rolling
