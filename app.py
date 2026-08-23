@@ -13061,7 +13061,12 @@ with tabs[2]:
         )
 
     def _pred_sport_match(s):
-        return _pred_sport_filter == "All" or str(s or "").upper() == _pred_sport_filter
+        if _pred_sport_filter == "All":
+            return True
+        _s_upper = str(s or "").upper()
+        if _pred_sport_filter == "UFC" and _s_upper == "MMA":
+            return True
+        return _s_upper == _pred_sport_filter
 
     # Abbreviation -> full team name, so substring matching works no matter
     # which name format a given source uses (bare mascot like "Phillies",
