@@ -905,20 +905,6 @@ with tabs[1]:
             inj_html += '</div>'
             st.markdown(inj_html, unsafe_allow_html=True)
 
-        # ── SHARP MONEY ALERTS ──────────────────────────────
-        sharp_alerts_s = st.session_state.get("sharp_alerts", [])
-        steam_moves_s = st.session_state.get("steam_moves", [])
-        all_sharp = sharp_alerts_s + steam_moves_s
-        st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.5rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:#e8a020;font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">⚡ Sharp Money</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        if all_sharp:
-            _sharp_html = []
-            for _sa in all_sharp[:4]:
-                _sa_c = {"line_move":"#e8a020","steam":"#e04040","public_vs_sharp":"#378add"}.get(_sa.get("type",""),"#6a7a8a")
-                _sharp_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid {_sa_c};border-radius:4px;padding:0.4rem 0.8rem;margin-bottom:0.3rem;font-size:1.05rem;color:var(--bc-text);">{_sa.get("message","")}</div>')
-            st.markdown("".join(_sharp_html), unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="color:var(--bc-dim);font-size:1.0rem;padding:0.2rem 0;">No sharp money movement detected — load board to scan.</div>', unsafe_allow_html=True)
-
         # ── PUBLIC VS. SHARP MONEY (Action Network tickets%/money% divergence) ──
         # Separate data source from the Sharp Money section above (that one is
         # EVSharps/Pinnacle line-movement based). This one is Action Network's
@@ -1661,14 +1647,6 @@ with tabs[1]:
 
         # ── ALT LINE UPGRADES ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Alt Line Upgrades</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        alt_upgrades = st.session_state.get("alt_line_upgrades", [])
-        if alt_upgrades:
-            _au_html = []
-            for au in alt_upgrades[:5]:
-                _au_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #7f77dd;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{au.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{au.get("Side","")} {au.get("AltLine","")} {au.get("Prop","")}</span> <span style="color:#7f77dd;font-size:1.0rem;">Alt EV: {au.get("AltEV","—")}</span></div>')
-            st.markdown("".join(_au_html), unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load board to check for alt line upgrades.</div>', unsafe_allow_html=True)
         _alt_ups = st.session_state.get("alt_line_upgrades", [])
         if _alt_ups:
             _au2_html = []
@@ -1680,14 +1658,6 @@ with tabs[1]:
 
         # ── ARBITRAGE OPPORTUNITIES ────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Arbitrage Opportunities</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
-        arb_opps = st.session_state.get("arb_opportunities", [])
-        if arb_opps:
-            _arb_html = []
-            for arb in arb_opps[:5]:
-                _arb_html.append(f'<div style="background:var(--bc-bg-card);border-left:3px solid #22c55e;border-radius:4px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"><span style="color:var(--bc-text);font-weight:600;font-size:1.0rem;">{arb.get("Player","")}</span> <span style="color:#b8c6d6;font-size:1.0rem;">{arb.get("Prop","")}</span> <span style="color:#22c55e;font-size:1.0rem;">ROI: {arb.get("ROI","—")}</span></div>')
-            st.markdown("".join(_arb_html), unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="color:var(--bc-muted);font-size:1.05rem;padding:0.3rem 0;">Load board to scan for arbitrage opportunities.</div>', unsafe_allow_html=True)
         _arb_opps = st.session_state.get("arb_opportunities", [])
         if _arb_opps:
             _arb2_html = []
