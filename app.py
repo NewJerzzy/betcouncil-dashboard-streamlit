@@ -11812,7 +11812,7 @@ with tabs[14]:
     st.markdown("---")
     st.markdown("### 🌐 Market Intelligence")
     st.caption("Kalshi + Polymarket prediction market probabilities vs model. Public betting consensus from Covers.")
-    _kal  = st.session_state.get("kalshi_markets", [])
+    _kal  = st.session_state.get("kalshi_events_scraped", [])
     _poly = st.session_state.get("polymarket_markets", [])
     _cov  = st.session_state.get("covers_consensus", [])
     _mi_c1, _mi_c2, _mi_c3 = st.columns(3)
