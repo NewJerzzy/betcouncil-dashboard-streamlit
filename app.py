@@ -1851,7 +1851,7 @@ with tabs[1]:
 with tabs[4]:
     _board  = st.session_state.get("board_data", []) or []
     _sport  = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
-    _kalshi = st.session_state.get("kalshi_markets", [])
+    _kalshi = st.session_state.get("kalshi_events_scraped", [])
     _poly   = st.session_state.get("polymarket_markets", [])
     _covers = st.session_state.get("covers_consensus", [])
 
@@ -10429,7 +10429,7 @@ with tabs[14]:
         _src_statuses.append({"Source": "Action Network (public %)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
     # Kalshi
-    _kal = st.session_state.get("kalshi_markets", [])
+    _kal = st.session_state.get("kalshi_events_scraped", [])
     if _kal:
         _src_statuses.append({"Source": "Kalshi (prediction markets)", "Status": f"🟢 {len(_kal)} markets", "Action": "None"})
     else:
