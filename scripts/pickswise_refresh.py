@@ -43,6 +43,20 @@ import random
 GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
 BASE_URL = "https://www.pickswise.com"
 LEAGUE_PATHS = {"MLB": "mlb", "NBA": "nba", "NFL": "nfl", "NHL": "nhl", "WNBA": "wnba"}
+
+# Real, known team abbreviations per sport, used to validate that scraped
+# content genuinely matches the requested sport (see fetch_league_games).
+KNOWN_TEAMS = {
+    "MLB": {"ARI","ATL","BAL","BOS","CHC","CWS","CIN","CLE","COL","DET","HOU","KC","LAA","LAD",
+            "MIA","MIL","MIN","NYM","NYY","OAK","ATH","PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH"},
+    "NBA": {"ATL","BOS","BKN","CHA","CHI","CLE","DAL","DEN","DET","GSW","HOU","IND","LAC","LAL",
+            "MEM","MIA","MIL","MIN","NOP","NYK","OKC","ORL","PHI","PHX","POR","SAC","SAS","TOR","UTA","WAS"},
+    "NFL": {"ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND",
+            "JAX","KC","LAC","LAR","LA","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"},
+    "NHL": {"ANA","ARI","BOS","BUF","CGY","CAR","CHI","COL","CBJ","DAL","DET","EDM","FLA","LAK",
+            "MIN","MTL","NSH","NJD","NYI","NYR","OTT","PHI","PIT","SJS","SEA","STL","TBL","TOR","UTA","VAN","VGK","WSH","WPG"},
+    "WNBA": {"ATL","CHI","CON","DAL","GSV","IND","LVA","LAS","MIN","NYL","PHO","SEA","WAS"},
+}
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
@@ -199,6 +213,31 @@ def fetch_league_games(sport: str, league_path: str) -> list:
                            "top_level_keys": list(data.keys())[:20],
                            "data_sample": json.dumps(data)[:800]})
         return []
+
+    # Real fix: Pickswise's own site has been observed falling back to
+    # trending/off-topic content on an off-season sport's page (confirmed
+    # live: NBA and NFL picks pages returned the identical game list during
+    # NBA off-season). Validate that returned games genuinely belong to the
+    # requested sport before trusting them -- checking real, known team
+    # abbreviations rather than assuming the URL path guarantees the sport.
+    valid_teams = KNOWN_TEAMS.get(sport)
+    if valid_teams:
+        filtered = []
+        rejected = 0
+        for g in games:
+            home = (g.get("homeTeam", {}) or {}).get("shortName", "")
+            away = (g.get("awayTeam", {}) or {}).get("shortName", "")
+            if home in valid_teams and away in valid_teams:
+                filtered.append(g)
+            else:
+                rejected += 1
+        if rejected:
+            DEBUG_LOG.append({"sport": sport, "note": "rejected games with teams not matching requested sport",
+                               "rejected_count": rejected, "kept_count": len(filtered)})
+        games = filtered
+        if not games:
+            return []
+
     return games
 
 
