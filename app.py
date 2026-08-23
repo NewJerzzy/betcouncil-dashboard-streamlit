@@ -3341,7 +3341,7 @@ with tabs[3]:
             # Scaled against a 15% ceiling (consistent with the same edge
             # ceiling already used for the Full Board heatmap intensity)
             # purely for the ring's fill amount, not the displayed number.
-            _gl_edge_pct = _gl_hero["edge"] * 100
+            _gl_edge_pct = abs(_gl_hero["edge"]) * 100
             _gl_ring_deg = min(1.0, _gl_edge_pct / 15.0) * 360
             _gl_time_suffix = f' · {_gl_hero["time"]}' if _gl_hero.get("time") else ""
             st.markdown(
@@ -3528,8 +3528,8 @@ with tabs[3]:
                 )
             _gl_row_best = max(_picks, key=lambda p: abs(p["edge"]))
             _gl_row_tc = _tc2.get(_gl_row_best["tier"], "#6a7a8a")
-            _gl_row_edge_pct = _gl_row_best["edge"] * 100
-            _gl_row_ring_deg = min(1.0, abs(_gl_row_edge_pct) / 15.0) * 360
+            _gl_row_edge_pct = abs(_gl_row_best["edge"]) * 100
+            _gl_row_ring_deg = min(1.0, _gl_row_edge_pct / 15.0) * 360
             _gl_row_ring_html = (
                 f'<div style="width:40px;height:40px;border-radius:50%;'
                 f'background:conic-gradient({_gl_row_tc} {_gl_row_ring_deg:.0f}deg, rgba(255,255,255,0.08) 0deg);'
@@ -3781,7 +3781,7 @@ with tabs[3]:
                 with _pc:
                     _pc_color = _tc2.get(_pk["tier"],"#6a7a8a")
                     _is_pos = _pk["edge"] > 0
-                    _edge_color = _pc_color if _is_pos else "#e04040"
+                    _edge_color = _pc_color
                     _has_edge = abs(_pk["edge"]) >= 0.02
                     _lm = _line_movement if isinstance(_line_movement, dict) else {}
                     _lm_dir = _lm.get("direction", "")
@@ -3827,7 +3827,7 @@ with tabs[3]:
                         f'{_lm_arrow}{_mom_svg}'
                         f'</div>'
                         + (f'<div style="font-size:12px;color:#e8a020;margin-bottom:3px;">{_pk.get("note","")}</div>' if _pk.get("note") else "")
-                        + f'<span style="font-family:\'JetBrains Mono\',\'Fira Code\',\'Courier New\',monospace;font-size:15px;font-weight:700;color:{_edge_color};">{"+"+str(round(_pk["edge"]*100,1)) if _is_pos else str(round(_pk["edge"]*100,1))}% edge</span>'
+                        + f'<span style="font-family:\'JetBrains Mono\',\'Fira Code\',\'Courier New\',monospace;font-size:15px;font-weight:700;color:{_edge_color};">{round(abs(_pk["edge"])*100,1)}% edge</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
