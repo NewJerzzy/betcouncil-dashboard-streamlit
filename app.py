@@ -4959,7 +4959,7 @@ with tabs[10]:
                     f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.5rem;border-left:3px solid {tier_color};background:var(--bc-bg-card);border-radius:0 4px 4px 0;overflow:hidden;">' +
                     f'<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:var(--bc-text);font-weight:600;font-size:0.95rem;">{lock.get("player","")}</span> ' +
                     f'<span style="color:{tier_color};font-size:0.9rem;">{lock.get("side","OVER")} {lock.get("line","")} {lock.get("prop","")}</span></div>' +
-                    f'<span style="color:{tier_color};font-size:0.85rem;font-weight:600;white-space:nowrap;margin-left:6px;">{lock.get("tier","")} +{lock.get("edge",0)*100:.1f}%</span></div>'
+                    f'<span style="color:{tier_color};font-size:0.85rem;font-weight:600;white-space:nowrap;margin-left:6px;">{lock.get("tier","")} +{abs(lock.get("edge",0))*100:.1f}%</span></div>'
                 )
             _grid_cols = "1fr" if n == 1 else "1fr 1fr"
             st.markdown(
