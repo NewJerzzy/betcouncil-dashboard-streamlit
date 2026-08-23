@@ -1869,7 +1869,7 @@ with tabs[4]:
                 _search = st.text_input("🔍 Search player", "", key="ev_search", placeholder="e.g. LeBron, Strider...")
             with _fc2:
                 _tier_f = st.multiselect("Tier", ["SOVEREIGN","ELITE","APPROVED","LEAN"],
-                                          default=["SOVEREIGN","ELITE","APPROVED"], key="ev_tier")
+                                          default=["SOVEREIGN","ELITE"], key="ev_tier")
             with _fc3:
                 _all_props = sorted(set(p.get("Prop","") for p in _board if p.get("Prop","")))
                 _prop_f = st.multiselect("Prop type", _all_props, key="ev_prop")
