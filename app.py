@@ -4514,7 +4514,7 @@ with tabs[3]:
                     return m
             return None
 
-        _kal_game  = _match_prediction_market(st.session_state.get("kalshi_markets", []), _home_nm, _away_nm)
+        _kal_game  = _match_prediction_market(st.session_state.get("kalshi_events_scraped", []), _home_nm, _away_nm)
         _poly_game = _match_prediction_market(st.session_state.get("polymarket_markets", []), _home_nm, _away_nm)
 
         # Pinnacle/VSIN sharp signals already computed per-game for the
