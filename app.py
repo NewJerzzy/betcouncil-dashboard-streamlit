@@ -12748,7 +12748,7 @@ with tabs[0]:
                         f'<span style="background:{tc};color:#0a1420;padding:2px 10px;border-radius:4px;font-weight:800;font-size:11px;">{p["Tier"]}</span>'
                         f'</div>'
                         f'<div style="color:{tc};font-weight:700;font-size:13px;margin-top:2px;">{p["Prop"]} {p["Side"]} {p["Line"]}</div>'
-                        f'<div style="color:#8ab4d4;font-size:11.5px;margin-top:4px;">{p["Sport"]} · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
+                        f'<div style="color:#8ab4d4;font-size:11.5px;margin-top:4px;">{p["Sport"]} · {p.get("Prob",0):.1%} win prob · Edge {p["EdgePct"]} · 2-pick EV {p["EV_2pick"]}</div>'
                         + (f'<div style="margin-top:8px;">{chips}</div>' if chips else '')
                         + f'</div>', unsafe_allow_html=True
                     )
