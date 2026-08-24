@@ -12092,25 +12092,24 @@ def fetch_sharpapi_lines(sport: str) -> list:
             return []
         data = r.json().get("data", [])
         results = []
-        for event in data:
-            home = event.get("home_team", "")
-            away = event.get("away_team", "")
+        for line in data:
+            home = line.get("home_team", "")
+            away = line.get("away_team", "")
             game = f"{away} @ {home}"
-            for line in event.get("odds", []):
-                results.append({
-                    "game":          game,
-                    "home_team":     home,
-                    "away_team":     away,
-                    "sport":         sport,
-                    "book":          line.get("sportsbook", ""),
-                    "market":        line.get("market_type", ""),
-                    "selection":     line.get("selection", ""),
-                    "odds_american": line.get("odds_american"),
-                    "ev_percent":    line.get("ev_percent"),
-                    "fair_odds":     line.get("fair_odds"),
-                    "is_ev_positive": line.get("is_ev_positive", False),
-                    "source":        "sharpapi",
-                })
+            results.append({
+                "game":          game,
+                "home_team":     home,
+                "away_team":     away,
+                "sport":         sport,
+                "book":          line.get("sportsbook", ""),
+                "market":        line.get("market_type", ""),
+                "selection":     line.get("selection", ""),
+                "odds_american": line.get("odds_american"),
+                "ev_percent":    line.get("ev_percent"),
+                "fair_odds":     line.get("fair_odds"),
+                "is_ev_positive": line.get("is_ev_positive", False),
+                "source":        "sharpapi",
+            })
         if results:
             _safe_save_pkl(cache_path, results)
         return results
@@ -12156,26 +12155,25 @@ def fetch_sharpapi_props(sport: str) -> list:
             return []
         data = r.json().get("data", [])
         results = []
-        for event in data:
-            for line in event.get("odds", []):
-                player = line.get("player", line.get("description", ""))
-                if not player:
-                    continue
-                market = line.get("market_type", "")
-                selection = line.get("selection", "").upper()
-                results.append({
-                    "Player":        player,
-                    "Prop":          market.replace("player_", "").replace("_", " ").title(),
-                    "Line":          line.get("point", line.get("handicap")),
-                    "OverOdds":      str(int(line.get("odds_american", 0))) if selection == "OVER" else "N/A",
-                    "UnderOdds":     str(int(line.get("odds_american", 0))) if selection == "UNDER" else "N/A",
-                    "Book":          line.get("sportsbook", ""),
-                    "ev_percent":    line.get("ev_percent"),
-                    "fair_odds":     line.get("fair_odds"),
-                    "is_ev_positive": line.get("is_ev_positive", False),
-                    "Sport":         sport,
-                    "source":        "sharpapi",
-                })
+        for line in data:
+            player = line.get("player", line.get("description", ""))
+            if not player:
+                continue
+            market = line.get("market_type", "")
+            selection = line.get("selection", "").upper()
+            results.append({
+                "Player":        player,
+                "Prop":          market.replace("player_", "").replace("_", " ").title(),
+                "Line":          line.get("point", line.get("handicap")),
+                "OverOdds":      str(int(line.get("odds_american", 0))) if selection == "OVER" else "N/A",
+                "UnderOdds":     str(int(line.get("odds_american", 0))) if selection == "UNDER" else "N/A",
+                "Book":          line.get("sportsbook", ""),
+                "ev_percent":    line.get("ev_percent"),
+                "fair_odds":     line.get("fair_odds"),
+                "is_ev_positive": line.get("is_ev_positive", False),
+                "Sport":         sport,
+                "source":        "sharpapi",
+            })
         if results:
             _safe_save_pkl(cache_path, results)
         return results
