@@ -7506,7 +7506,7 @@ def _fetch_public_betting_for_date(sport, sport_slug, date_str, an_headers):
             team_abbrs = [t.get("abbr", "") for t in teams]
             if len(team_abbrs) < 2:
                 continue
-            odds_data = game.get("odds", {})
+            odds_data = game.get("markets", game.get("odds", {}))
             # Previously hardcoded to book "15" only -- if that one book
             # didn't have odds for a given game (common; no single book
             # covers every game), the whole game was silently dropped via
