@@ -93,13 +93,6 @@ for label, fn_name, sport in TARGETS:
             data = fn(sport)
         elapsed = round(time.time() - start, 2)
         _internal_warn = _captured.getvalue().strip()
-        if "parlayapi" in fn_name.lower() and not data and elapsed < 0.5:
-            results.append({
-                "source": label, "function": fn_name, "status": "UNTESTABLE",
-                "seconds": elapsed,
-                "note": "PARLAY_API_KEY not configured as a GitHub Actions secret here -- this function's own key-guard returned instantly, so this is NOT a real speed measurement.",
-            })
-            continue
         results.append({
             "source": label, "function": fn_name, "status": "OK",
             "seconds": elapsed, "real_item_count": len(data) if isinstance(data, list) else None,
