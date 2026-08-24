@@ -12065,9 +12065,9 @@ def fetch_sharpapi_lines(sport: str) -> list:
     if not SHARPAPI_KEY:
         return []
     sport_map = {
-        "MLB": "baseball_mlb", "NBA": "basketball_nba",
-        "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
-        "WNBA": "basketball_wnba",
+        "MLB": "mlb", "NBA": "nba",
+        "NFL": "nfl", "NHL": "nhl",
+        "WNBA": "wnba",
     }
     league = sport_map.get(sport)
     if not league:
@@ -12129,9 +12129,9 @@ def fetch_sharpapi_props(sport: str) -> list:
     if not SHARPAPI_KEY:
         return []
     sport_map = {
-        "MLB": "baseball_mlb", "NBA": "basketball_nba",
-        "NFL": "americanfootball_nfl", "NHL": "icehockey_nhl",
-        "WNBA": "basketball_wnba",
+        "MLB": "mlb", "NBA": "nba",
+        "NFL": "nfl", "NHL": "nhl",
+        "WNBA": "wnba",
     }
     league = sport_map.get(sport)
     if not league:
