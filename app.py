@@ -13297,7 +13297,35 @@ with tabs[2]:
         "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
         "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
     }
-    if _pred_gl_groups:
+    _pred_gl_view = st.radio(
+        "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
+        help="By Game groups every source's pick together per matchup, so you can see at a glance whether sources agree. By Source groups each source's own picks together, one card per source."
+    )
+    if _pred_gl_view == "By Source":
+        # Real, new source-grouped view. Built from the same, already-filtered
+        # _pred_gl_items flat list the game-grouped view above uses -- just
+        # grouped by source instead of by matchup, so the min-sources filter
+        # and sport filter already applied above still apply here too.
+        _pred_gl_by_source = {}
+        for _item in _pred_gl_items:
+            _pred_gl_by_source.setdefault(_item["source"], []).append(_item)
+        if _pred_gl_by_source:
+            for _src_name in sorted(_pred_gl_by_source.keys(), key=lambda s: -len(_pred_gl_by_source[s])):
+                _src_items = _pred_gl_by_source[_src_name]
+                with st.expander(f"{_src_name} — {len(_src_items)} pick{'s' if len(_src_items) != 1 else ''}", expanded=False):
+                    if _src_name in _pred_source_desc:
+                        st.caption(_pred_source_desc[_src_name])
+                    for _si in _src_items:
+                        st.markdown(
+                            f'<div style="background:var(--bc-bg-card);border-left:3px solid var(--bc-bg2);'
+                            f'border-radius:0 6px 6px 0;padding:8px 12px;margin-bottom:6px;">'
+                            f'<span style="font-weight:700;color:var(--bc-text);">{_si["away"]} @ {_si["home"]}</span>'
+                            f'<span style="color:var(--bc-dim);font-size:0.9rem;"> — {_si["text"]}</span></div>',
+                            unsafe_allow_html=True
+                        )
+        else:
+            st.caption("No game-line picks loaded for this sport right now.")
+    elif _pred_gl_groups:
         _pred_gl_per_row = 2
         for _gi in range(0, len(_pred_gl_groups), _pred_gl_per_row):
             _gl_cols = st.columns(_pred_gl_per_row)
