@@ -13116,19 +13116,85 @@ with tabs[2]:
         "WSH": "Washington Nationals",
     }
 
-    def _pred_norm_team(s):
+    _PRED_NFL_FULL_NAMES = {
+        "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+        "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+        "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+        "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+        "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+        "KC": "Kansas City Chiefs", "LAC": "Los Angeles Chargers", "LAR": "Los Angeles Rams",
+        "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+        "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+        "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+        "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
+        "TEN": "Tennessee Titans", "WAS": "Washington Commanders", "WSH": "Washington Commanders",
+    }
+    _PRED_NBA_FULL_NAMES = {
+        "ATL": "Atlanta Hawks", "BOS": "Boston Celtics", "BKN": "Brooklyn Nets",
+        "CHA": "Charlotte Hornets", "CHI": "Chicago Bulls", "CLE": "Cleveland Cavaliers",
+        "DAL": "Dallas Mavericks", "DEN": "Denver Nuggets", "DET": "Detroit Pistons",
+        "GSW": "Golden State Warriors", "HOU": "Houston Rockets", "IND": "Indiana Pacers",
+        "LAC": "Los Angeles Clippers", "LAL": "Los Angeles Lakers", "MEM": "Memphis Grizzlies",
+        "MIA": "Miami Heat", "MIL": "Milwaukee Bucks", "MIN": "Minnesota Timberwolves",
+        "NOP": "New Orleans Pelicans", "NYK": "New York Knicks", "OKC": "Oklahoma City Thunder",
+        "ORL": "Orlando Magic", "PHI": "Philadelphia 76ers", "PHX": "Phoenix Suns",
+        "POR": "Portland Trail Blazers", "SAC": "Sacramento Kings", "SAS": "San Antonio Spurs",
+        "TOR": "Toronto Raptors", "UTA": "Utah Jazz", "WAS": "Washington Wizards",
+    }
+    _PRED_NHL_FULL_NAMES = {
+        "ANA": "Anaheim Ducks", "BOS": "Boston Bruins", "BUF": "Buffalo Sabres",
+        "CGY": "Calgary Flames", "CAR": "Carolina Hurricanes", "CHI": "Chicago Blackhawks",
+        "COL": "Colorado Avalanche", "CBJ": "Columbus Blue Jackets", "DAL": "Dallas Stars",
+        "DET": "Detroit Red Wings", "EDM": "Edmonton Oilers", "FLA": "Florida Panthers",
+        "LAK": "Los Angeles Kings", "MIN": "Minnesota Wild", "MTL": "Montreal Canadiens",
+        "NSH": "Nashville Predators", "NJD": "New Jersey Devils", "NYI": "New York Islanders",
+        "NYR": "New York Rangers", "OTT": "Ottawa Senators", "PHI": "Philadelphia Flyers",
+        "PIT": "Pittsburgh Penguins", "SJS": "San Jose Sharks", "SEA": "Seattle Kraken",
+        "STL": "St. Louis Blues", "TBL": "Tampa Bay Lightning", "TOR": "Toronto Maple Leafs",
+        "UTA": "Utah Mammoth", "UTAH": "Utah Mammoth", "VAN": "Vancouver Canucks",
+        "VGK": "Vegas Golden Knights", "WSH": "Washington Capitals", "WPG": "Winnipeg Jets",
+    }
+    _PRED_WNBA_FULL_NAMES = {
+        "ATL": "Atlanta Dream", "CHI": "Chicago Sky", "CONN": "Connecticut Sun", "CON": "Connecticut Sun",
+        "DAL": "Dallas Wings", "GS": "Golden State Valkyries", "GSV": "Golden State Valkyries",
+        "IND": "Indiana Fever", "LA": "Los Angeles Sparks", "LAS": "Los Angeles Sparks",
+        "LV": "Las Vegas Aces", "LVA": "Las Vegas Aces", "MIN": "Minnesota Lynx",
+        "NY": "New York Liberty", "NYL": "New York Liberty", "PHX": "Phoenix Mercury",
+        "POR": "Portland Fire", "PDX": "Portland Fire", "SEA": "Seattle Storm",
+        "TOR": "Toronto Tempo", "WAS": "Washington Mystics", "WSH": "Washington Mystics",
+    }
+    _PRED_ALL_FULL_NAMES = {
+        **_PRED_MLB_FULL_NAMES, **_PRED_NFL_FULL_NAMES, **_PRED_NBA_FULL_NAMES,
+        **_PRED_NHL_FULL_NAMES, **_PRED_WNBA_FULL_NAMES,
+    }
+
+    _PRED_FULL_NAMES_BY_SPORT = {
+        "MLB": _PRED_MLB_FULL_NAMES, "NFL": _PRED_NFL_FULL_NAMES,
+        "NBA": _PRED_NBA_FULL_NAMES, "NHL": _PRED_NHL_FULL_NAMES, "WNBA": _PRED_WNBA_FULL_NAMES,
+    }
+
+    def _pred_norm_team(s, sport=""):
         raw = str(s or "").strip()
-        if 2 <= len(raw) <= 3 and raw.isupper() and raw in _PRED_MLB_FULL_NAMES:
-            raw = _PRED_MLB_FULL_NAMES[raw]
-        elif 2 <= len(raw) <= 4 and raw.isupper():
-            for _sport_map in TEAM_ABBREV_TO_FRAGMENT.values():
-                if raw in _sport_map:
-                    raw = _sport_map[raw]
-                    break
+        if 2 <= len(raw) <= 4 and raw.isupper():
+            _sport_table = _PRED_FULL_NAMES_BY_SPORT.get(str(sport or "").upper())
+            if _sport_table and raw in _sport_table:
+                raw = _sport_table[raw]
+            elif raw in _PRED_ALL_FULL_NAMES:
+                # Real sport context wasn't available or didn't match this
+                # abbreviation -- fall back to the merged table. Confirmed
+                # real risk (collisions across sports), but only reached
+                # when the sport-specific lookup above didn't already
+                # resolve it, so this is a last resort, not the primary path.
+                raw = _PRED_ALL_FULL_NAMES[raw]
+            else:
+                for _sport_map in TEAM_ABBREV_TO_FRAGMENT.values():
+                    if raw in _sport_map:
+                        raw = _sport_map[raw]
+                        break
         return re.sub(r"[^a-z0-9]", "", raw.lower())
 
-    def _pred_teams_match(a, b):
-        na, nb = _pred_norm_team(a), _pred_norm_team(b)
+    def _pred_teams_match(a, b, sport=""):
+        na, nb = _pred_norm_team(a, sport), _pred_norm_team(b, sport)
         if not na or not nb:
             return False
         return na in nb or nb in na
@@ -13257,7 +13323,7 @@ with tabs[2]:
     for _item in _pred_gl_items:
         _placed = False
         for _grp in _pred_gl_groups:
-            if _pred_teams_match(_item["away"], _grp["away"]) and _pred_teams_match(_item["home"], _grp["home"]):
+            if _pred_teams_match(_item["away"], _grp["away"], _item.get("sport", "")) and _pred_teams_match(_item["home"], _grp["home"], _item.get("sport", "")):
                 _grp["items"].append(_item)
                 _placed = True
                 break
