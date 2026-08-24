@@ -13901,7 +13901,7 @@ def load_sport_data(sport):
         _pf_prizepicks, _pf_underdog, _pf_pinnacle,
         _pf_oddswrap, _pf_parlayapi, _pf_odds_api, _pf_oddspapi,
         _pf_bdl, _pf_rw_injuries, _pf_cbs_injuries, _pf_espn_injuries, _pf_public,
-        _pf_an, _pf_referees, _pf_game_lines, _pf_parlayplay, _pf_dk_pick6,
+        _pf_an, _pf_referees, _pf_game_lines, _pf_dk_pick6,
         _pf_betrivers_lines, _pf_fanatics_lines, _pf_espnbet_lines,
         _pf_hardrock_lines, _pf_wynnbet_lines, _pf_unibet_lines, _pf_bet365_lines,
         _pf_betmgm_lines, _pf_bookmaker_lines, _pf_sportsline_lines, _pf_sbr_lines, _pf_thescore_lines, _pf_sharpapi_lines,
