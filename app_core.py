@@ -9370,7 +9370,7 @@ def fetch_action_network_props(sport):
         data = resp.json()
         player_props = data.get("playerProps", [])
         if not player_props:
-            st.caption(f"⚠️ Action Network: no {sport} projections published yet for today. Check back closer to game time.")
+            st.caption(f"⚠️ Action Network: PRO projections unavailable for {sport} — confirmed this product now requires a paid Action PRO subscription; may not be a temporary gap.")
             return []
         results = []
         seen = set()
