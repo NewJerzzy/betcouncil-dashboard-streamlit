@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install requests streamlit scipy pandas "git+https://github.com/sjhouston23/oddswrap.git"
+        run: pip install -r requirements.txt
       - name: Build real secrets.toml from available repo secrets
         run: |
           mkdir -p .streamlit
