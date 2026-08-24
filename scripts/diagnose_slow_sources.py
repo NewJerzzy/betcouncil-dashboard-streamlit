@@ -22,6 +22,21 @@ import fetchers
 
 _key_len = len(getattr(fetchers, "SHARPAPI_KEY", "") or "")
 
+# Real, additional check: query the real /leagues reference endpoint the
+# 400 error itself pointed to, to get the real, complete, accurate league
+# name list for every sport, not just the one confirmed correction for MLB.
+_leagues_result = None
+try:
+    import requests as _req
+    _r = _req.get(
+        f"{fetchers.SHARPAPI_BASE}/leagues",
+        headers={"X-API-Key": fetchers.SHARPAPI_KEY, "Accept": "application/json"},
+        timeout=10,
+    )
+    _leagues_result = {"status": _r.status_code, "body": _r.text[:1500]}
+except Exception as e:
+    _leagues_result = {"error": str(e)[:200]}
+
 # Real, focused set: the specific sources already suspected tonight (from
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
@@ -70,6 +85,7 @@ for label, fn_name, sport in TARGETS:
 output = {
     "run_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "sharpapi_key_real_length": _key_len,
+    "sharpapi_leagues_reference": _leagues_result,
     "results": sorted(results, key=lambda r: (r["seconds"] is None, -(r["seconds"] or 0))),
 }
 
