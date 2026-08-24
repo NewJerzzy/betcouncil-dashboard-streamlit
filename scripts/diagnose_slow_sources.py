@@ -18,6 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_key_len = len(getattr(fetchers, "SHARPAPI_KEY", "") or "")
+print(f"[DEBUG] SHARPAPI_KEY real length as seen by fetchers.py: {_key_len} (0 means genuinely empty/falsy, not printing the value)")
+
 # Real, focused set: the specific sources already suspected tonight (from
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
