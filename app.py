@@ -10395,12 +10395,23 @@ with tabs[14]:
     else:
         _src_statuses.append({"Source": "Bovada (game lines)", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
 
-    # Action Network (live public API, no auth needed)
-    _an = st.session_state.get("action_network_data", {})
-    if _an:
-        _src_statuses.append({"Source": "Action Network", "Status": "🟢 Loaded (live public API)", "Action": "None"})
+    # Action Network (live public API, no auth needed) -- real fix: was
+    # checking action_network_data, which is deliberately populated from
+    # Covers (a different, real source, per an earlier session's own
+    # comment on that line), not this feed at all -- so it showed
+    # "loaded, live public API" even when Action Network's own projections
+    # and public-betting calls were genuinely failing. Now checks the real
+    # keys those actual calls write to, and reports each honestly.
+    _an_props = st.session_state.get("an_props_data", {})
+    _an_pb = st.session_state.get("public_betting_data", {})
+    if _an_props:
+        _src_statuses.append({"Source": "Action Network (projections)", "Status": "🟢 Loaded (live public API)", "Action": "None"})
     else:
-        _src_statuses.append({"Source": "Action Network", "Status": "⚪ Not loaded yet", "Action": "Load a board"})
+        _src_statuses.append({"Source": "Action Network (projections)", "Status": "⚪ Empty or not loaded", "Action": "Load a board — may also be a PRO-only feature now"})
+    if _an_pb:
+        _src_statuses.append({"Source": "Action Network (public betting)", "Status": "🟢 Loaded (live public API)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Action Network (public betting)", "Status": "⚪ Empty or not loaded", "Action": "Load a board — check Error Log for the real API response"})
 
     # OddsShark (direct fetch fallback, no auth needed)
     _osh = st.session_state.get("oddsshark_data", {})
