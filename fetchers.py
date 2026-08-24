@@ -19789,6 +19789,10 @@ def fetch_action_network_lines(sport: str) -> list:
         except Exception:
             pass
 
+    try:
+        st.session_state["an_game_lines_data"] = result
+    except Exception:
+        pass
     return result
 
 # ═══════════════════════════════════════════════════════════════════════════
