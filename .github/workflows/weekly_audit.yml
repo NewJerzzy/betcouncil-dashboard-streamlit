@@ -25,9 +25,9 @@ jobs:
 
       # config.py imports st.secrets at module load time; most of these are
       # unused placeholders so `import fetchers` doesn't blow up in a
-      # headless runner. SHARPAPI_KEY is the one real exception -- the new
-      # live data-quality check genuinely calls fetch_sharpapi_lines/props
-      # with it, so it needs to be a real, working key here.
+      # headless runner. SHARPAPI_KEY and PARLAY_API_KEY are the real
+      # exceptions -- the live data-quality check genuinely calls real
+      # functions with them, so they need to be real, working keys here.
       - name: Write placeholder secrets for headless import
         run: |
           mkdir -p .streamlit
@@ -36,7 +36,7 @@ jobs:
           GITHUB_GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
           ODDS_API_KEY = ""
           ODDSPAPI_KEY = ""
-          PARLAY_API_KEY = ""
+          PARLAY_API_KEY = "${{ secrets.PARLAY_API_KEY }}"
           BALLSDONTLIE_API_KEY = ""
           SCRAPEOPS_KEY = ""
           SHARPAPI_KEY = "${{ secrets.SHARPAPI_KEY }}"
