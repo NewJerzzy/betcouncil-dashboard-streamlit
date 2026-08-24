@@ -9580,37 +9580,46 @@ with tabs[9]:
                 submitted = 0
                 _skipped_pending = 0
                 _submit_errors = []
-                _snap_cache = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
-                for bet in parsed_bets:
-                    if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
-                        _skipped_pending += 1
-                        continue
-                    bet_date_str = datetime.combine(parsed_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
-                    _raw_date = str(bet.get("date","")).strip()
-                    if _raw_date:
-                        for _fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%b %d, %Y", "%B %d, %Y"):
-                            try:
-                                bet_date_str = datetime.strptime(_raw_date, _fmt).strftime("%Y-%m-%d %H:%M")
-                                break
-                            except ValueError:
-                                continue
-                    try:
-                        _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
-                            bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str,
-                            _snapshots_cache=_snap_cache
-                        )
-                        log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport") or "OTHER", outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals, defer_gist_flush=True)
-                        submitted += 1
-                    except (ValueError, TypeError) as _sbe:
-                        _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
-                        continue
-                if submitted > 0:
+                with st.spinner("Submitting bets..."):
+                    _snap_cache = load_from_gist("board_snapshots", None) or load_json_data(BOARD_SNAP_PATH, {})
+                    for bet in parsed_bets:
+                        if bet.get("outcome") not in ("WIN","LOSS","PUSH"):
+                            _skipped_pending += 1
+                            continue
+                        bet_date_str = datetime.combine(parsed_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M")
+                        _raw_date = str(bet.get("date","")).strip()
+                        if _raw_date:
+                            for _fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%b %d, %Y", "%B %d, %Y"):
+                                try:
+                                    bet_date_str = datetime.strptime(_raw_date, _fmt).strftime("%Y-%m-%d %H:%M")
+                                    break
+                                except ValueError:
+                                    continue
+                        try:
+                            _bf_edge, _bf_tier, _bf_prob, _bf_signals = lookup_board_edge(
+                                bet.get("player",""), bet.get("prop",""), bet.get("sport","NBA"), bet_date_str,
+                                _snapshots_cache=_snap_cache
+                            )
+                            log_manual_bet(player=bet.get("player",""), prop=bet.get("prop",""), line=float(bet.get("line",0) or 0), side=bet.get("side","OVER"), sport=bet.get("sport") or "OTHER", outcome=bet.get("outcome","LOSS"), wager=float(bet.get("wager",0) or 0), pick_count=int(bet.get("pick_count",2) or 2), bet_type=bet.get("bet_type","prop"), source=bet.get("source","Screenshot Import"), bet_date=bet_date_str, tier=_bf_tier, edge=_bf_edge, prob=_bf_prob, signals=_bf_signals, defer_gist_flush=True)
+                            submitted += 1
+                        except (ValueError, TypeError) as _sbe:
+                            _submit_errors.append(f"{bet.get('player','?')} ({bet.get('prop','?')}): {type(_sbe).__name__} — {_sbe}")
+                            continue
+                    # Real, deliberate ordering: clear parsed_bets and reset the
+                    # uploader BEFORE the slow network flush below, not after --
+                    # this is what actually prevents a duplicate resubmission if
+                    # the user clicks again while the flush is still in progress
+                    # (the prior ordering left the same bets on screen for the
+                    # entire ~50s worst-case flush window with no visual feedback,
+                    # confirmed causing real double-submissions).
+                    if submitted > 0:
+                        st.session_state["parsed_bets"] = []
+                        st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
+                        st.session_state["ocr_raw_text"] = ""
                     _flush_batch_gist(st.session_state.get("gist_dirty", {}))
+                if submitted > 0:
                     _skip_note = f" ({_skipped_pending} pending bet(s) skipped — outcome unknown)" if _skipped_pending else ""
-                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get("bankroll", DEFAULT_BANKROLL):.2f}")
-                    st.session_state["parsed_bets"] = []
-                    st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
-                    st.session_state["ocr_raw_text"] = ""
+                    st.success(f"✅ Submitted {submitted} bets{_skip_note} — Bankroll: ${st.session_state.get('bankroll', DEFAULT_BANKROLL):.2f}")
                     st.rerun()
                 elif _skipped_pending:
                     st.warning(f"All {_skipped_pending} parsed bet(s) are still PENDING — nothing to log yet.")
