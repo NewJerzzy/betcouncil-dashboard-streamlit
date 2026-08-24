@@ -555,6 +555,9 @@ LIVE_CHECK_TARGETS = [
     ("SharpAPI Props", "fetch_sharpapi_props", "MLB"),
     ("Pinnacle Game Lines", "fetch_pinnacle_game_lines", "MLB"),
     ("Action Network Game Lines", "fetch_action_network_lines", "MLB"),
+    ("ParlayAPI Props", "fetch_parlayapi_props", "MLB"),
+    ("ParlayAPI Arbitrage", "fetch_parlayapi_arbitrage", "MLB"),
+    ("ParlayAPI EV", "fetch_parlayapi_ev", "MLB"),
 ]
 
 
