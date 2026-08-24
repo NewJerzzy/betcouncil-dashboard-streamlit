@@ -10404,14 +10404,20 @@ with tabs[14]:
     # keys those actual calls write to, and reports each honestly.
     _an_props = st.session_state.get("an_props_data", {})
     _an_pb = st.session_state.get("public_betting_data", {})
-    if _an_props:
-        _src_statuses.append({"Source": "Action Network (projections)", "Status": "🟢 Loaded (live public API)", "Action": "None"})
+    _an_lines = st.session_state.get("an_game_lines_data", [])
+    if _an_lines:
+        _src_statuses.append({"Source": "Action Network (game lines)", "Status": f"🟢 {len(_an_lines)} games (live public API)", "Action": "None"})
     else:
-        _src_statuses.append({"Source": "Action Network (projections)", "Status": "⚪ Empty or not loaded", "Action": "Load a board — may also be a PRO-only feature now"})
+        _src_statuses.append({"Source": "Action Network (game lines)", "Status": "⚪ Empty or not loaded", "Action": "Load a board"})
+    if _an_props:
+        _src_statuses.append({"Source": "Action Network (PRO projections)", "Status": "🟢 Loaded (live public API)", "Action": "None"})
+    else:
+        _src_statuses.append({"Source": "Action Network (PRO projections)", "Status": "⚪ PRO-only or no current rows", "Action": "Confirmed: Action Network moved projections behind a paid PRO tier"})
     if _an_pb:
         _src_statuses.append({"Source": "Action Network (public betting)", "Status": "🟢 Loaded (live public API)", "Action": "None"})
     else:
-        _src_statuses.append({"Source": "Action Network (public betting)", "Status": "⚪ Empty or not loaded", "Action": "Load a board — check Error Log for the real API response"})
+        _an_pb_err = next((e.get("error", "") for e in reversed(st.session_state.get("errors", [])) if e.get("source") == "_fetch_public_betting_for_date"), "")
+        _src_statuses.append({"Source": "Action Network (public betting)", "Status": f"🔴 {_an_pb_err[:60]}" if _an_pb_err else "⚪ Empty or not loaded", "Action": "Real API error captured — see Error Log for full detail; request contract needs updating"})
 
     # OddsShark (direct fetch fallback, no auth needed)
     _osh = st.session_state.get("oddsshark_data", {})
