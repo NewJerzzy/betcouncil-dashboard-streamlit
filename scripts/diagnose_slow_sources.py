@@ -72,6 +72,12 @@ TARGETS = [
     ("SharpAPI Props", "fetch_sharpapi_props", "MLB"),
     ("Pinnacle Game Lines", "fetch_pinnacle_game_lines", "MLB"),
     ("Action Network Game Lines", "fetch_action_network_lines", "MLB"),
+    ("CBS Injuries", "fetch_cbs_injuries", "MLB"),
+    ("ESPN Injuries", "fetch_espn_injuries", "MLB"),
+    ("H2H Game Lines", "fetch_h2h_game_lines", "MLB"),
+    ("Caesars Lines", "fetch_caesars_lines", "MLB"),
+    ("Bovada Lines", "fetch_bovada_lines", "MLB"),
+    ("FanDuel Lines", "fetch_fanduel_lines", "MLB"),
 ]
 
 results = []
