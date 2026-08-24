@@ -21,7 +21,7 @@ jobs:
           cat > .streamlit/secrets.toml << EOF
           GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
           SHARPAPI_KEY = "${{ secrets.SHARPAPI_KEY }}"
-          PARLAY_API_KEY = ""
+          PARLAY_API_KEY = "${{ secrets.PARLAY_API_KEY }}"
           EOF
       - name: Run real diagnostic
         env:
