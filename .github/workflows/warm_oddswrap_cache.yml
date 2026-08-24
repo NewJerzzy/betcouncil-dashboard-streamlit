@@ -1,0 +1,30 @@
+name: Warm OddsWrap Cache
+
+on:
+  schedule:
+    - cron: "*/45 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests streamlit scipy pandas "git+https://github.com/sjhouston23/oddswrap.git"
+      - name: Build real secrets.toml
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << 'EOF'
+          GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
+          GITHUB_GIST_ID = "7e52e1c2c2054847c7c4663a157386c5"
+          EOF
+      - name: Warm the real cache
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/warm_oddswrap_cache.py
