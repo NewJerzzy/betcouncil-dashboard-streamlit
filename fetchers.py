@@ -8716,10 +8716,11 @@ def fetch_oddswrap_props(sport):
     _deadline = time.time() + 15
     try:
         client = OddsClient(books=["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"])
-        seen = set()
-        for book in ["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"]:
+
+        def _fetch_one_book(book):
+            _book_props = []
             if time.time() > _deadline:
-                break
+                return _book_props
             try:
                 cats = client.get_prop_categories(sport_key, book=book)
                 for cat in cats[:10]:
@@ -8730,15 +8731,24 @@ def fetch_oddswrap_props(sport):
                         for prop in props:
                             if not prop.player or prop.line is None:
                                 continue
-                            key = (prop.player, prop.market, prop.book)
-                            if key in seen:
-                                continue
-                            seen.add(key)
-                            all_props.append({"Player": prop.player, "Prop": prop.market, "Line": float(prop.line), "Side": "OVER", "OverOdds": prop.over_odds, "UnderOdds": prop.under_odds, "Book": prop.book, "Sport": sport, "source": f"oddswrap_{prop.book}"})
+                            _book_props.append({"Player": prop.player, "Prop": prop.market, "Line": float(prop.line), "Side": "OVER", "OverOdds": prop.over_odds, "UnderOdds": prop.under_odds, "Book": prop.book, "Sport": sport, "source": f"oddswrap_{prop.book}"})
                     except (ValueError, TypeError):
                         continue
             except (ValueError, TypeError):
-                continue
+                pass
+            return _book_props
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as _pool:
+            _book_results = list(_pool.map(_fetch_one_book, ["draftkings", "fanduel", "bovada", "betrivers", "betmgm", "caesars"]))
+        seen = set()
+        for _book_props in _book_results:
+            for prop in _book_props:
+                key = (prop["Player"], prop["Prop"], prop["Book"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                all_props.append(prop)
         if all_props:
             with open(cache_path, "wb") as f:
                 pickle.dump(all_props, f)
