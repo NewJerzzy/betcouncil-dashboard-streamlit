@@ -240,6 +240,28 @@ except ImportError:
     def safe_float(v, d=0.0):
         try: return float(v)
         except: return d
+    def load_json_data(path, default=None):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return default if default is not None else []
+    def save_json_data(path, data):
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f)
+            return True
+        except Exception:
+            return False
+    _load_cache = lambda *a, **kw: None
+    _save_cache = lambda *a, **kw: None
+    def is_date_valid_for_today(*a, **kw): return True
+    def compute_std_dev(values):
+        try:
+            import statistics
+            return statistics.stdev(values) if len(values) > 1 else 0.0
+        except Exception:
+            return 0.0
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
