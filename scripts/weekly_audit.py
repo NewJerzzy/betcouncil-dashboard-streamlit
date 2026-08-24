@@ -533,6 +533,70 @@ def audit_silent_except_blocks():
     return results
 
 
+# ── 1f. Live data-quality check (added 2026-08-24, after a real miss) ──
+# The real gap every other check in this file has: they're all static
+# (AST analysis) or Gist-read-only. None of them ever actually calls a
+# fetcher function and checks what comes back. fetch_sharpapi_lines and
+# fetch_sharpapi_props sat completely, silently broken through a missing
+# import, then a wrong parameter, then a wrong response shape -- three
+# separate real bugs, three separate audit runs, "WIRED" (referenced
+# somewhere) every single time, since being referenced is not the same
+# claim as returning real data when actually called. This check makes
+# real, live calls to a small, curated set of critical sources and
+# inspects the real result. Honest design: a genuine zero-item result
+# is NOT automatically "broken" -- real, legitimate zero-result cases
+# exist (confirmed the same day this check was added: SharpAPI Props
+# genuinely has no free-tier player-prop coverage right now, a real
+# account-tier limit, not a bug). Zero items is flagged for human
+# review; an actual internal [WARN]/exception message is flagged as a
+# confirmed real problem, since that's an unambiguous, real signal.
+LIVE_CHECK_TARGETS = [
+    ("SharpAPI Lines", "fetch_sharpapi_lines", "MLB"),
+    ("SharpAPI Props", "fetch_sharpapi_props", "MLB"),
+    ("Pinnacle Game Lines", "fetch_pinnacle_game_lines", "MLB"),
+    ("Action Network Game Lines", "fetch_action_network_lines", "MLB"),
+]
+
+
+def audit_live_data_quality():
+    import io
+    import contextlib
+    import importlib
+
+    results = []
+    try:
+        fetchers = importlib.import_module("fetchers")
+    except Exception as e:
+        return [{"source": "(module import)", "status": "BROKEN",
+                  "note": f"fetchers.py itself failed to import: {e}"}]
+
+    for label, fn_name, sport in LIVE_CHECK_TARGETS:
+        fn = getattr(fetchers, fn_name, None)
+        if fn is None:
+            results.append({"source": label, "function": fn_name, "status": "BROKEN",
+                             "note": "function does not exist in fetchers.py"})
+            continue
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(captured):
+                data = fn(sport)
+            warning = captured.getvalue().strip()
+            item_count = len(data) if isinstance(data, list) else None
+            if warning:
+                results.append({"source": label, "function": fn_name, "status": "BROKEN",
+                                 "note": f"real internal warning during a live call: {warning[:200]}"})
+            elif item_count == 0:
+                results.append({"source": label, "function": fn_name, "status": "REVIEW",
+                                 "note": "returned zero real items -- may be a genuine gap (off-season, account tier), needs human judgment, not auto-flagged as broken"})
+            else:
+                results.append({"source": label, "function": fn_name, "status": "OK",
+                                 "note": f"{item_count} real items returned"})
+        except Exception as e:
+            results.append({"source": label, "function": fn_name, "status": "BROKEN",
+                             "note": f"real exception during a live call: {type(e).__name__}: {str(e)[:200]}"})
+    return results
+
+
 # ── 3. File size watch ──────────────────────────────────────────────────
 
 def audit_file_sizes():
@@ -640,6 +704,7 @@ def build_summary_markdown(current, diff):
     stubs = current.get("stub_functions", [])
     missing_imports = current.get("missing_imports", [])
     silent_excepts = current.get("silent_excepts", [])
+    live_dq = current.get("live_data_quality", [])
     wt_adj = current.get("weight_adjustments", {})
 
     lines = [f"## BetCouncil Weekly Self-Audit — {current['run_date']}", ""]
@@ -659,6 +724,15 @@ def build_summary_markdown(current, diff):
                   f"hiding a real bug completely (see classify_book_role() called as a dict when it "
                   f"returns a string, a guaranteed TypeError every run, invisible because of exactly "
                   f"this pattern, fixed 2026-07)")
+    live_dq_broken = [r for r in live_dq if r["status"] == "BROKEN"]
+    live_dq_review = [r for r in live_dq if r["status"] == "REVIEW"]
+    lines.append(f"**Live data-quality check:** {len(live_dq_broken)} confirmed broken / {len(live_dq_review)} "
+                  f"returned zero items (needs human review) / {len(live_dq)} checked — the only check here "
+                  f"that actually calls a real function and inspects the real result, rather than static "
+                  f"analysis (see fetch_sharpapi_lines/props: missing import, then wrong parameter, then "
+                  f"wrong response shape, three real bugs across three prior audit runs, each one reported "
+                  f"'wired in' every time since being referenced somewhere is not the same as returning real "
+                  f"data, fixed 2026-08-24)")
     if missing_imports:
         lines.append("")
         lines.append("#### 🔴 Broken imports (fix immediately — these modules/names don't exist)")
@@ -669,6 +743,16 @@ def build_summary_markdown(current, diff):
         lines.append("#### 🟡 Silent except blocks (review — may be hiding a real bug)")
         for r in silent_excepts[:20]:
             lines.append(f"- `{r['file']}:{r['line']}` — {r['note']}")
+    if live_dq_broken:
+        lines.append("")
+        lines.append("#### 🔴 Live data-quality: confirmed broken (real call failed or errored)")
+        for r in live_dq_broken[:20]:
+            lines.append(f"- `{r['function']}` ({r['source']}) — {r['note']}")
+    if live_dq_review:
+        lines.append("")
+        lines.append("#### 🟡 Live data-quality: returned zero items (may be genuine, needs human judgment)")
+        for r in live_dq_review[:20]:
+            lines.append(f"- `{r['function']}` ({r['source']}) — {r['note']}")
 
     lines.append("")
     lines.append("### Weight adjustments (self-adjusting model)")
@@ -887,6 +971,12 @@ def main():
     silent_excepts = audit_silent_except_blocks()
     log(f"  {len(silent_excepts)} bare/silent except block(s) found")
 
+    log("Running live data-quality check (real calls, real data, not static analysis)...")
+    live_data_quality = audit_live_data_quality()
+    log(f"  {sum(1 for r in live_data_quality if r['status']=='BROKEN')} confirmed broken / "
+        f"{sum(1 for r in live_data_quality if r['status']=='REVIEW')} need review / "
+        f"{len(live_data_quality)} total checked")
+
     current = {
         "run_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "run_ts": datetime.now(timezone.utc).isoformat(),
@@ -898,6 +988,7 @@ def main():
         "file_sizes": file_sizes,
         "missing_imports": missing_imports,
         "silent_excepts": silent_excepts,
+        "live_data_quality": live_data_quality,
     }
 
     log("Reading previous audit for diff...")
