@@ -7484,6 +7484,15 @@ def _fetch_public_betting_for_date(sport, sport_slug, date_str, an_headers):
         resp = _http.get(url, headers=an_headers, timeout=15)
         api_budget_increment("ACTION_NETWORK")
         if resp.status_code != 200:
+            try:
+                import streamlit as _st_pb
+                _st_pb.session_state.setdefault("errors", []).append({
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "source": "_fetch_public_betting_for_date",
+                    "error": f"HTTP {resp.status_code}: {resp.text[:300]}",
+                })
+            except Exception:
+                pass
             return {}
         data = resp.json()
         games_list = data.get("games", [])
