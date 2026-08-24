@@ -13,6 +13,8 @@ import time
 import sys
 import os
 import traceback
+import io
+import contextlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,9 +42,12 @@ for label, fn_name, sport in TARGETS:
         results.append({"source": label, "function": fn_name, "status": "MISSING", "seconds": None})
         continue
     start = time.time()
+    _captured = io.StringIO()
     try:
-        data = fn(sport)
+        with contextlib.redirect_stdout(_captured):
+            data = fn(sport)
         elapsed = round(time.time() - start, 2)
+        _internal_warn = _captured.getvalue().strip()
         if "parlayapi" in fn_name.lower() and not data and elapsed < 0.5:
             results.append({
                 "source": label, "function": fn_name, "status": "UNTESTABLE",
@@ -53,6 +58,7 @@ for label, fn_name, sport in TARGETS:
         results.append({
             "source": label, "function": fn_name, "status": "OK",
             "seconds": elapsed, "real_item_count": len(data) if isinstance(data, list) else None,
+            "internal_warning": _internal_warn or None,
         })
     except Exception as e:
         elapsed = round(time.time() - start, 2)
