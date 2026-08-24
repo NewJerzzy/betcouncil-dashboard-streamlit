@@ -12088,7 +12088,7 @@ def fetch_sharpapi_lines(sport: str) -> list:
             print("[WARN] SharpAPI rate limit hit")
             return []
         if r.status_code != 200:
-            print(f"[WARN] fetch_sharpapi_lines HTTP {r.status_code}")
+            print(f"[WARN] fetch_sharpapi_lines HTTP {r.status_code}: {r.text[:300]}")
             return []
         data = r.json().get("data", [])
         results = []
@@ -12152,7 +12152,7 @@ def fetch_sharpapi_props(sport: str) -> list:
             print("[WARN] SharpAPI rate limit hit (props)")
             return []
         if r.status_code != 200:
-            print(f"[WARN] fetch_sharpapi_props HTTP {r.status_code}")
+            print(f"[WARN] fetch_sharpapi_props HTTP {r.status_code}: {r.text[:300]}")
             return []
         data = r.json().get("data", [])
         results = []
