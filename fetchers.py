@@ -126,7 +126,7 @@ try:
         # broken NFL prep via get_nfl_player_baseline / fetch_nfl_full_player_database) ──
         ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP,
         BETMGM_COOKIE, BETMGM_STATE, BETMGM_SPORT_MAP, BETMGM_WIDGET_MAP,
-        SHARPAPI_KEY,
+        SHARPAPI_KEY, SHARPAPI_BASE,
         NFL_POSITION_BASELINES, NFL_STAT_NORMALIZE_MAP, NFL_TEAM_ABBR_MAP,
     )
 except ImportError:
