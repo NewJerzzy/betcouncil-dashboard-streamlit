@@ -49,6 +49,18 @@ try:
 except Exception as e:
     _odds_raw_result = {"error": str(e)[:200]}
 
+_props_raw_result = None
+try:
+    _r3 = _req.get(
+        f"{fetchers.SHARPAPI_BASE}/odds",
+        params={"league": "mlb", "market_type": "player_props"},
+        headers={"X-API-Key": fetchers.SHARPAPI_KEY, "Accept": "application/json"},
+        timeout=10,
+    )
+    _props_raw_result = {"status": _r3.status_code, "body": _r3.text[:2000]}
+except Exception as e:
+    _props_raw_result = {"error": str(e)[:200]}
+
 # Real, focused set: the specific sources already suspected tonight (from
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
@@ -99,6 +111,7 @@ output = {
     "sharpapi_key_real_length": _key_len,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
+    "sharpapi_props_raw_response": _props_raw_result,
     "results": sorted(results, key=lambda r: (r["seconds"] is None, -(r["seconds"] or 0))),
 }
 
