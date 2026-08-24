@@ -9439,9 +9439,10 @@ with tabs[9]:
                 if st.button("🔍 Parse All Screenshots", key="parse_screenshot_btn"):
                     all_parsed = []
                     with st.spinner("Reading screenshots..."):
-                        for img_file in uploaded_imgs:
-                            img_bytes = img_file.read()
-                            result = parse_bet_screenshot_ocr(img_bytes)
+                        _img_bytes_list = [img_file.read() for img_file in uploaded_imgs]
+                        _ocr_fns = [(lambda _b=_b: parse_bet_screenshot_ocr(_b)) for _b in _img_bytes_list]
+                        _ocr_results = _fetch_parallel(_ocr_fns, show_progress=False)
+                        for result in _ocr_results:
                             if result:
                                 all_parsed.extend(result)
                     if all_parsed:
