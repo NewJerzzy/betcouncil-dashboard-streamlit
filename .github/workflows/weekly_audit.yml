@@ -23,9 +23,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # config.py imports st.secrets at module load time; audit script only
-      # needs GITHUB_TOKEN — the rest are unused placeholders so
-      # `import fetchers` doesn't blow up in a headless runner.
+      # config.py imports st.secrets at module load time; most of these are
+      # unused placeholders so `import fetchers` doesn't blow up in a
+      # headless runner. SHARPAPI_KEY is the one real exception -- the new
+      # live data-quality check genuinely calls fetch_sharpapi_lines/props
+      # with it, so it needs to be a real, working key here.
       - name: Write placeholder secrets for headless import
         run: |
           mkdir -p .streamlit
@@ -37,6 +39,7 @@ jobs:
           PARLAY_API_KEY = ""
           BALLSDONTLIE_API_KEY = ""
           SCRAPEOPS_KEY = ""
+          SHARPAPI_KEY = "${{ secrets.SHARPAPI_KEY }}"
           EOF
 
       - name: Run weekly audit
