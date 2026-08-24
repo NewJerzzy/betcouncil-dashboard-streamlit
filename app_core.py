@@ -13923,7 +13923,7 @@ def load_sport_data(sport):
     (pp_props, ud_props_compare, pinnacle_data,
      oddswrap_props, parlayapi_props_raw, odds_api_props_raw, oddspapi_props_raw,
      bdl_props_raw, rw_injuries_raw, cbs_injuries_raw, espn_injuries_raw, public_betting,
-     an_props, officials_data_raw, _game_lines_result, parlayplay_props_raw, dk_pick6_props_raw,
+     an_props, officials_data_raw, _game_lines_result, dk_pick6_props_raw,
      betrivers_lines_raw, fanatics_lines_raw, espnbet_lines_raw,
      hardrock_lines_raw, wynnbet_lines_raw, unibet_lines_raw, bet365_lines_raw,
      betmgm_lines_raw, bookmaker_lines_raw, sportsline_lines_raw, sbr_lines_raw, thescore_lines_raw, sharpapi_lines_raw,
@@ -15192,8 +15192,6 @@ def load_sport_data(sport):
                 props = pa_pp
             else:
                 props = parlayapi_props
-        elif parlayplay_props_raw:
-            props = parlayplay_props_raw
         elif dk_pick6_props_raw:
             props = dk_pick6_props_raw
         elif oddswrap_props:
