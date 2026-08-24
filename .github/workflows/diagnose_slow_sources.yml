@@ -1,0 +1,29 @@
+name: Diagnose Slow Sources (one-off)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests streamlit
+      - name: Build real secrets.toml from available repo secrets
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml << EOF
+          GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
+          SHARPAPI_KEY = "${{ secrets.SHARPAPI_KEY }}"
+          PARLAY_API_KEY = ""
+          EOF
+      - name: Run real diagnostic
+        env:
+          GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+        run: python scripts/diagnose_slow_sources.py
