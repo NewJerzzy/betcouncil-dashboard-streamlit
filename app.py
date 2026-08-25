@@ -4080,6 +4080,32 @@ with tabs[3]:
                         _bc2.metric("Spread", f"{_bov.get('spread','—')} ({_bov.get('spread_odds','—')})")
                         _bc3.metric("Total", f"{_bov.get('total','—')} ({_bov.get('over_odds','—')} / {_bov.get('under_odds','—')})")
 
+                    # Pinnacle comparison — sharpest single book, confirmed
+                    # fast and reliable throughout tonight's diagnostics.
+                    _pin = get_pinnacle_game_line(matchup)
+                    if _pin:
+                        st.markdown("**Pinnacle:**")
+                        _pc1, _pc2, _pc3 = st.columns(3)
+                        _pc1.metric("ML", f"{_pin.get('AwayML','—')} / {_pin.get('HomeML','—')}")
+                        _pc2.metric("Spread", f"{_pin.get('Spread','—')} ({_pin.get('SpreadOdds','—')})")
+                        _pc3.metric("Total", f"{_pin.get('Total','—')} ({_pin.get('TotalOver','—')} / {_pin.get('TotalUnder','—')})")
+
+                    # ScoresAndOdds — real, 11-book consensus (Caesars,
+                    # DraftKings, FanDuel, and others), already built and
+                    # working, just not previously wired into this section.
+                    try:
+                        _sao = get_scoresandodds_match(matchup, _gsport)
+                    except Exception:
+                        _sao = {}
+                    if _sao:
+                        _sao_ml, _sao_sp, _sao_to = _sao.get("moneyline", {}), _sao.get("spread", {}), _sao.get("total", {})
+                        if _sao_ml or _sao_sp or _sao_to:
+                            st.markdown("**ScoresAndOdds (11-book consensus):**")
+                            _sc1, _sc2, _sc3 = st.columns(3)
+                            _sc1.metric("ML", f"{_sao_ml.get('away','—')} / {_sao_ml.get('home','—')}")
+                            _sc2.metric("Spread", f"{_sao_sp.get('value','—')}")
+                            _sc3.metric("Total", f"{_sao_to.get('value','—')}")
+
                     # ── Market move explanation ──────────────────────
                     # Pull from game_analysis if available
                     _ga_match = next((g for g in st.session_state.get("game_analysis",[])
