@@ -20,6 +20,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_espn_line_movement_debug = None
+try:
+    _real_game_ids = fetchers.fetch_espn_game_ids("MLB")
+    _sample = list(_real_game_ids.items())[:3]
+    _espn_line_movement_debug = {}
+    for _matchup, _eid in _sample:
+        _movements = fetchers.fetch_espn_line_movement("MLB", _eid)
+        _espn_line_movement_debug[_matchup] = {"event_id": _eid, "movements": _movements}
+except Exception as e:
+    _espn_line_movement_debug = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _key_len = len(getattr(fetchers, "SHARPAPI_KEY", "") or "")
 
 # Real, additional check: query the real /leagues reference endpoint the
@@ -268,6 +279,7 @@ output = {
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
+    "espn_line_movement_debug": _espn_line_movement_debug,
     "kambi_raw_response": _kambi_raw_result,
     "results": sorted(results, key=lambda r: (r["seconds"] is None, -(r["seconds"] or 0))),
 }
