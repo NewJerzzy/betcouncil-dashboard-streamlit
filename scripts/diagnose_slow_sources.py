@@ -90,75 +90,153 @@ except Exception as e:
 # Real, focused set: the specific sources already suspected tonight (from
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
-    ("OddsWrap", "fetch_oddswrap_props", ("MLB",)),
-    ("ParlayAPI Props", "fetch_parlayapi_props", ("MLB",)),
-    ("ParlayAPI Arbitrage", "fetch_parlayapi_arbitrage", ("MLB",)),
-    ("ParlayAPI EV", "fetch_parlayapi_ev", ("MLB",)),
-    ("SharpAPI Lines", "fetch_sharpapi_lines", ("MLB",)),
-    ("SharpAPI Props", "fetch_sharpapi_props", ("MLB",)),
-    ("Pinnacle Game Lines", "fetch_pinnacle_game_lines", ("MLB",)),
-    ("Action Network Game Lines", "fetch_action_network_lines", ("MLB",)),
-    ("CBS Injuries", "fetch_cbs_injuries", ("MLB",)),
-    ("ESPN Injuries", "fetch_espn_injuries", ("MLB",)),
-    ("H2H Game Lines", "fetch_h2h_game_lines", ("MLB",)),
-    ("Caesars Lines", "fetch_caesars_lines", ("MLB",)),
-    ("Bovada Lines", "fetch_bovada_lines", ("MLB",)),
-    ("FanDuel Lines", "fetch_fanduel_lines", ("MLB",)),
+    ("OddsWrap", "fetch_oddswrap_props", ("MLB",), False),
+
+    ("ParlayAPI Props", "fetch_parlayapi_props", ("MLB",), False),
+
+    ("ParlayAPI Arbitrage", "fetch_parlayapi_arbitrage", ("MLB",), False),
+
+    ("ParlayAPI EV", "fetch_parlayapi_ev", ("MLB",), False),
+
+    ("SharpAPI Lines", "fetch_sharpapi_lines", ("MLB",), False),
+
+    ("SharpAPI Props", "fetch_sharpapi_props", ("MLB",), False),
+
+    ("Pinnacle Game Lines", "fetch_pinnacle_game_lines", ("MLB",), False),
+
+    ("Action Network Game Lines", "fetch_action_network_lines", ("MLB",), False),
+
+    ("CBS Injuries", "fetch_cbs_injuries", ("MLB",), False),
+
+    ("ESPN Injuries", "fetch_espn_injuries", ("MLB",), False),
+
+    ("H2H Game Lines", "fetch_h2h_game_lines", ("MLB",), False),
+
+    ("Caesars Lines", "fetch_caesars_lines", ("MLB",), False),
+
+    ("Bovada Lines", "fetch_bovada_lines", ("MLB",), False),
+
+    ("FanDuel Lines", "fetch_fanduel_lines", ("MLB",), False),
+
     # Real, new additions -- confirmed via direct, manual review of each
     # real _pf_X wrapper's def body, not automated/regex-matched.
-    ("BetRivers Lines", "fetch_betrivers_game_lines", ("MLB",)),
-    ("Fanatics Lines", "fetch_fanatics_game_lines", ("MLB",)),
-    ("ESPN Bet Lines", "fetch_espnbet_game_lines", ("MLB",)),
-    ("Hard Rock Lines", "fetch_hardrock_game_lines", ("MLB",)),
-    ("WynnBet Lines", "fetch_wynnbet_game_lines", ("MLB",)),
-    ("Unibet Lines", "fetch_unibet_game_lines", ("MLB",)),
-    ("Bet365 Lines", "fetch_bet365_game_lines", ("MLB",)),
-    ("BetMGM Lines", "fetch_betmgm_game_lines", ("MLB",)),
-    ("Bookmaker Lines", "fetch_bookmaker_game_lines", ("MLB",)),
-    ("SportsLine Lines", "fetch_sportsline_game_lines", ("MLB",)),
-    ("SBR Lines", "fetch_sbr_game_lines", ("MLB",)),
-    ("TheScore Lines", "fetch_thescore_game_lines", ("MLB",)),
-    ("Signal Odds Events", "fetch_signalodds_events", ("MLB",)),
-    ("BetsLib Predictions", "fetch_betslib_predictions", ("MLB",)),
-    ("GamblingForecast Props", "fetch_gamblingforecast_props", ("MLB",)),
-    ("BettingPros Props", "fetch_bettingpros_props", ("MLB",)),
-    ("SportsInsights", "fetch_sportsinsights_from_gist", ("MLB",)),
-    ("MLB Probable Pitchers", "fetch_mlb_probable_pitchers", ()),
-    ("NumberFire (NBA)", "fetch_numberfire_direct", ("NBA",)),
-    ("BetsLib Live Events", "fetch_betslib_live_events", ("MLB",)),
-    ("FantasyPros Projections", "fetch_fantasypros_projections", ("MLB",)),
-    ("Opponent Defense Rankings", "fetch_opponent_defense_rankings", ("MLB",)),
-    ("Caesars Props", "fetch_caesars_props", ("MLB",)),
-    ("BetOnline Offering", "fetch_betonline_offering", ("MLB",)),
-    ("Bovada Props", "fetch_bovada_props", ("MLB",)),
-    ("Savant Statcast", "fetch_savant_statcast", ()),
-    ("Savant Sprint Speed", "fetch_savant_sprint_speed", ()),
-    ("Savant Expected Stats", "fetch_savant_expected_stats", ()),
-    ("Savant Pitch Arsenal", "fetch_savant_pitch_arsenal", ()),
-    ("Savant Batted Ball", "fetch_savant_batted_ball", ()),
-    ("MLB Lineups", "fetch_mlb_lineups", ()),
-    ("EV API Live", "fetch_ev_api_live", ()),
-    ("EV API WNBA", "fetch_ev_api_wnba", ()),
-    ("EV API Outliers", "fetch_ev_api_outliers", ("MLB",)),
-    ("EV Feed", "fetch_ev_feed", ()),
-    ("EV BVP", "fetch_ev_bvp", ()),
-    ("EV Preview", "fetch_ev_preview", ()),
-    ("EV Strikeouts", "fetch_ev_strikeouts", ()),
-    ("EV Movement", "fetch_ev_movement", ("MLB",)),
-    ("EV Stats HR", "fetch_ev_stats", ("hr",)),
-    ("EV Stats K", "fetch_ev_stats", ("k",)),
-    ("EV Barrels", "fetch_ev_barrels", ()),
-    ("EV Recap", "fetch_ev_recap", ()),
-    ("EV MLB", "fetch_ev_mlb", ()),
-    ("EV Trends", "fetch_ev_trends", ()),
-    ("PrizePicks", "scrape_prizepicks_with_gist_fallback", ("MLB",)),
-    ("Underdog Props", "fetch_underdog_props", ("MLB",)),
-    ("Public Betting", "fetch_public_betting", ("MLB",)),
-    ("Todays Referees", "fetch_todays_referees", ("MLB",)),
+    ("BetRivers Lines", "fetch_betrivers_game_lines", ("MLB",), False),
+
+    ("Fanatics Lines", "fetch_fanatics_game_lines", ("MLB",), False),
+
+    ("ESPN Bet Lines", "fetch_espnbet_game_lines", ("MLB",), False),
+
+    ("Hard Rock Lines", "fetch_hardrock_game_lines", ("MLB",), False),
+
+    ("WynnBet Lines", "fetch_wynnbet_game_lines", ("MLB",), False),
+
+    ("Unibet Lines", "fetch_unibet_game_lines", ("MLB",), False),
+
+    ("Bet365 Lines", "fetch_bet365_game_lines", ("MLB",), False),
+
+    ("BetMGM Lines", "fetch_betmgm_game_lines", ("MLB",), False),
+
+    ("Bookmaker Lines", "fetch_bookmaker_game_lines", ("MLB",), False),
+
+    ("SportsLine Lines", "fetch_sportsline_game_lines", ("MLB",), False),
+
+    ("SBR Lines", "fetch_sbr_game_lines", ("MLB",), False),
+
+    ("TheScore Lines", "fetch_thescore_game_lines", ("MLB",), False),
+
+    ("Signal Odds Events", "fetch_signalodds_events", ("MLB",), False),
+
+    ("BetsLib Predictions", "fetch_betslib_predictions", ("MLB",), False),
+
+    ("GamblingForecast Props", "fetch_gamblingforecast_props", ("MLB",), False),
+
+    ("BettingPros Props", "fetch_bettingpros_props", ("MLB",), False),
+
+    ("SportsInsights", "fetch_sportsinsights_from_gist", ("MLB",), False),
+
+    ("MLB Probable Pitchers", "fetch_mlb_probable_pitchers", (), False),
+
+    ("NumberFire (NBA)", "fetch_numberfire_direct", ("NBA",), False),
+
+    ("BetsLib Live Events", "fetch_betslib_live_events", ("MLB",), False),
+
+    ("FantasyPros Projections", "fetch_fantasypros_projections", ("MLB",), False),
+
+    ("Opponent Defense Rankings", "fetch_opponent_defense_rankings", ("MLB",), False),
+
+    ("Caesars Props", "fetch_caesars_props", ("MLB",), False),
+
+    ("BetOnline Offering", "fetch_betonline_offering", ("MLB",), False),
+
+    ("Bovada Props", "fetch_bovada_props", ("MLB",), False),
+
+    ("Savant Statcast", "fetch_savant_statcast", (), False),
+
+    ("Savant Sprint Speed", "fetch_savant_sprint_speed", (), False),
+
+    ("Savant Expected Stats", "fetch_savant_expected_stats", (), False),
+
+    ("Savant Pitch Arsenal", "fetch_savant_pitch_arsenal", (), False),
+
+    ("Savant Batted Ball", "fetch_savant_batted_ball", (), False),
+
+    ("MLB Lineups", "fetch_mlb_lineups", (), False),
+
+    ("EV API Live", "fetch_ev_api_live", (), False),
+
+    ("EV API WNBA", "fetch_ev_api_wnba", (), False),
+
+    ("EV API Outliers", "fetch_ev_api_outliers", ("MLB",), False),
+
+    ("EV Feed", "fetch_ev_feed", (), False),
+
+    ("EV BVP", "fetch_ev_bvp", (), False),
+
+    ("EV Preview", "fetch_ev_preview", (), False),
+
+    ("EV Strikeouts", "fetch_ev_strikeouts", (), False),
+
+    ("EV Movement", "fetch_ev_movement", ("MLB",), False),
+
+    ("EV Stats HR", "fetch_ev_stats", ("hr",), False),
+
+    ("EV Stats K", "fetch_ev_stats", ("k",), False),
+
+    ("EV Barrels", "fetch_ev_barrels", (), False),
+
+    ("EV Recap", "fetch_ev_recap", (), False),
+
+    ("EV MLB", "fetch_ev_mlb", (), False),
+
+    ("EV Trends", "fetch_ev_trends", (), False),
+
+    ("PrizePicks", "scrape_prizepicks_with_gist_fallback", ("MLB",), False),
+    ("Underdog Props", "fetch_underdog_props", ("MLB",), False),
+    ("Public Betting", "fetch_public_betting", ("MLB",), False),
+    ("Todays Referees", "fetch_todays_referees", ("MLB",), False),
+    # Real, final batch -- the genuinely more complex remainder, confirmed
+    # safe via direct, manual review (not automated) of each real wrapper.
+    ("Kalshi", "fetch_kalshi_from_gist", ("MLB",), False),
+    ("Polymarket", "fetch_polymarket_markets", ("MLB",), False),
+    ("Covers", "fetch_covers_from_gist", ("MLB",), True),
+    ("OddsPortal", "fetch_oddsportal_from_gist", ("MLB",), True),
+    ("Odds API Props", "fetch_odds_api_props", ("MLB",), False),
+    ("OddsPAPI Props", "fetch_oddspapi_props", ("MLB",), False),
+    ("RotoWire Injuries", "fetch_rotowire_injuries", ("MLB",), False),
+    ("DK Pick6 Props", "fetch_pick6_props_from_gist", ("MLB",), True),
+    ("Bobby's Bets Picks", "fetch_bobbys_bets_picks", ("mlb",), False),
+    ("Bobby's Bets Props", "fetch_bobbys_bets_props_from_gist", ("mlb",), False),
+    ("Bobby's Bets Briefing", "fetch_bobbys_bets_briefing", ("mlb",), False),
+    ("Bobby's Bets Scoreboard", "fetch_bobbys_bets_scoreboard", ("mlb",), False),
+    ("Bobby's Bets Best Prices", "fetch_bobbys_bets_best_prices", ("mlb",), False),
+    ("EVBets (Gist)", "fetch_evbets_from_gist", ("MLB",), False),
+    ("VSiN Splits (Gist)", "fetch_vsin_splits_from_gist", ("MLB",), False),
+    ("BaseballPress (Gist)", "fetch_baseballpress_from_gist", (), False),
+    ("Weather (Gist)", "fetch_weather_from_gist", ("MLB",), False),
 ]
 
 results = []
-for label, fn_name, args in TARGETS:
+for label, fn_name, args, is_tuple in TARGETS:
     fn = getattr(fetchers, fn_name, None)
     if fn is None:
         results.append({"source": label, "function": fn_name, "status": "MISSING", "seconds": None})
@@ -168,6 +246,8 @@ for label, fn_name, args in TARGETS:
     try:
         with contextlib.redirect_stdout(_captured):
             data = fn(*args)
+            if is_tuple and isinstance(data, tuple) and len(data) > 0:
+                data = data[0]
         elapsed = round(time.time() - start, 2)
         _internal_warn = _captured.getvalue().strip()
         results.append({
