@@ -1549,6 +1549,7 @@ PARLAYSAVANT_MLB_PROP_MAP = {
 PARLAY_API_BASE = "https://parlay-api.com/v1"
 PARLAY_API_KEY  = st.secrets.get("PARLAY_API_KEY", "")
 SHARPAPI_KEY   = st.secrets.get("SHARPAPI_KEY", "")
+SHARPAPI_KEY_2 = st.secrets.get("SHARPAPI_KEY_2", "") or SHARPAPI_KEY
 BETMGM_COOKIE  = st.secrets.get("BETMGM_COOKIE", "")
 BETMGM_STATE   = st.secrets.get("BETMGM_STATE", "az")
 
