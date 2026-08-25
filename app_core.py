@@ -4510,6 +4510,31 @@ BOVADA_BASE    = "https://www.bovada.lv/services/sports/event/coupon/events/A/de
 
 
 @st.cache_data(ttl=1800)
+def get_pinnacle_game_line(matchup, pinnacle_data=None):
+    """
+    Look up Pinnacle lines for a matchup, same real pattern as
+    get_bovada_game_line above. Pinnacle uses different field names
+    (Matchup/Home/Away/HomeML/AwayML/Spread/Total) than Bovada's
+    lowercase keys, confirmed via fetch_pinnacle_game_lines' own docstring.
+    Returns dict or None.
+    """
+    if pinnacle_data is None:
+        pinnacle_data = st.session_state.get("pinnacle_game_lines", [])
+    if not pinnacle_data:
+        return None
+
+    matchup_norm = normalize_name(matchup)
+    for game in pinnacle_data:
+        gm_norm = normalize_name(game.get("Matchup", ""))
+        h_norm  = normalize_name(game.get("Home", ""))
+        a_norm  = normalize_name(game.get("Away", ""))
+        if (matchup_norm in gm_norm or gm_norm in matchup_norm or
+            (h_norm and h_norm in matchup_norm) or
+            (a_norm and a_norm in matchup_norm)):
+            return game
+    return None
+
+
 def get_bovada_game_line(matchup, bovada_data=None):
     """
     Look up Bovada lines for a matchup.
