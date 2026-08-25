@@ -4066,7 +4066,9 @@ with tabs[3]:
                     elif movements:
                         m = movements[0]
                         st.markdown(f"**Current:** Spread {m.get('spread','—')} | Total {m.get('over_under','—')} | ML {m.get('home_ml','—')}/{m.get('away_ml','—')}")
-                        st.caption(f"Source: {m.get('provider','ESPN')}")
+                        st.caption(f"Source: {m.get('provider') or 'ESPN'}")
+                        if m.get('spread','—') == '—' and m.get('over_under','—') == '—':
+                            st.caption("ℹ️ ESPN has only posted the moneyline for this game so far — spread/total typically follow.")
                         st.caption("⚠️ Only one snapshot available — load board again later to see movement direction.")
 
                     # Bovada comparison
