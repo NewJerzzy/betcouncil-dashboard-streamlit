@@ -126,7 +126,7 @@ try:
         # broken NFL prep via get_nfl_player_baseline / fetch_nfl_full_player_database) ──
         ODDS_API_PROP_MARKETS, ODDS_API_STAT_MAP,
         BETMGM_COOKIE, BETMGM_STATE, BETMGM_SPORT_MAP, BETMGM_WIDGET_MAP,
-        SHARPAPI_KEY, SHARPAPI_BASE,
+        SHARPAPI_KEY, SHARPAPI_BASE, SHARPAPI_KEY_2,
         NFL_POSITION_BASELINES, NFL_STAT_NORMALIZE_MAP, NFL_TEAM_ABBR_MAP,
     )
 except ImportError:
@@ -207,6 +207,7 @@ except ImportError:
     }
     # New sources
     SHARPAPI_KEY   = ""
+    SHARPAPI_KEY_2 = ""
     SHARPAPI_BASE  = "https://api.sharpapi.io/api/v1"
     BETMGM_COOKIE  = ""
     BETMGM_STATE   = "az"
@@ -12151,7 +12152,7 @@ def fetch_sharpapi_props(sport: str) -> list:
                      ev_percent, fair_odds, is_ev_positive, Sport, source}
     Free tier: 12 req/min. Cached 20 min.
     """
-    if not SHARPAPI_KEY:
+    if not SHARPAPI_KEY_2:
         return []
     sport_map = {
         "MLB": "mlb", "NBA": "nba",
@@ -12170,7 +12171,7 @@ def fetch_sharpapi_props(sport: str) -> list:
         r = _http.get(
             f"{SHARPAPI_BASE}/odds",
             params={"league": league, "market_type": "player_props"},
-            headers={"X-API-Key": SHARPAPI_KEY, "Accept": "application/json"},
+            headers={"X-API-Key": SHARPAPI_KEY_2, "Accept": "application/json"},
             timeout=12,
         )
         if r.status_code == 429:
