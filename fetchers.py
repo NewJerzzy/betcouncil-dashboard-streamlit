@@ -15506,6 +15506,8 @@ def fetch_betslib_events(sport: str = None, category: str = "upcoming", limit: i
         items = raw if isinstance(raw, list) else raw.get("data", raw.get("events", raw.get("results", [])))
         results = []
         for ev in items:
+            if not isinstance(ev, dict):
+                continue
             home = ev.get("home_team", ev.get("home", {}))
             away = ev.get("away_team", ev.get("away", {}))
             if isinstance(home, dict): home = home.get("name", home.get("full_name", ""))
@@ -15514,6 +15516,8 @@ def fetch_betslib_events(sport: str = None, category: str = "upcoming", limit: i
             # Parse best odds
             bods = {}
             for bo in ev.get("best_odds", ev.get("odds", [])):
+                if not isinstance(bo, dict):
+                    continue
                 outcome = bo.get("outcome_name", bo.get("outcome", ""))
                 dec     = float(bo.get("odds", bo.get("price", 1.0)) or 1.0)
                 book    = bo.get("bookmaker_name", bo.get("bookmaker", bo.get("book", "")))
