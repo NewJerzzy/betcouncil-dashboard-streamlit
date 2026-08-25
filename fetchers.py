@@ -7207,6 +7207,7 @@ def fetch_espn_injuries(sport):
         url = f"https://site.api.espn.com/apis/site/v2/sports/{slug}/injuries"
         r = _http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code != 200:
+            print(f"[WARN] fetch_espn_injuries({sport}): HTTP {r.status_code}")
             return []
         data = r.json()
         results = []
@@ -11146,9 +11147,12 @@ def _fetch_kambi_game_lines(offering_id: str, sport: str, book_label: str) -> li
     try:
         r = session.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
+            print(f"[WARN] _fetch_kambi_game_lines({book_label}) HTTP {r.status_code}: {r.text[:300]}")
             return []
         data = r.json()
         events = data.get("events", [])
+        if not events:
+            print(f"[WARN] _fetch_kambi_game_lines({book_label}): 200 OK but zero real events. Raw keys: {list(data.keys())}")
 
         for ev_wrap in events:
             ev = ev_wrap.get("event", {})
@@ -14718,6 +14722,8 @@ def fetch_sbr_game_lines(sport: str) -> list:
             )
             if resp.status_code == 200:
                 all_games.extend(_sbr_parse_html(resp.text, sport, path))
+            else:
+                print(f"[WARN] fetch_sbr_game_lines({sport}/{path}): HTTP {resp.status_code}")
         except Exception as e:
             print(f"[WARN] fetch_sbr_game_lines({sport}/{path}): {e}")
 
@@ -14772,6 +14778,7 @@ def fetch_sportsline_game_lines(sport: str) -> list:
                       f"Add it at Settings → Network in the Streamlit Cloud dashboard.")
             return []
         if resp.status_code != 200:
+            print(f"[WARN] fetch_sportsline_game_lines({sport}): HTTP {resp.status_code}")
             return []
         html = resp.text
     except Exception as e:
