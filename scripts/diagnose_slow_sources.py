@@ -31,6 +31,14 @@ try:
 except Exception as e:
     _espn_line_movement_debug = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_scoresandodds_match_debug = None
+try:
+    _scoresandodds_match_debug = {}
+    for _matchup in list(_real_game_ids.keys())[:3]:
+        _scoresandodds_match_debug[_matchup] = fetchers.get_scoresandodds_match(_matchup, "MLB")
+except Exception as e:
+    _scoresandodds_match_debug = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _key_len = len(getattr(fetchers, "SHARPAPI_KEY", "") or "")
 
 # Real, additional check: query the real /leagues reference endpoint the
@@ -280,6 +288,7 @@ output = {
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
     "espn_line_movement_debug": _espn_line_movement_debug,
+    "scoresandodds_match_debug": _scoresandodds_match_debug,
     "kambi_raw_response": _kambi_raw_result,
     "results": sorted(results, key=lambda r: (r["seconds"] is None, -(r["seconds"] or 0))),
 }
