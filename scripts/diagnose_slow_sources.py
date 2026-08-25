@@ -61,6 +61,32 @@ try:
 except Exception as e:
     _props_raw_result = {"error": str(e)[:200]}
 
+# Real, direct probe of the Kambi shared function (feeds BetRivers, Hard
+# Rock, WynnBet, Unibet, Fanatics -- all 5 confirmed showing zero real
+# items). The wrapper itself silently returns [] on any non-200 status
+# or exception with zero logging, so calling the real URL construction
+# directly here to see the true raw response.
+_kambi_raw_result = None
+try:
+    from curl_cffi import requests as _cf
+    _kambi_session = _cf.Session(impersonate="chrome124")
+    _kambi_url = (
+        "https://eu-offering-api.kambicdn.com/offering/v2018/rvn"
+        "/listView/baseball/mlb.json"
+        "?lang=en_US&market=US&client_id=2&channel_id=1&ncids=1"
+        "&category=match&useCombined=true"
+    )
+    _kambi_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://sportsbook.draftkings.com",
+        "Referer": "https://sportsbook.draftkings.com/sports",
+    }
+    _kr = _kambi_session.get(_kambi_url, headers=_kambi_headers, timeout=15)
+    _kambi_raw_result = {"status": _kr.status_code, "body": _kr.text[:2000]}
+except Exception as e:
+    _kambi_raw_result = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
 # Real, focused set: the specific sources already suspected tonight (from
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
@@ -162,6 +188,7 @@ output = {
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
+    "kambi_raw_response": _kambi_raw_result,
     "results": sorted(results, key=lambda r: (r["seconds"] is None, -(r["seconds"] or 0))),
 }
 
