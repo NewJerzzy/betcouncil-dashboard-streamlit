@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_real_game_ids = {}
 _espn_line_movement_debug = None
 try:
     _real_game_ids = fetchers.fetch_espn_game_ids("MLB")
