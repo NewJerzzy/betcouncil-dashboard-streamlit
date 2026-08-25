@@ -22,6 +22,7 @@ jobs:
           GITHUB_TOKEN = "${{ secrets.PICK6_GIST_TOKEN }}"
           SHARPAPI_KEY = "${{ secrets.SHARPAPI_KEY }}"
           PARLAY_API_KEY = "${{ secrets.PARLAY_API_KEY }}"
+          EV_JWT = "${{ secrets.EV_JWT }}"
           EOF
       - name: Run real diagnostic
         env:
