@@ -4198,6 +4198,18 @@ def build_optimal_portfolio(board, n_bets=5, sport=None,
         
         if risk in ("HIGH","EXTREME") and volatile_count >= max_volatile:
             continue  # Too many volatile props
+
+        # Real fix: max_per_game only catches concentration within the SAME
+        # matchup -- teammates or correlated stat types spread across
+        # different, separate games (e.g. one hitter from each of two
+        # different teams' games) were never checked at all. Reject a
+        # candidate if adding it would push the running slip's real
+        # correlation score too high, using the same function the manual
+        # Slip Analyzer already relies on for this exact check.
+        if selected:
+            _trial_score, _ = compute_parlay_correlation(selected + [prop])
+            if _trial_score >= 0.40:
+                continue
         
         # Add to portfolio
         selected.append(prop)
