@@ -1612,10 +1612,10 @@ with tabs[1]:
 
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Daily Risk Status</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
         same_team_count = 0
-        players = [p.get("Player","") for p in parlay_props]
-        for i in range(len(players)):
-            for j in range(i+1, len(players)):
-                if PLAYER_TEAM_MAP.get(players[i]) and PLAYER_TEAM_MAP.get(players[i]) == PLAYER_TEAM_MAP.get(players[j]):
+        teams = [p.get("Team", p.get("team","")) for p in parlay_props]
+        for i in range(len(teams)):
+            for j in range(i+1, len(teams)):
+                if teams[i] and teams[i] == teams[j]:
                     same_team_count += 1
         risk_color = "#e04040" if same_team_count >= 2 else "#e8a020" if same_team_count == 1 else "#22c55e"
         risk_label = "HIGH RISK" if same_team_count >= 2 else "MODERATE RISK" if same_team_count == 1 else "LOW RISK"
