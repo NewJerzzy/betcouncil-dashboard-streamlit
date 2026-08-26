@@ -1531,8 +1531,14 @@ def render_signal_chart(prop, sport="NBA"):
     strong_count = sum(1 for v in signals.values() if abs(v) >= 0.06)
     moderate_count = sum(1 for v in signals.values() if 0.02 <= abs(v) < 0.06)
 
+    _real_side = str(prop.get("Side", "OVER")).upper()
+    _signal_conflicts_real_side = (firing > 0) and (direction != _real_side)
+
     if firing == 0:
         verdict = "No signals firing — not enough data to analyze this pick."
+    elif _signal_conflicts_real_side:
+        verdict = (f"⚠️ DATA/DIRECTION CONFLICT: the displayed signals point {direction}, "
+                   f"but this card's actual pick is {_real_side}. Treat as unverified, not a bet.")
     elif strong_count >= 2:
         verdict = f"{strong_count} strong signals all pointing {direction}. High conviction play."
     elif strong_count == 1 and moderate_count >= 1:
