@@ -13396,6 +13396,7 @@ with tabs[2]:
         "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
         "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
         "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
+        "PlayerProps.AI": "Independent AI projection vs. real book lines — direction is BetCouncil-derived, not a provider pick.",
     }
     _pred_gl_view = st.radio(
         "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
@@ -13572,6 +13573,40 @@ with tabs[2]:
                     "line": fp.get("line", ""), "prop": fp.get("stat_type", ""),
                     "pick": _fp_direction, "source": "FavoredProps", "note": _fp_note,
                     "image": "", "team": fp.get("team", ""), "position": fp.get("position", "")
+                })
+        except Exception:
+            pass
+
+    # ── PlayerProps.AI (real, independent multi-book projection source --
+    # confirmed via direct, independent verification of the live raw
+    # response: no directional pick field exists, only a model projection
+    # and per-book lines. Direction here is BetCouncil's own calculation
+    # (projection vs. each book's line), explicitly marked as derived,
+    # never presented as a PlayerProps.AI pick. A single player/prop can
+    # have different lines per book, so this aggregates to the majority
+    # derived direction across books rather than picking just one) ──────
+    _pred_ppai_sports = [s for s in ("MLB", "NFL", "NBA", "NHL", "WNBA") if _pred_sport_match(s)]
+    _pred_ppai_fns = [(lambda _s=_s: fetch_playerprops_ai(_s)) for _s in _pred_ppai_sports]
+    _pred_ppai_results = _fetch_parallel(_pred_ppai_fns, show_progress=False)
+    for _pred_sport, _ppai_rows_for_sport in zip(_pred_ppai_sports, _pred_ppai_results):
+        try:
+            _ppai_by_key = {}
+            for row in (_ppai_rows_for_sport or []):
+                if not row.get("Derived"):
+                    continue
+                _key = (normalize_name(row.get("Player", "")), row.get("Prop", ""))
+                _ppai_by_key.setdefault(_key, []).append(row)
+            for (_pn, _prop), _rows in _ppai_by_key.items():
+                _over_n = sum(1 for r in _rows if r["Derived"] == "OVER")
+                _under_n = len(_rows) - _over_n
+                _majority = "Over" if _over_n >= _under_n else "Under"
+                _first = _rows[0]
+                _pred_pp_items.append({
+                    "sport": _pred_sport, "player": _first.get("Player", ""),
+                    "line": _first.get("Line", ""), "prop": _prop,
+                    "pick": _majority, "source": "PlayerProps.AI",
+                    "note": f"{len(_rows)} books, derived (not a provider pick)",
+                    "image": "", "team": _first.get("Team", ""), "position": _first.get("Position", "")
                 })
         except Exception:
             pass
