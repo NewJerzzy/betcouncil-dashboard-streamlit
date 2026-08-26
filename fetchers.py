@@ -12476,18 +12476,29 @@ def fetch_kalshi_markets(sport: str) -> list:
     Fetch Kalshi prediction market contracts for sports props.
     Public API — no auth needed. Cached 30 min.
 
-    Filters by keyword match on market title/subtitle rather than the
-    series_ticker param -- Kalshi's real series tickers are internal
-    prefixed codes (e.g. a confirmed real example: 'KX1HALVING'), not
-    plain sport names, so filtering server-side by an uppercased sport
-    word like 'MLB' or 'BASKETBALL' almost certainly matched zero real
-    series and silently returned nothing every time.
+    Filters server-side by the real series_ticker param, using the
+    confirmed real values for the 4 sports with a documented game-winner
+    series: KXMLBGAME, KXNBAGAME, KXNFLGAME, KXNHLGAME (verified 2026-08
+    via multiple independent sources, not guessed). A prior session's own
+    comment here claimed series tickers were "internal, unguessable codes"
+    and switched to matching "baseball"/"mlb" against raw title/subtitle
+    text instead -- that claim was wrong, and the replacement was its own
+    real bug: confirmed real Kalshi market titles use team names/
+    abbreviations ("Tampa Bay vs Detroit"), never literal sport-name words,
+    so the keyword filter would systematically fail to match real markets.
+    Falls back to the old keyword-match approach only for sports without a
+    confirmed real series ticker (e.g. WNBA), rather than guessing one.
     """
     cache_path = os.path.join(CACHE_DIR, f"kalshi_{sport}.pkl")
     if os.path.exists(cache_path):
         if (time.time() - os.path.getmtime(cache_path)) / 60 < 30:
             cached = _safe_load_pkl(cache_path)
             if cached is not None: return cached
+    _CONFIRMED_SERIES = {
+        "MLB": "KXMLBGAME", "NBA": "KXNBAGAME",
+        "NFL": "KXNFLGAME", "NHL": "KXNHLGAME",
+    }
+    series_ticker = _CONFIRMED_SERIES.get(sport)
     try:
         sport_keywords = {
             "MLB": ["baseball", "mlb"],
@@ -12501,6 +12512,8 @@ def fetch_kalshi_markets(sport: str) -> list:
         cursor = None
         for _ in range(3):  # a few pages of open markets, bounded
             params = {"status": "open", "limit": 200}
+            if series_ticker:
+                params["series_ticker"] = series_ticker
             if cursor:
                 params["cursor"] = cursor
             r = _http.get(
@@ -12513,9 +12526,13 @@ def fetch_kalshi_markets(sport: str) -> list:
                 break
             data = r.json()
             for mkt in data.get("markets", []):
-                _title = (mkt.get("title", "") + " " + mkt.get("subtitle", "")).lower()
-                if not any(kw in _title for kw in keywords):
-                    continue
+                if not series_ticker:
+                    # Only fall back to the confirmed-unreliable keyword
+                    # match when no real series ticker is known for this
+                    # sport.
+                    _title = (mkt.get("title", "") + " " + mkt.get("subtitle", "")).lower()
+                    if not any(kw in _title for kw in keywords):
+                        continue
                 _yes_bid = mkt.get("yes_bid")
                 try:
                     _implied_prob = float(_yes_bid) / 100.0 if _yes_bid is not None else 0.5
