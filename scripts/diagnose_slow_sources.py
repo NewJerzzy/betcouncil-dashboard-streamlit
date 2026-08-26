@@ -42,6 +42,20 @@ except Exception as e:
 
 _key_len = len(getattr(fetchers, "SHARPAPI_KEY", "") or "")
 
+_kalshi_verify = None
+try:
+    _kalshi_rows = fetchers.fetch_kalshi_markets("MLB")
+    _probs = [r.get("implied_prob") for r in _kalshi_rows]
+    _kalshi_verify = {
+        "real_row_count": len(_kalshi_rows),
+        "sample_titles": [r.get("title") for r in _kalshi_rows[:5]],
+        "sample_implied_probs": _probs[:10],
+        "all_probs_are_0_or_1": bool(_probs) and all(p in (0.0, 1.0) for p in _probs),
+        "distinct_prob_values": len(set(_probs)),
+    }
+except Exception as e:
+    _kalshi_verify = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 # Real, additional check: query the real /leagues reference endpoint the
 # 400 error itself pointed to, to get the real, complete, accurate league
 # name list for every sport, not just the one confirmed correction for MLB.
@@ -112,6 +126,7 @@ except Exception as e:
 TARGETS = [
     ("OddsWrap", "fetch_oddswrap_props", ("MLB",), False),
     ("PlayerProps.AI", "fetch_playerprops_ai", ("MLB",), False),
+    ("Kalshi Markets", "fetch_kalshi_markets", ("MLB",), False),
 
     ("ParlayAPI Props", "fetch_parlayapi_props", ("MLB",), False),
 
@@ -286,6 +301,7 @@ for label, fn_name, args, is_tuple in TARGETS:
 output = {
     "run_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "sharpapi_key_real_length": _key_len,
+    "kalshi_verify": _kalshi_verify,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
