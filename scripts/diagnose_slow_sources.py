@@ -61,11 +61,28 @@ try:
     import requests as _req_kalshi
     _rk = _req_kalshi.get(
         "https://api.elections.kalshi.com/trade-api/v2/markets",
-        params={"status": "open", "limit": 1, "series_ticker": "KXMLBGAME"},
+        params={"status": "open", "limit": 3, "series_ticker": "KXMLBGAME"},
         headers={"Accept": "application/json"},
         timeout=10,
     )
-    _kalshi_raw_market = {"status": _rk.status_code, "body": _rk.text[:4000]}
+    _rk_data = _rk.json()
+    _rk_markets = _rk_data.get("markets", [])
+    _kalshi_raw_market = {
+        "status": _rk.status_code,
+        "n_markets": len(_rk_markets),
+        "all_keys_first_market": sorted(_rk_markets[0].keys()) if _rk_markets else [],
+        "bid_ask_fields": [
+            {
+                "title": m.get("title"),
+                "yes_bid_dollars": m.get("yes_bid_dollars"),
+                "yes_ask_dollars": m.get("yes_ask_dollars"),
+                "no_bid_dollars": m.get("no_bid_dollars"),
+                "no_ask_dollars": m.get("no_ask_dollars"),
+                "last_price_dollars": m.get("last_price_dollars"),
+            }
+            for m in _rk_markets
+        ],
+    }
 except Exception as e:
     _kalshi_raw_market = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
