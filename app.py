@@ -1624,6 +1624,20 @@ with tabs[1]:
 
         # ── MASTER DAILY SLIP ──────────────────────────────
         st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Master Daily Slip</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
+        # Real fix: this block never checked the combined-probability-vs-
+        # breakeven gate the Singles Only warning above already computes,
+        # so it could show a real, clickable slip from the same source
+        # props even when they were just flagged below breakeven. Using
+        # locals().get() since combined/be are only conditionally set.
+        _mds_combined = locals().get("combined")
+        _mds_be = locals().get("be")
+        _mds_below_breakeven = (_mds_combined is not None and _mds_be is not None and _mds_combined < _mds_be)
+        if _mds_below_breakeven:
+            st.markdown(
+                '<div style="color:#e8a020;font-size:1.0rem;">⚠️ Skipped — combined probability is below this parlay\'s '
+                'breakeven (see Singles Only note above). Use the individual singles instead.</div>',
+                unsafe_allow_html=True,
+            )
         # Dedup slip_picks by player
         _seen_sk = set()
         _slip_src = parlay_props if parlay_props else sorted(board, key=lambda x: x.get("Edge",0), reverse=True)
@@ -1634,7 +1648,7 @@ with tabs[1]:
                 _seen_sk.add(_skk)
                 slip_picks.append(_skp)
             if len(slip_picks) >= 8: break
-        if slip_picks:
+        if slip_picks and not _mds_below_breakeven:
             unit = active_unit()
             payout = unit * PRIZEPICKS_MULTIPLIERS.get(len(slip_picks), 3)
             slip_html = '<div style="background:var(--bc-bg);border:1px solid #22c55e33;border-radius:8px;padding:1.2rem;margin-bottom:1rem;">'
