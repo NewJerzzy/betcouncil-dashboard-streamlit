@@ -4278,12 +4278,20 @@ def _ev_parse_odds(raw):
     return raw or None, None
 
 def compute_tier_stats(history):
+    TIER_STATS_MIN_N = 15  # matches the real gate compute_calibration_buckets
+                            # already applies for the same reason (placeholder
+                            # probs and small samples produce misleading rates)
     stats = {}
     for bet in history:
         tier = bet.get("tier", "UNKNOWN")
         outcome = bet.get("outcome")
         predicted_prob = bet.get("prob", 0.5)
         if outcome not in ("WIN", "LOSS"):
+            continue
+        if not bet.get("has_real_prob"):
+            # Real fix: skip bets whose "prob" is a placeholder default,
+            # not a genuine model prediction -- same real issue already
+            # confirmed and filtered in compute_calibration_buckets.
             continue
         if tier not in stats:
             stats[tier] = {"outcomes": [], "predicted": []}
@@ -4292,7 +4300,9 @@ def compute_tier_stats(history):
     result = {}
     for tier, data in stats.items():
         n = len(data["outcomes"])
-        if n == 0:
+        if n < TIER_STATS_MIN_N:
+            # Real fix: don't report a tier's hit rate as if it were
+            # trustworthy on a handful of resolved bets.
             continue
         hit_rate = sum(data["outcomes"]) / n
         avg_predicted = sum(data["predicted"]) / n
