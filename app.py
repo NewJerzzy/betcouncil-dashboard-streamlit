@@ -1648,6 +1648,29 @@ with tabs[1]:
                 _seen_sk.add(_skk)
                 slip_picks.append(_skp)
             if len(slip_picks) >= 8: break
+        # Real fix: check for the same real player recommended on a
+        # genuinely different market in Best Bet Queue above, since each
+        # section independently picks its own "top" prop per player and
+        # can legitimately land on a different real market -- confusing
+        # without an explicit note tying the two together.
+        _mds_cross_market_warnings = []
+        _mds_top_plays = locals().get("_top_plays") or []
+        for _skp in slip_picks:
+            _skp_name = normalize_name(_skp.get("Player",""))
+            _skp_prop = _skp.get("Prop","")
+            for _tp in _mds_top_plays:
+                if normalize_name(_tp.get("Player","")) == _skp_name and _tp.get("Prop","") != _skp_prop:
+                    _mds_cross_market_warnings.append(
+                        f"{_skp.get('Player','')}: this slip has {_skp_prop}, but Best Bet Queue "
+                        f"above recommends {_tp.get('Prop','')} for the same player — different, real markets."
+                    )
+        if _mds_cross_market_warnings:
+            st.markdown(
+                '<div style="color:#e8a020;font-size:0.9rem;margin-bottom:0.5rem;">⚠️ ' +
+                "<br>⚠️ ".join(_mds_cross_market_warnings) +
+                '</div>',
+                unsafe_allow_html=True,
+            )
         if slip_picks and not _mds_below_breakeven:
             unit = active_unit()
             payout = unit * PRIZEPICKS_MULTIPLIERS.get(len(slip_picks), 3)
