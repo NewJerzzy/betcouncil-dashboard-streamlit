@@ -7990,7 +7990,14 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 _mu_h = locals().get("_mu_home")
                 _mu_a = locals().get("_mu_away")
                 _used_skellam = False
-                if sport in ("MLB", "NHL", "Soccer") and _mu_h and _mu_a:
+                # Real fix: a near-zero total_edge (projection ≈ market) is
+                # not a real directional signal -- the old strict `> 0` check
+                # would still arbitrarily pick a side from noise-level sign,
+                # then evaluate Skellam for only that side, which could
+                # produce a real-looking edge for a side that was never
+                # genuinely justified. Skip Skellam side-selection entirely
+                # when there's no real gap to begin with.
+                if sport in ("MLB", "NHL", "Soccer") and _mu_h and _mu_a and abs(total_edge) >= 0.15:
                     try:
                         # Always evaluate the SAME side that total_edge (and
                         # therefore the downstream side="OVER" if total_edge>0
@@ -9642,8 +9649,27 @@ def compute_alt_line_ev(player_name, stat_name, avg, std_dev, sport, bankroll):
         })
     if not results:
         return None, []
+    # Real fix: flag non-monotonic or identical-probability alt lines,
+    # which happens when compute_fair_prob's [0.10, 0.90] clamp saturates
+    # for multiple different lines on the same player+stat (confirmed real
+    # bug, not just a hypothetical -- different thresholds must have
+    # different real probabilities; identical values across distinct lines
+    # means the clamp flattened them, not that they're genuinely equal).
+    _by_line = sorted(results, key=lambda x: x["line"])
+    for i in range(1, len(_by_line)):
+        _prev, _cur = _by_line[i - 1], _by_line[i]
+        if _cur["fair_prob"] >= _prev["fair_prob"]:
+            _prev["monotonicity_flag"] = (
+                "Same or higher probability than a lower line — likely clamp "
+                "saturation, not a real edge. Treat as unverified."
+            )
+            _cur["monotonicity_flag"] = _prev["monotonicity_flag"]
+    for r in results:
+        r.setdefault("monotonicity_flag", None)
     results.sort(key=lambda x: x["ev"], reverse=True)
     best = results[0]
+    if best.get("monotonicity_flag"):
+        return None, results
     main_line = next((r for r in results if r["is_main"]), None)
     if main_line:
         ev_improvement = best["ev"] - main_line["ev"]
