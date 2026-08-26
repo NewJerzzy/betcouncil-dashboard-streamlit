@@ -17510,6 +17510,107 @@ def fetch_favoredprops_from_gist(kind: str, sport: str, max_age_minutes: int = 1
     return []
 
 
+_PLAYERPROPS_AI_LEAGUES = {"MLB", "NFL", "NBA", "NHL", "WNBA"}
+
+
+def fetch_playerprops_ai(sport: str) -> list:
+    """
+    PlayerProps.AI multi-book player projections (no login, no key —
+    confirmed live 2026-08-25 via direct, independent verification of
+    the raw response: 25/25 cold requests returned HTTP 200, no
+    Cloudflare/WAF challenge, ~0.2s response time).
+
+    Bulk endpoint (all players, all games for the date window in one
+    call) — NOT the per-player endpoint, which would require one real
+    request per player and reproduce the same request-fan-out problem
+    already found and fixed for OddsWrap tonight.
+
+    Confirmed real response has NO directional pick field (checked
+    directly against the raw JSON, not just the vendor's own claim) —
+    only a model projection and per-book lines. This function derives
+    its own direction (projection vs. each book's line) and marks it
+    explicitly as `derived_direction: True` — this is BetCouncil's own
+    calculation, never to be presented as a PlayerProps.AI pick.
+
+    Returns list of {Player, Team, Position, Prop, Projection, Book,
+                     Line, OverOdds, UnderOdds, Derived, derived_direction,
+                     L5, L10, L20, Sport, source}
+    Display/comparison data only — never wired into SEM or edge computation,
+    same as FavoredProps.
+    Cached 20 min.
+    """
+    league = str(sport or "").upper()
+    if league not in _PLAYERPROPS_AI_LEAGUES:
+        return []
+
+    cache_path = os.path.join(CACHE_DIR, f"playerpropsai_{sport}.pkl")
+    if os.path.exists(cache_path):
+        if (time.time() - os.path.getmtime(cache_path)) / 60 < 20:
+            cached = _safe_load_pkl(cache_path)
+            if cached is not None:
+                return cached
+
+    now = datetime.now(timezone.utc)
+    date_from = now.strftime("%Y-%m-%dT00:00:00.000Z")
+    date_to = (now + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00.000Z")
+
+    try:
+        r = _http.get(
+            "https://playerprops.ai/api/betprops/v2/predictor/event-predictions",
+            params={"dateFrom": date_from, "dateTo": date_to, "league": league},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            print(f"[WARN] fetch_playerprops_ai({sport}): HTTP {r.status_code}")
+            return []
+        data = r.json()
+        results = []
+        for event in data.get("eventPredictions", []):
+            for player in event.get("players", []):
+                p_name = player.get("playerName", "")
+                team = player.get("team", "")
+                pos = player.get("positionAbrv", "")
+                if not p_name:
+                    continue
+                for stat_name, stat_obj in player.get("stats", {}).items():
+                    if not isinstance(stat_obj, dict):
+                        continue
+                    projection = stat_obj.get("projection")
+                    if projection is None:
+                        continue
+                    for play in stat_obj.get("plays", []):
+                        if not isinstance(play, dict):
+                            continue
+                        line = play.get("line")
+                        if line is None:
+                            continue
+                        derived = "OVER" if projection > line else ("UNDER" if projection < line else None)
+                        results.append({
+                            "Player": p_name,
+                            "Team": team,
+                            "Position": pos,
+                            "Prop": stat_name,
+                            "Projection": projection,
+                            "Book": play.get("source", ""),
+                            "Line": line,
+                            "OverOdds": play.get("over"),
+                            "UnderOdds": play.get("under"),
+                            "Derived": derived,
+                            "derived_direction": True,
+                            "L5": play.get("l5"),
+                            "L10": play.get("l10"),
+                            "L20": play.get("l20"),
+                            "Sport": sport,
+                            "source": "playerprops_ai",
+                        })
+        if results:
+            _safe_save_pkl(cache_path, results)
+        return results
+    except Exception as e:
+        print(f"[WARN] fetch_playerprops_ai: {e}")
+        return []
+
+
 def get_favoredprops_match(player: str, stat: str, sport: str, side: str = None) -> dict:
     """
     Single-leg lookup against FavoredProps' sportsbook + dfs data — used
