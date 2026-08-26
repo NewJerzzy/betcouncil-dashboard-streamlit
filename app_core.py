@@ -8006,7 +8006,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                         # recommended.
                         _skellam_side = "OVER" if total_edge > 0 else "UNDER"
                         _skellam_prob = compute_fair_prob_skellam(total_val, _mu_h, _mu_a, _skellam_side)
-                        _raw_edge_pct = max(-0.20, min(0.20, _skellam_prob - 0.524))
+                        _raw_edge_pct = _skellam_prob - 0.524
                         total_edge_pct = _raw_edge_pct if total_edge > 0 else -_raw_edge_pct
                         _used_skellam = True
                     except Exception:
