@@ -56,6 +56,19 @@ try:
 except Exception as e:
     _kalshi_verify = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_kalshi_raw_market = None
+try:
+    import requests as _req_kalshi
+    _rk = _req_kalshi.get(
+        "https://api.elections.kalshi.com/trade-api/v2/markets",
+        params={"status": "open", "limit": 1, "series_ticker": "KXMLBGAME"},
+        headers={"Accept": "application/json"},
+        timeout=10,
+    )
+    _kalshi_raw_market = {"status": _rk.status_code, "body": _rk.text[:2000]}
+except Exception as e:
+    _kalshi_raw_market = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 # Real, additional check: query the real /leagues reference endpoint the
 # 400 error itself pointed to, to get the real, complete, accurate league
 # name list for every sport, not just the one confirmed correction for MLB.
@@ -302,6 +315,7 @@ output = {
     "run_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "sharpapi_key_real_length": _key_len,
     "kalshi_verify": _kalshi_verify,
+    "kalshi_raw_market": _kalshi_raw_market,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
