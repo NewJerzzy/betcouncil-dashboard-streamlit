@@ -65,7 +65,7 @@ try:
         headers={"Accept": "application/json"},
         timeout=10,
     )
-    _kalshi_raw_market = {"status": _rk.status_code, "body": _rk.text[:2000]}
+    _kalshi_raw_market = {"status": _rk.status_code, "body": _rk.text[:4000]}
 except Exception as e:
     _kalshi_raw_market = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
