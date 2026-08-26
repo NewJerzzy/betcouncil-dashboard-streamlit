@@ -111,6 +111,7 @@ except Exception as e:
 # the Replit report + confirmed-slow OddsWrap from earlier this session).
 TARGETS = [
     ("OddsWrap", "fetch_oddswrap_props", ("MLB",), False),
+    ("PlayerProps.AI", "fetch_playerprops_ai", ("MLB",), False),
 
     ("ParlayAPI Props", "fetch_parlayapi_props", ("MLB",), False),
 
