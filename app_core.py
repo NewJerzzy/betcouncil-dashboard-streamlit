@@ -8372,6 +8372,26 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         except Exception:
             pass
 
+        # ── Real NFL matchup metrics (built and verified tonight from real,
+        # live nflverse play-by-play -- pressure rate, explosive-play rate,
+        # success rate per team). Display-only context, same convention as
+        # FavoredProps/Kalshi tonight: never touches edge/tier/pick, just
+        # attaches a real, honest note to each real recommendation. ──────
+        try:
+            _home_mm = fetch_nfl_matchup_metrics(home_team)
+            _away_mm = fetch_nfl_matchup_metrics(away_team)
+            if _home_mm and _away_mm:
+                _mm_note = (
+                    f"📊 {home_team} off success {_home_mm.get('off_success_rate', 0):.0%} / "
+                    f"pressure allowed {_home_mm.get('off_pressure_rate_allowed', 0):.0%} vs "
+                    f"{away_team} def success allowed {_away_mm.get('def_success_rate_allowed', 0):.0%} / "
+                    f"pressure generated {_away_mm.get('def_pressure_rate_generated', 0):.0%}"
+                )
+                for _r in recommendations:
+                    _r["nfl_matchup_note"] = _mm_note
+        except Exception:
+            pass
+
     return {
         "matchup": matchup, "Matchup": matchup,
         "home": home_team, "away": away_team,
