@@ -71,6 +71,17 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_nfl_check = None
+try:
+    _evsharps_nfl_data = fetchers.fetch_ev_api_outliers(sport="nfl")
+    _evsharps_nfl_items = (_evsharps_nfl_data or {}).get("data", [])
+    _evsharps_nfl_check = {
+        "real_item_count": len(_evsharps_nfl_items),
+        "sample_items": _evsharps_nfl_items[:3],
+    }
+except Exception as e:
+    _evsharps_nfl_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _kalshi_raw_market = None
 try:
     import requests as _req_kalshi
@@ -348,6 +359,7 @@ output = {
     "sharpapi_key_real_length": _key_len,
     "kalshi_verify": _kalshi_verify,
     "kalshi_raw_market": _kalshi_raw_market,
+    "evsharps_nfl_check": _evsharps_nfl_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
