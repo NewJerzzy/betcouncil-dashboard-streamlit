@@ -71,6 +71,17 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_new_fns_check = None
+try:
+    _tds_result = fetchers.fetch_ev_nfl_tds()
+    _preseason_result = fetchers.fetch_ev_nfl_preseason()
+    _evsharps_new_fns_check = {
+        "tds_real_item_count": len(_tds_result.get("data", [])) if isinstance(_tds_result, dict) else None,
+        "preseason_real_item_count": len(_preseason_result.get("data", [])) if isinstance(_preseason_result, dict) else None,
+    }
+except Exception as e:
+    _evsharps_new_fns_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_categories_check = {}
 try:
     import requests as _req_evc
@@ -442,6 +453,7 @@ output = {
     "evsharps_nfl_check": _evsharps_nfl_check,
     "evsharps_main_recap_check": _evsharps_main_recap_check,
     "evsharps_categories_check": _evsharps_categories_check,
+    "evsharps_new_fns_check": _evsharps_new_fns_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
