@@ -71,6 +71,51 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_categories_check = {}
+try:
+    import requests as _req_evc
+    _ev_base = "https://api-production-3a3b.up.railway.app/api/"
+    _ev_endpoints_to_try = {
+        "TDs":       ["tds", "td", "nfl_tds"],
+        "Props":     ["nfl", "props"],
+        "Main":      ["main"],
+        "Preseason": ["preseason"],
+        "Futures":   ["futures"],
+        "CFB":       ["cfb"],
+        "CFB Main":  ["cfb_main", "cfbmain"],
+    }
+    for _label, _candidates in _ev_endpoints_to_try.items():
+        _evsharps_categories_check[_label] = []
+        for _ep in _candidates:
+            try:
+                _rc = _req_evc.get(
+                    _ev_base + _ep,
+                    params={"sport": "nfl"} if _label not in ("Futures", "CFB", "CFB Main") else {},
+                    headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/",
+                              "accept-encoding": "gzip, deflate"},
+                    timeout=15,
+                )
+                _cj = None
+                _c_count = None
+                if _rc.status_code == 200:
+                    try:
+                        _cj = _rc.json()
+                        _c_data = _cj.get("data") if isinstance(_cj, dict) else _cj
+                        _c_count = len(_c_data) if isinstance(_c_data, list) else None
+                    except Exception:
+                        pass
+                _evsharps_categories_check[_label].append({
+                    "endpoint_tried": _ep,
+                    "status": _rc.status_code,
+                    "real_item_count": _c_count,
+                    "top_level_keys": list(_cj.keys()) if isinstance(_cj, dict) else None,
+                    "sample": (_c_data[:1] if _c_count else None) if _rc.status_code == 200 and _cj else None,
+                })
+            except Exception as _ee:
+                _evsharps_categories_check[_label].append({"endpoint_tried": _ep, "error": f"{type(_ee).__name__}: {str(_ee)[:200]}"})
+except Exception as e:
+    _evsharps_categories_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_main_recap_check = None
 try:
     import requests as _req_ev
@@ -394,6 +439,7 @@ output = {
     "kalshi_raw_market": _kalshi_raw_market,
     "evsharps_nfl_check": _evsharps_nfl_check,
     "evsharps_main_recap_check": _evsharps_main_recap_check,
+    "evsharps_categories_check": _evsharps_categories_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
