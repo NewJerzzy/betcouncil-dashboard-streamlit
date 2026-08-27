@@ -1424,6 +1424,7 @@ def render_signal_chart(prop, sport="NBA"):
     Render a plain-language signal breakdown chart.
     Shows bettors WHY a pick is rated the way it is.
     """
+    _real_side = str(prop.get("Side", "OVER")).upper()
     signals = {
         "base": prop.get("SignalBase", 0),
         "defense": prop.get("SignalDefense", 0),
@@ -1492,6 +1493,10 @@ def render_signal_chart(prop, sport="NBA"):
         bar_pct = min(100, int(abs(val) / max_val * 100))
         bar_color = "#22c55e" if val > 0 else "#e04040"
         direction_word = "Favors OVER" if val > 0 else "Favors UNDER"
+        _row_side = "OVER" if val > 0 else "UNDER"
+        _row_conflicts = _row_side != _real_side
+        if _row_conflicts:
+            direction_word += " ⚠️ (conflicts with actual pick)"
         strength = strength_label(val)
         rel_color = "#22c55e" if reliability >= 0.75 else "#e8a020" if reliability >= 0.60 else "#6a7a8a"
         rel_label = "High accuracy" if reliability >= 0.75 else "Moderate accuracy" if reliability >= 0.60 else "Lower accuracy"
@@ -1531,7 +1536,6 @@ def render_signal_chart(prop, sport="NBA"):
     strong_count = sum(1 for v in signals.values() if abs(v) >= 0.06)
     moderate_count = sum(1 for v in signals.values() if 0.02 <= abs(v) < 0.06)
 
-    _real_side = str(prop.get("Side", "OVER")).upper()
     _signal_conflicts_real_side = (firing > 0) and (direction != _real_side)
 
     if firing == 0:
