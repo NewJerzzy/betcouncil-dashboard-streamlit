@@ -1632,6 +1632,38 @@ def fetch_ev_nfl_tds():
         return {}
 
 
+def fetch_ev_nfl_backfields():
+    """
+    Fetch the EVSharps /api/backfields endpoint — real NFL backfield/
+    receiver usage data: snap share, red-zone share, target share, plus
+    the prior week's same metrics for trend comparison. Confirmed real,
+    live 2026-08-27: 158 real items, real players (e.g. Michael Carter,
+    ARI, 45% snap / 35% RZ / 45% target, vs 53%/0%/43% the prior week).
+
+    This fills a real, confirmed gap: BetCouncil previously had no real
+    source for NFL snap/red-zone/target share at all (the existing
+    store_nfl_usage() framework was built but never had a real feed).
+    Takes no sport param -- it's NFL-specific by URL already, same as
+    /api/nfl_futures.
+
+    Returns {"week": ..., "data": [...]} or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/backfields"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_nfl_futures():
     """
     Fetch the EVSharps /api/nfl_futures endpoint — real NFL season futures
