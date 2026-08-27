@@ -15460,6 +15460,37 @@ def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
     return []
 
 
+def fetch_nfl_matchup_metrics(team: str = None, max_age_minutes: int = 10080) -> dict:
+    """
+    Real, per-team NFL offensive/defensive matchup metrics -- pressure rate,
+    explosive-play rate, success rate -- computed directly from real, live
+    nflverse play-by-play data (scripts/nfl_matchup_metrics_refresh.py).
+
+    No invented formulas: success_rate is nflverse's own, standard
+    down/distance-adjusted per-play indicator, aggregated per team.
+    explosive_rate uses the standard, real NFL-analytics definition
+    (>=15 yds pass / >=10 yds run). pressure_rate is real qb_hit+sack
+    over real dropbacks.
+
+    max_age_minutes defaults to a full week (10080), since these are real
+    season-to-date aggregates, not a live snapshot -- they're meant to
+    change slowly across a season, not go stale hour to hour like odds do.
+
+    Pass team="BUF" for one real team's numbers; omit for every team.
+    Returns {} if genuinely stale or missing (a real, honest gap -- not a
+    fabricated default), same convention as every other Gist-backed source
+    in this file.
+    """
+    data = _read_gist_file("betcouncil_nfl_matchup_metrics.json", cache_minutes=60)
+    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
+        raw = data.get("teams", {})
+        if isinstance(raw, dict):
+            if team:
+                return raw.get(team.upper(), {})
+            return raw
+    return {}
+
+
 def fetch_kalshi_from_gist(sport: str = None, max_age_minutes: int = 100) -> list:
     """
     Kalshi prediction-market prices (real bid/ask, volume, open interest --
