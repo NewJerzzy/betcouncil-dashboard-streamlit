@@ -13459,6 +13459,42 @@ with tabs[2]:
             else:
                 st.caption("No real data yet — the daily harvester hasn't run or completed its first real cycle.")
 
+        with st.expander("🏈 NFL Touchdown Scorer Props (real, EVSharps)", expanded=False):
+            st.caption(
+                "Real first/anytime-touchdown-scorer props with real book odds and "
+                "opponent defensive-matchup context. Display-only, not wired into "
+                "edge/tier math."
+            )
+            _nfl_tds_raw = fetch_ev_nfl_tds()
+            _nfl_tds_items = (_nfl_tds_raw or {}).get("data", [])
+            if _nfl_tds_items:
+                _nfl_tds_rows = []
+                for _t in _nfl_tds_items:
+                    _book_odds = _t.get("bookOdds", {}) or {}
+                    _best_book, _best_price = None, None
+                    for _bk, _pr in _book_odds.items():
+                        try:
+                            _pr_num = float(_pr)
+                        except (TypeError, ValueError):
+                            continue
+                        if _best_price is None or _pr_num < _best_price:
+                            _best_book, _best_price = _bk, _pr_num
+                    _opp_rank = _t.get("oppRank", {}) or {}
+                    _opp_td_rank = _opp_rank.get("opp-td", {}).get("rank")
+                    _nfl_tds_rows.append({
+                        "Player": str(_t.get("player", "")).title(),
+                        "Pos": _t.get("pos", ""),
+                        "Game": str(_t.get("game", "")).upper(),
+                        "Prop": str(_t.get("prop", "")).upper(),
+                        "Best Price": f"{_best_book}: {_best_price:+.0f}" if _best_book else "—",
+                        "# Books": len(_book_odds),
+                        "Opp TD Allowed Rank": _opp_td_rank if _opp_td_rank is not None else "—",
+                    })
+                st.dataframe(pd.DataFrame(_nfl_tds_rows), use_container_width=True, hide_index=True, height=400)
+                st.caption(f"{len(_nfl_tds_items)} real props. Hit-rate history omitted — not yet populated this early in the season.")
+            else:
+                st.caption("No real data yet — check back closer to game day.")
+
     _pred_gl_view = st.radio(
         "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
         help="By Game groups every source's pick together per matchup, so you can see at a glance whether sources agree. By Source groups each source's own picks together, one card per source."
