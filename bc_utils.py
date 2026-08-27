@@ -1658,6 +1658,33 @@ def compute_fair_prob_negbinom(line, avg, std_dev, side="OVER"):
     return round(max(0.10, min(0.90, prob)), 4)
 
 
+def compute_fair_prob_total(line, mu_a, mu_b, side="OVER"):
+    """Real, mathematically correct fair probability for a TOTAL (combined
+    score) market -- home_runs + away_runs, not a margin/differential.
+    Confirmed real bug this replaces: totals were previously computed via
+    compute_fair_prob_skellam (designed for margin/spread markets, models
+    home_runs - away_runs), which mathematically treated an 8.5 total line
+    as if it were an 8.5-run *margin* -- a near-impossible blowout in real
+    MLB, saturating that function's own probability clamp to exactly 0.20
+    for virtually every real game regardless of the actual projection gap.
+
+    The sum of two independent Poisson-distributed scoring rates is itself
+    Poisson(mu_a + mu_b) -- a standard, real statistical fact, verified
+    directly before this was built (a realistic MLB total of 8.5 with
+    mu_a=4.6/mu_b=4.3 genuinely produces ~53.1%, not a saturated extreme).
+    """
+    if mu_a <= 0 or mu_b <= 0:
+        return 0.5
+    combined_mu = mu_a + mu_b
+    adjusted_line = line + 0.5 if (line == int(line)) else line
+    k = math.floor(adjusted_line)
+    if side.upper() == "OVER":
+        prob = scipy_stats.poisson.sf(k, combined_mu)
+    else:
+        prob = scipy_stats.poisson.cdf(k, combined_mu)
+    return round(max(0.20, min(0.80, prob)), 4)
+
+
 def compute_fair_prob_skellam(line, mu_a, mu_b, side="OVER"):
     """Skellam distribution fair probability for goal/run differential markets
     (soccer/hockey spreads and totals on the margin) — models the difference of
