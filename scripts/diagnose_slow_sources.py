@@ -71,6 +71,29 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_main_recap_check = None
+try:
+    import requests as _req_ev
+    _rmr = _req_ev.get(
+        "https://api-production-3a3b.up.railway.app/api/main_recap",
+        params={"sport": "nfl", "boost": "0", "devig": "", "required": "", "weight": "1",
+                "game": "", "book": "", "prop": "", "ou": "ou", "min": "", "max": ""},
+        headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/main_recap",
+                  "accept-encoding": "gzip, deflate"},
+        timeout=15,
+    )
+    _mr_json = _rmr.json() if _rmr.status_code == 200 else None
+    _mr_data = (_mr_json or {}).get("data", []) if isinstance(_mr_json, dict) else []
+    _evsharps_main_recap_check = {
+        "status": _rmr.status_code,
+        "real_item_count": len(_mr_data) if isinstance(_mr_data, list) else None,
+        "top_level_keys": list(_mr_json.keys()) if isinstance(_mr_json, dict) else None,
+        "sample_items": _mr_data[:3] if isinstance(_mr_data, list) else None,
+        "body_preview": _rmr.text[:500] if _rmr.status_code != 200 else None,
+    }
+except Exception as e:
+    _evsharps_main_recap_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_nfl_check = None
 try:
     _evsharps_nfl_data = fetchers.fetch_ev_api_outliers(sport="nfl")
@@ -360,6 +383,7 @@ output = {
     "kalshi_verify": _kalshi_verify,
     "kalshi_raw_market": _kalshi_raw_market,
     "evsharps_nfl_check": _evsharps_nfl_check,
+    "evsharps_main_recap_check": _evsharps_main_recap_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
