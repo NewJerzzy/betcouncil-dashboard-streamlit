@@ -13495,6 +13495,35 @@ with tabs[2]:
             else:
                 st.caption("No real data yet — check back closer to game day.")
 
+        with st.expander("🏈 NFL Backfield/Receiver Usage (real, EVSharps)", expanded=False):
+            st.caption(
+                "Real snap share, red-zone share, and target share, with the prior "
+                "week's values shown for trend comparison. Display-only, not wired "
+                "into edge/tier math."
+            )
+            _nfl_bf_raw = fetch_ev_nfl_backfields()
+            _nfl_bf_items = (_nfl_bf_raw or {}).get("data", [])
+            if _nfl_bf_items:
+                _nfl_bf_rows = []
+                for _b in _nfl_bf_items:
+                    _nfl_bf_rows.append({
+                        "Player": str(_b.get("player", "")).title(),
+                        "Team": str(_b.get("team", "")).upper(),
+                        "Opp": str(_b.get("opp", "")).upper(),
+                        "Fantasy Pts": _b.get("pts", "—"),
+                        "Snap%": _b.get("snap", "—"),
+                        "Prior Snap%": _b.get("lastSnap", "—"),
+                        "RZ%": _b.get("rz", "—"),
+                        "Prior RZ%": _b.get("lastRz", "—"),
+                        "Target%": _b.get("tgt", "—"),
+                        "Prior Target%": _b.get("lastTgt", "—"),
+                    })
+                st.dataframe(pd.DataFrame(_nfl_bf_rows), use_container_width=True, hide_index=True, height=400)
+                _nfl_bf_week = (_nfl_bf_raw or {}).get("week", "")
+                st.caption(f"{len(_nfl_bf_items)} real players" + (f" — week {_nfl_bf_week}" if _nfl_bf_week else "") + ".")
+            else:
+                st.caption("No real data yet — check back closer to game day.")
+
     _pred_gl_view = st.radio(
         "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
         help="By Game groups every source's pick together per matchup, so you can see at a glance whether sources agree. By Source groups each source's own picks together, one card per source."
