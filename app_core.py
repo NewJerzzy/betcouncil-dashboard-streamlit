@@ -13959,6 +13959,7 @@ def load_sport_data(sport):
     def _pf_ev_recap():       return fetch_ev_recap() if sport in ("MLB",) else {}
     def _pf_ev_mlb():         return fetch_ev_mlb() if sport in ("MLB",) else {}
     def _pf_ev_trends():      return fetch_ev_trends() if sport in ("MLB",) else {}
+    def _pf_ev_nfl_tds():     return fetch_ev_nfl_tds() if sport in ("NFL",) else {}
     _parlayapi_ev_key = f'parlayapi_ev_{sport}'
     def _pf_parlayapi_ev():
         if _parlayapi_ev_key in st.session_state:
@@ -13991,7 +13992,7 @@ def load_sport_data(sport):
         _pf_mlb_lineups,
         _pf_pinnacle_lines,
         _pf_kalshi, _pf_polymarket, _pf_covers, _pf_ev_api, _pf_ev_wnba, _pf_ev_outliers, _pf_ev_feed, _pf_ev_bvp, _pf_ev_preview, _pf_ev_strikeouts, _pf_ev_movement,
-        _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends,
+        _pf_ev_stats_hr, _pf_ev_stats_k, _pf_ev_barrels, _pf_ev_recap, _pf_ev_mlb, _pf_ev_trends, _pf_ev_nfl_tds,
         _pf_parlayapi_ev, _pf_sharpapi_props,
         _pf_evbets2, _pf_vsin_splits2, _pf_baseballpress2, _pf_weather2, _pf_bovada_lines2,
     ]
@@ -14013,7 +14014,7 @@ def load_sport_data(sport):
      mlb_lineups_raw,
      pinnacle_lines_raw,
      kalshi_raw, polymarket_raw, covers_raw, ev_api_raw, ev_wnba_raw, ev_outliers_raw, ev_feed_raw, ev_bvp_raw, ev_preview_raw, ev_strikeouts_raw, ev_movement_raw,
-     ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw,
+     ev_stats_hr_raw, ev_stats_k_raw, ev_barrels_raw, ev_recap_raw, ev_mlb_raw, ev_trends_raw, ev_nfl_tds_raw,
      parlayapi_ev_raw, sharpapi_props_raw,
      evbets2_raw, vsin_splits2_raw, baseballpress2_raw, weather2_raw, bovada_lines2_raw) = _results
 
