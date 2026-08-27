@@ -8068,7 +8068,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     _pinn_tot = {"prob": _pinn_tot_prob, "confirms": _pinn_tot_conf, "note": _pinn_tot_note} if _pinn_tot_prob is not None else None
                     _vsin_tot_prob, _vsin_tot_conf, _vsin_tot_note = vsin_sharp_signal(home_team, away_team, "total", sport, side)
                     _vsin_tot = {"prob": _vsin_tot_prob, "confirms": _vsin_tot_conf, "note": _vsin_tot_note} if _vsin_tot_prob is not None else None
-                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public"), "pinnacle_sharp": _pinn_tot, "vsin_sharp": _vsin_tot})
+                    recommendations.append({"type": "TOTAL", "pick": f"{side} {total_val}", "edge": total_edge_pct, "edge_pct": f"{total_edge_pct:.1%}", "tier": tier, "fair_total": round(fair_total, 1), "market_total": total_val, "line_verify_note": "⚠️ Confirm this total at your actual sportsbook before betting — this board's line may not reflect the real, current market.", "divergence": round(total_edge, 1), "note": f"Model projects {fair_total:.1f} vs market {total_val} — {side} value", "market_agreement": _gl_consensus.get("agreement", "NO_DATA"), "market_agreement_note": _gl_consensus.get("agreement_note", ""), "n_books": _gl_consensus.get("total", {}).get("n_books", 0), "public_pct_home": _gl_consensus.get("public_pct_home"), "public_pct_away": _gl_consensus.get("public_pct_away"), "sharp_vs_public": _gl_consensus.get("sharp_vs_public"), "pinnacle_sharp": _pinn_tot, "vsin_sharp": _vsin_tot})
                     if abs(total_edge_pct) > best_edge:
                         best_edge = abs(total_edge_pct)
                         best_bet = recommendations[-1]
@@ -16756,6 +16756,7 @@ def load_sport_data(sport):
                         p["LineupInjury"]    = _fl_flags.get("injury_status","")
                         p["LineupConfirmed"] = _fl_flags.get("is_starting", False)
                         p["IsQuestionable"]  = _fl_flags.get("is_questionable", False)
+                        p["LineupStatusNote"] = "⚠️ Lineup/starter status shown may not be real-time — confirm before betting."
                 else:
                     # Outside 4hr window — neutral, no adjustment
                     p["LineupStatus"]   = "⏳ Lineups not yet confirmed (>4h to game)"
@@ -16810,6 +16811,24 @@ def load_sport_data(sport):
                         )
                     except Exception:
                         _pricer_info = None
+
+        # Real, direct fix for a confirmed gap: get_tier has no awareness of
+        # signal conflicts, so a pick could show SOVEREIGN/ELITE even while
+        # its own signals genuinely disagree with the final side. Computes
+        # the same signal-based direction already used in render_signal_chart,
+        # and downgrades tier on a genuine conflict, matching the same real,
+        # established pattern used above for injury suppression.
+        _tc_net = (best_signals.get("base", 0) + best_signals.get("defense", 0) +
+                   best_signals.get("location", 0) + best_signals.get("usage", 0) +
+                   best_signals.get("rest", 0) + best_signals.get("pace", 0) + blowout_adj)
+        _tc_firing = sum(1 for v in (best_signals.get("base", 0), best_signals.get("defense", 0),
+                          best_signals.get("location", 0), best_signals.get("usage", 0),
+                          best_signals.get("rest", 0), best_signals.get("pace", 0), blowout_adj)
+                          if abs(v) > 0.001)
+        if _tc_firing > 0:
+            _tc_direction = "OVER" if _tc_net > 0 else "UNDER"
+            if _tc_direction != str(best_side).upper() and tier not in ("PASS",):
+                tier = "PASS"
 
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
@@ -17774,6 +17793,32 @@ def load_sport_data(sport):
 
     _bc_track("enrichment_post_loop", _time_mod.perf_counter() - _post_loop_t0,
               {"props": len(enriched)})
+
+    # Real fix: tag same-player correlated props on the full, undeduped
+    # board itself. compute_parlay_correlation already knows this exact
+    # case (Strikeouts/Outs Recorded is already in its known-correlation
+    # list, plus the generic same-player rule) -- it just never ran here,
+    # only within slip-building. Confirmed real report complaint: two
+    # props for the same player, driven by the same underlying mechanism,
+    # displayed as independent edges with no visible link.
+    try:
+        from collections import defaultdict
+        _by_player = defaultdict(list)
+        for _ep in enriched:
+            _pn = normalize_name(_ep.get("Player", ""))
+            if _pn:
+                _by_player[_pn].append(_ep)
+        for _pn, _plist in _by_player.items():
+            if len(_plist) < 2:
+                continue
+            _corr_score, _corr_pairs = compute_parlay_correlation(_plist)
+            if _corr_score > 0:
+                _props_str = ", ".join(f"{p.get('Prop','')}" for p in _plist)
+                for _ep in _plist:
+                    _ep["CorrelatedProps"] = f"⚠️ Correlated with this player's other prop(s) on the board: {_props_str} — not independent edges."
+    except Exception:
+        pass
+
     return enriched, games, skipped_def, skipped_edge, home_teams, away_teams
 
 # =========================
