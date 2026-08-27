@@ -1632,6 +1632,32 @@ def fetch_ev_nfl_tds():
         return {}
 
 
+def fetch_ev_nfl_futures():
+    """
+    Fetch the EVSharps /api/nfl_futures endpoint — real NFL season futures
+    (Super Bowl, division, MVP-style team/player futures). Confirmed real,
+    live 2026-08-27: 1,632 real items, e.g. real Super Bowl odds (LAR +500
+    across fd/kambi/pn). Note: this endpoint takes no sport param -- it's
+    already NFL-specific by URL, unlike /api/tds and /api/preseason which
+    both require sport=nfl.
+    Returns {"data": [...], "props": [...], "updated": "..."} or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/nfl_futures"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_nfl_preseason():
     """
     Fetch the EVSharps /api/preseason endpoint — real NFL preseason
