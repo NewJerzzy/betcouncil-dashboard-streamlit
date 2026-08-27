@@ -71,6 +71,27 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_nfl_futures_check = None
+try:
+    import requests as _req_evf
+    _rf = _req_evf.get(
+        "https://api-production-3a3b.up.railway.app/api/nfl_futures",
+        headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/nfl_futures",
+                  "accept-encoding": "gzip, deflate"},
+        timeout=15,
+    )
+    _fj = _rf.json() if _rf.status_code == 200 else None
+    _f_data = (_fj or {}).get("data") if isinstance(_fj, dict) else None
+    _evsharps_nfl_futures_check = {
+        "status": _rf.status_code,
+        "real_item_count": len(_f_data) if isinstance(_f_data, list) else None,
+        "top_level_keys": list(_fj.keys()) if isinstance(_fj, dict) else None,
+        "sample": _f_data[:2] if isinstance(_f_data, list) and _f_data else None,
+        "body_preview": _rf.text[:300] if _rf.status_code != 200 else None,
+    }
+except Exception as e:
+    _evsharps_nfl_futures_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_new_fns_check = None
 try:
     _tds_result = fetchers.fetch_ev_nfl_tds()
@@ -454,6 +475,7 @@ output = {
     "evsharps_main_recap_check": _evsharps_main_recap_check,
     "evsharps_categories_check": _evsharps_categories_check,
     "evsharps_new_fns_check": _evsharps_new_fns_check,
+    "evsharps_nfl_futures_check": _evsharps_nfl_futures_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
