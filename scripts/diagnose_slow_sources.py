@@ -71,6 +71,44 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_stats_and_live_check = {}
+try:
+    import requests as _req_evs
+    _ev_base3 = "https://api-production-3a3b.up.railway.app/api/"
+    _stat_props_to_try = ["passyds", "rushyds", "recyds", "rec", "pass_yds", "rush_yds",
+                           "rec_yds", "passing_yards", "rushing_yards", "receiving_yards",
+                           "anytime_td", "td", "carries", "targets"]
+    for _prop in _stat_props_to_try:
+        try:
+            _rs = _req_evs.get(
+                _ev_base3 + "stats", params={"prop": _prop, "sport": "nfl"},
+                headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/",
+                          "accept-encoding": "gzip, deflate"},
+                timeout=12,
+            )
+            _sj = _rs.json() if _rs.status_code == 200 else None
+            _s_data = (_sj or {}).get("data") if isinstance(_sj, dict) else _sj
+            _s_count = len(_s_data) if isinstance(_s_data, list) else None
+            _evsharps_stats_and_live_check[f"stats/{_prop}"] = {
+                "status": _rs.status_code, "real_item_count": _s_count,
+                "sample_player": (_s_data[0].get("player_name") or _s_data[0].get("player")) if _s_count and isinstance(_s_data[0], dict) else None,
+            }
+        except Exception as _ee:
+            _evsharps_stats_and_live_check[f"stats/{_prop}"] = {"error": str(_ee)[:150]}
+
+    # Real, direct re-check of live right now, for the user's live question.
+    try:
+        _rl = _req_evs.get(_ev_base3 + "live", params={"sport": "nfl"}, timeout=12,
+                            headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/"})
+        _lj = _rl.json() if _rl.status_code == 200 else None
+        _evsharps_stats_and_live_check["live_recheck"] = {
+            "status": _rl.status_code, "body": _rl.text[:200], "parsed_keys": list(_lj.keys()) if isinstance(_lj, dict) else None,
+        }
+    except Exception as _ee:
+        _evsharps_stats_and_live_check["live_recheck"] = {"error": str(_ee)[:150]}
+except Exception as e:
+    _evsharps_stats_and_live_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_new_candidates_check = {}
 try:
     import requests as _req_evn
@@ -521,6 +559,7 @@ output = {
     "evsharps_nfl_futures_check": _evsharps_nfl_futures_check,
     "evsharps_tds_sample": _evsharps_tds_sample,
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
+    "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
