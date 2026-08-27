@@ -13435,6 +13435,30 @@ with tabs[2]:
         "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",
         "PlayerProps.AI": "Independent AI projection vs. real book lines — direction is BetCouncil-derived, not a provider pick.",
     }
+    if _pred_sport_match("NFL"):
+        with st.expander("🏈 NFL Matchup Metrics (real, from live play-by-play)", expanded=False):
+            st.caption(
+                "Real, per-team pressure rate, explosive-play rate, and success rate — "
+                "computed directly from live nflverse play-by-play data. Display-only "
+                "context, not wired into edge/tier math."
+            )
+            _nfl_mm_all = fetch_nfl_matchup_metrics()
+            if _nfl_mm_all:
+                _nfl_mm_rows = []
+                for _team, _m in sorted(_nfl_mm_all.items()):
+                    _nfl_mm_rows.append({
+                        "Team": _team,
+                        "Off Success%": f"{_m.get('off_success_rate', 0):.0%}" if _m.get("off_success_rate") is not None else "—",
+                        "Off Explosive%": f"{_m.get('off_explosive_rate', 0):.0%}" if _m.get("off_explosive_rate") is not None else "—",
+                        "Off Pressure Allowed%": f"{_m.get('off_pressure_rate_allowed', 0):.0%}" if _m.get("off_pressure_rate_allowed") is not None else "—",
+                        "Def Success Allowed%": f"{_m.get('def_success_rate_allowed', 0):.0%}" if _m.get("def_success_rate_allowed") is not None else "—",
+                        "Def Pressure Generated%": f"{_m.get('def_pressure_rate_generated', 0):.0%}" if _m.get("def_pressure_rate_generated") is not None else "—",
+                        "Real Plays": _m.get("real_off_plays", 0),
+                    })
+                st.dataframe(pd.DataFrame(_nfl_mm_rows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No real data yet — the daily harvester hasn't run or completed its first real cycle.")
+
     _pred_gl_view = st.radio(
         "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
         help="By Game groups every source's pick together per matchup, so you can see at a glance whether sources agree. By Source groups each source's own picks together, one card per source."
