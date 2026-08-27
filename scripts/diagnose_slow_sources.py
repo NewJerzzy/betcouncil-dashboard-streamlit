@@ -71,6 +71,37 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_evsharps_new_candidates_check = {}
+try:
+    import requests as _req_evn
+    _ev_base2 = "https://api-production-3a3b.up.railway.app/api/"
+    _new_candidates = {
+        "preview (sport=nfl)":      ("preview", {"sport": "nfl"}),
+        "preview (sport=nfl,k)":    ("preview", {"sport": "nfl", "k": "true"}),
+        "backfields":               ("backfields", {}),
+        "live (sport=nfl)":         ("live", {"sport": "nfl"}),
+    }
+    for _label, (_ep, _params) in _new_candidates.items():
+        try:
+            _rn = _req_evn.get(
+                _ev_base2 + _ep, params=_params,
+                headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/",
+                          "accept-encoding": "gzip, deflate"},
+                timeout=15,
+            )
+            _nj = _rn.json() if _rn.status_code == 200 else None
+            _n_data = (_nj or {}).get("data") if isinstance(_nj, dict) else _nj
+            _evsharps_new_candidates_check[_label] = {
+                "status": _rn.status_code,
+                "real_item_count": len(_n_data) if isinstance(_n_data, list) else None,
+                "top_level_keys": list(_nj.keys()) if isinstance(_nj, dict) else None,
+                "sample": (_n_data[:1] if isinstance(_n_data, list) and _n_data else None),
+            }
+        except Exception as _ee:
+            _evsharps_new_candidates_check[_label] = {"error": f"{type(_ee).__name__}: {str(_ee)[:200]}"}
+except Exception as e:
+    _evsharps_new_candidates_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_tds_sample = None
 try:
     _tds_raw = fetchers.fetch_ev_nfl_tds()
@@ -489,6 +520,7 @@ output = {
     "evsharps_new_fns_check": _evsharps_new_fns_check,
     "evsharps_nfl_futures_check": _evsharps_nfl_futures_check,
     "evsharps_tds_sample": _evsharps_tds_sample,
+    "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
