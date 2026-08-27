@@ -84,11 +84,21 @@ try:
     )
     _mr_json = _rmr.json() if _rmr.status_code == 200 else None
     _mr_data = (_mr_json or {}).get("data", []) if isinstance(_mr_json, dict) else []
+    _mr_games = set()
+    for _it in (_mr_data if isinstance(_mr_data, list) else []):
+        if isinstance(_it, dict) and _it.get("game"):
+            _mr_games.add(_it["game"])
+    _nfl_team_hints = {"ne", "sea", "buf", "kc", "dal", "sf", "phi", "gb", "mia", "nyj", "nyg", "pit", "bal", "cin"}
+    _mlb_team_hints = {"col", "wsh", "nyy", "bos", "tb", "hou", "lad", "sd", "atl", "chc", "mil", "sea"}
+    _looks_nfl = sum(1 for g in _mr_games if any(t in g.split(" @ ") for t in _nfl_team_hints))
+    _looks_mlb = sum(1 for g in _mr_games if any(t in g.split(" @ ") for t in _mlb_team_hints) and "cin" not in g)
     _evsharps_main_recap_check = {
         "status": _rmr.status_code,
         "real_item_count": len(_mr_data) if isinstance(_mr_data, list) else None,
-        "top_level_keys": list(_mr_json.keys()) if isinstance(_mr_json, dict) else None,
-        "sample_items": _mr_data[:3] if isinstance(_mr_data, list) else None,
+        "unique_real_games": len(_mr_games),
+        "sample_real_games": list(_mr_games)[:15],
+        "games_matching_nfl_hint": _looks_nfl,
+        "games_matching_mlb_hint": _looks_mlb,
         "body_preview": _rmr.text[:500] if _rmr.status_code != 200 else None,
     }
 except Exception as e:
