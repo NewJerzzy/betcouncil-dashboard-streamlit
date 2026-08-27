@@ -2689,11 +2689,14 @@ def fetch_weather_for_game(city, is_outdoor=True, team_abbrev=None):
     # data is stale, or the team can't be matched.
     if team_abbrev:
         try:
-            _ls_data, _ls_src = fetch_weather_from_gist("MLB")
+            _ls_data, _ls_src, _ls_captured_at = fetch_weather_from_gist("MLB")
             if _ls_data:
                 _ls_wx = get_linestar_game_weather(_ls_data, team_abbrev)
                 if _ls_wx:
                     weather = _ls_wx
+                    if _ls_captured_at:
+                        weather["fetched_at"] = _ls_captured_at
+                    weather.setdefault("source", "linestar")
         except Exception:
             pass
     # Tier 1: wttr.in (only if LineStar didn't already supply real per-game weather)
@@ -18796,8 +18799,8 @@ def fetch_oddsportal_from_gist(sport):
 
 def fetch_weather_from_gist(sport):
     data=_read_gist_file(f"betcouncil_weather_{sport}.json",5)
-    if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester"
-    return {}, "unavailable"
+    if data and _is_fresh(data,65): return data.get("data",{}), "browser_harvester", data.get("captured_at")
+    return {}, "unavailable", None
 
 def fetch_linestar_props_from_gist(sport="MLB"):
     """Cross-book prop odds snapshot from LineStar's public GetPropBets endpoint.
