@@ -1607,6 +1607,56 @@ def fetch_ev_api_wnba():
         return {}
 
 
+def fetch_ev_nfl_tds():
+    """
+    Fetch the EVSharps /api/tds endpoint — NFL first-touchdown-scorer props.
+    Confirmed real, live 2026-08-27: 463 real items, real player names,
+    real book odds across 6 real books (b365/dk/fd/br/kambi/nv), real
+    opponent-defense matchup context (opp-td rank, opp-rz-att, etc).
+    Returns {"data": [...], "games": [...], "props": [...], "times": {...}}
+    or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/tds"
+    try:
+        r = _http.get(url, params={"sport": "nfl"}, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
+def fetch_ev_nfl_preseason():
+    """
+    Fetch the EVSharps /api/preseason endpoint — real NFL preseason
+    moneyline/spread/total lines. Confirmed real, live 2026-08-27:
+    1,784 real items across 17 real books (circa/fd/nv/re/dk/kambi/px/
+    mgm/br/fn/bol/cz/espn/bv/pn/fl/hr), including real liquidity data.
+    Returns {"data": [...], "games": [...], "props": [...], "updated": "..."}
+    or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/preseason"
+    try:
+        r = _http.get(url, params={"sport": "nfl"}, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_movement(sport="mlb"):
     """
     Fetch line movement data from EVSharps /api/movement endpoint.
