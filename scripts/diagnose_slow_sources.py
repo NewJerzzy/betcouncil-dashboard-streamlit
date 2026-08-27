@@ -56,6 +56,21 @@ try:
 except Exception as e:
     _kalshi_verify = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_nflverse_check = None
+try:
+    import requests as _req_nflverse
+    _nv_url = "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2025.csv.gz"
+    _rnv = _req_nflverse.get(_nv_url, timeout=20, stream=True)
+    _first_chunk = next(_rnv.iter_content(chunk_size=2000), b"")
+    _nflverse_check = {
+        "url": _nv_url,
+        "status": _rnv.status_code,
+        "content_length_header": _rnv.headers.get("Content-Length"),
+        "first_bytes_hex": _first_chunk[:20].hex(),
+    }
+except Exception as e:
+    _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _kalshi_raw_market = None
 try:
     import requests as _req_kalshi
@@ -333,6 +348,7 @@ output = {
     "sharpapi_key_real_length": _key_len,
     "kalshi_verify": _kalshi_verify,
     "kalshi_raw_market": _kalshi_raw_market,
+    "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
     "sharpapi_props_raw_response": _props_raw_result,
