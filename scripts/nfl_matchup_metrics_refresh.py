@@ -132,7 +132,7 @@ def main():
     real_metrics = compute_real_matchup_metrics(rows)
     output = {
         "season": CURRENT_SEASON,
-        "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "real_row_count": len(rows),
         "teams": real_metrics,
     }
