@@ -71,6 +71,33 @@ try:
 except Exception as e:
     _nflverse_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_parlayapi_usage_check = {}
+try:
+    import requests as _req_pu
+    _pk = os.environ.get("PARLAY_API_KEY", "")
+    _pu_candidates = ["usage", "account", "me", "account/usage", "v1/usage", "v1/account"]
+    for _ep in _pu_candidates:
+        try:
+            _ru = _req_pu.get(
+                f"https://parlay-api.com/{_ep}",
+                headers={"X-API-Key": _pk},
+                timeout=12,
+            )
+            _uj = None
+            try:
+                _uj = _ru.json()
+            except Exception:
+                pass
+            _parlayapi_usage_check[_ep] = {
+                "status": _ru.status_code,
+                "body_preview": _ru.text[:400] if not _uj else None,
+                "parsed": _uj,
+            }
+        except Exception as _ee:
+            _parlayapi_usage_check[_ep] = {"error": str(_ee)[:200]}
+except Exception as e:
+    _parlayapi_usage_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _evsharps_stats_and_live_check = {}
 try:
     import requests as _req_evs
@@ -561,6 +588,7 @@ output = {
     "evsharps_tds_sample": _evsharps_tds_sample,
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
+    "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
     "sharpapi_odds_raw_response": _odds_raw_result,
