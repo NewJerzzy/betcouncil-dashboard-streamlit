@@ -26,3 +26,7 @@ args = "python scripts/espn_cron_runner.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 300000
