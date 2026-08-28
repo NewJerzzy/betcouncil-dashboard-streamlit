@@ -1,0 +1,21 @@
+No — not fully accurate.
+
+Confirmed present
+
+#7 (read-through / TTL caches): Yes — Streamlit @st.cache_data is used extensively (examples: sdv_source.py uses @st.cache_data), and multiple caching layers exist in the repo.
+Example: sdv_source.py (many @st.cache_data uses).
+#21 (in-season gating): Yes — scripts gate work by in-season checks (e.g., game_board_snapshot_headless.py uses in_season_sports()) and scrapers skip off-season targets.
+Not verifiable / likely incomplete
+
+#5 (ScriptRunContext propagation): I could not find any occurrences of add_script_run_ctx or ScriptRunContext in the repository. Search returned no results for those symbols. No clear evidence the helper you named exists in the current tree.
+I searched for "add_script_run_ctx" and "ScriptRunContext" and found nothing.
+#6 (as_completed misuse fixed): as_completed is still used in live code (e.g., betcouncil_auto_scraper.py uses ThreadPoolExecutor + as_completed to gather tasks). That usage looks legitimate in that file, but I cannot confirm the earlier specific _fetch_parallel misuse was fixed unless you point me to the exact _fetch_parallel implementation/lines to inspect. The repository contains documentation claiming the fix (GEM_INSTRUCTIONS_V52.md), but the runtime implementation named in your assertion (_fetch_parallel / add_script_run_ctx) wasn't located by symbol search.
+Summary
+
+#7 and #21: confirmed implemented.
+#5: not found in the repo (I could not verify it's implemented).
+#6: appears addressed in docs and the common as_completed usage in code looks reasonable, but I cannot fully verify the historical misuse/fix without the exact _fetch_parallel implementation to inspect.
+If you want absolute confirmation I can:
+
+Search again for the exact app_core.py line ranges you quoted (provide a commit/branch/ref or the exact file path if it's named differently), or
+Open the module that defines _fetch_parallel / board-load orchestration (give me the file path or I can search for likely names) and verify the ScriptRunContext handling and correct use of as_completed/wait semantics. Which do you prefer?

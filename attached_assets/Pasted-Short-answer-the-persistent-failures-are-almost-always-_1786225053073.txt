@@ -1,0 +1,89 @@
+Short answer — the persistent failures are almost always caused by one (or more) of these root issues: wrong/insufficient token permissions, failing gist writes due to the 300-file cap or create-vs-update semantics, missing dependencies or timeouts, or scripts swallowing/obscuring HTTP errors. Below is a prioritized diagnosis checklist plus exact, safe debug/fix steps you can run in your Actions runs or locally to find the real failure and fix it.
+
+Priority 1 — immediate checks (very likely)
+
+Token permission / wrong secret used
+
+Symptom: scripts hit 401/403 on GitHub Gist PATCH, or they appear to "succeed" but files not created/updated.
+Why: repo uses PICK6_GIST_TOKEN and PICK6_GIST_TOKEN_2 inconsistently; one token may be a collaborator (can PATCH existing files) while the other is owner (can create new files).
+Quick test (run in failing workflow as a debug step):
+Add a step that does:
+name: Check gist token permissions run: | echo "GIST token present: ${PICK6_GIST_TOKEN:+yes}" curl -s -o /dev/null -w "%{http_code}\n"
+-H "Authorization: Bearer ${{ secrets.PICK6_GIST_TOKEN }}"
+"https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5"
+Expected: 200. If 401/403 → wrong token / invalid scope.
+Fix: use an owner Gist token for flows that must create new filenames; standardize on a single secret name (e.g., GIST_TOKEN) and update both workflows and scripts to use it.
+Gist 300-file hard cap or file-creation semantics
+
+Symptom: push_to_gist()/gist_write returns false or returns 200 but no new file appears; pick6 push failing silently; errors 403/422 or 409 on create attempts.
+Why: GitHub Gist caps at 300 files; creating new files fails if the Gist is already full; PATCH update works only for existing filenames and will fail to create if token cannot create.
+Quick check (debug step):
+curl the gist metadata and count files: curl -s -H "Authorization: Bearer $GIST_TOKEN" "https://api.github.com/gists/7e52..." | jq '.files | length'
+If = 300, you must delete or repurpose files first.
+Fix options:
+Ensure scrapers PATCH existing filenames rather than attempt to create new ones; or
+Use an owner token capable of creating new files, but still clean up old files first; or
+Consolidate files to reduce count (recommended long-term).
+Priority 2 — surface errors (scripts log HTTP reasons) 3. Make scripts log failing HTTP response body/status on gist write/read failures
+
+Symptom: scripts appear to succeed but no file or no content; logs show little/no detail.
+Fix: in every gist_write/gist_read wrapper add:
+print(resp.status_code, resp.text[:1000]) on failure before returning False.
+Files: scripts/*, .github/scripts/rotobot_scraper.py, scripts/third_party_snapshot.py, game_board_snapshot_headless.py, etc.
+This will show exact API error (403/409/422/429) and allow targeted fixes.
+Single-quoted heredoc in daily_board_grading.yml may still be present
+Symptom: placeholder .streamlit/secrets.toml contains literal ${...} instead of actual secret.
+Check: open workflow and confirm you changed << 'EOF' → << EOF.
+Fix: if not changed, update .github/workflows/daily_board_grading.yml (Write placeholder secrets step) to use unquoted heredoc.
+Priority 3 — environment & dependency issues 5. Missing runtime dependencies in workflows
+
+Symptom: imports fail (bs4, ijson, curl_cffi, playwright, etc). Logs show ImportError.
+Fix:
+Add a repo-level requirements.txt and replace "pip install requests" with pip install -r requirements.txt in each workflow.
+For Playwright jobs, ensure playwright install step runs with --with-deps and increased timeout.
+Files to update: all .github/workflows/*.yml that currently only pip install requests.
+Timeouts and exit-code masking (scripts killed / exit handling)
+Symptom: workflows timed out, or the script step writes exit_code to $GITHUB_OUTPUT but job not failing correctly.
+Fix:
+Increase job timeout-minutes for heavy scrapers (set to 15–30m as needed).
+Replace the fragile set +e / echo exit_code pattern with:
+Use continue-on-error: true on the run step then a follow-up step checks steps.<id>.conclusion or outputs.
+Or ensure the harness always writes exit_code even on interpreter failure.
+Files: unabated_refresh.yml, baseballsavant_refresh.yml, unabated_playwright_probe.yml, etc.
+Priority 4 — concurrency/coordination 7. Writers race (many scrapers hitting same gist around the same times)
+
+Symptom: intermittent 409/429/500 and slot contention.
+Fix:
+Stagger schedules (add small random sleep at script start) OR implement gist_lock/lease (gist_lock.py exists in repo) — use it in writers.
+Use PATCH idempotently: read existing file first, only PATCH if content changed.
+Priority 5 — content / parsing bugs (scripts themselves) 8. Pick6 player-name resolution bug
+
+Symptom: pick6 workflow completes but pick6_props_live.json missing or contains placeholder names.
+Cause per diagnostic: dkId and names are in separate structures in SSR payload; the join key was wrong.
+Fix path:
+Run pick6_refresh locally (or in a debug workflow) and dump fully-resolved sample dicts — inspect which fields map dkId ↔ name (pickableId, entities, references).
+Update scripts/pick6_refresh.py _build_lookup_tables to use the correct join key.
+Add unit test + live-run sample capture to ensure correct mapping.
+Debugging checklist to run now (concrete) A. Add temporary debug steps to failing workflow (example):
+
+name: Debug gist & env run: | echo "GIST_TOKEN present: ${PICK6_GIST_TOKEN:+yes}" curl -s -H "Authorization: Bearer ${{ secrets.PICK6_GIST_TOKEN }}" "https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5" | jq '.files | keys | length, keys' python -V python -c "import sys, json, requests; print('requests ok' if 'requests' in sys.modules or True else 'no')"
+This confirms token presence and whether API call succeeds & file count.
+B. Check Actions run logs for the exact failing step:
+
+Look for HTTP status codes printed by the script (or add prints if absent).
+Search logs for "PATCH", "HTTP", "403", "401", "409", "429", "500".
+C. Re-run one failing job manually (workflow_dispatch) with debug prints enabled (temporary PR that adds debug step).
+
+Inspect response bodies from gist PATCH attempts.
+D. If gist response is 403:
+
+Confirm token scope: needs "gist" scope. Confirm token owner has write permission. Replace with owner token if creating files.
+E. If gist response is 409 or you see file-count 300:
+
+Delete/repurpose unused files first, or ensure writer updates existing filenames only.
+F. If script errors show ImportError:
+
+Add pip install -r requirements.txt and re-run. Add python -m py_compile check to catch syntax errors early.
+G. If playwright jobs failing:
+
+Ensure the job includes playwright install and uses runner with enough time; consider using the Playwright action or pre-built runner images.

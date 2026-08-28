@@ -46,6 +46,19 @@ HEADERS = {
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
+    # Required: ESPN's CDN returns 403 without Origin + Referer + sec-fetch headers,
+    # even with a matching User-Agent. Confirmed 2026-08-17 by direct probe from a
+    # non-GH-Actions IP: requests without these three headers get 403; with them, 200.
+    # This is NOT a GH Actions IP-block -- it's a missing-headers block.
+    # Headers above (UA + Accept + Accept-Language) alone → 403
+    # Adding only Origin+Referer → 403
+    # Adding only sec-fetch-* → 403
+    # Origin + Referer + sec-fetch-* together → 200 (confirmed working)
+    "Origin": "https://www.espn.com",
+    "Referer": "https://www.espn.com/",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
 }
 
 

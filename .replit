@@ -3,3 +3,26 @@ modules = ["python-base-3.13"]
 [nix]
 channel = "stable-25_05"
 packages = ["gitFull", "glibcLocales", "libxcrypt", "ocl-icd", "opencl-headers", "pkg-config", "playwright-driver", "rapidfuzz-cpp", "taskflow", "tesseract", "xsimd"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "ESPN Opening Lines Cron"
+
+[[workflows.workflow]]
+name = "ESPN Opening Lines Cron"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python scripts/espn_cron_runner.py"
+
+[workflows.workflow.metadata]
+outputType = "console"

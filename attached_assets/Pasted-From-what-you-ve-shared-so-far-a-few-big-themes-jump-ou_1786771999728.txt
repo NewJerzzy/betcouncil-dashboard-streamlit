@@ -1,0 +1,440 @@
+From what you’ve shared so far, a few big themes jump out:
+
+Your overall edge is shaky right now.  
+BetCouncil is grading your calibration at 68/100 (FAIR) and explicitly says “your predictions are landing somewhat off from what's expected” and that bet sizes are reduced across every sport until this improves. Your personal record—294W / 380L, 43.6% hit rate, -$50.76 net—backs that up. You’re well below the ~57.7% you need for +EV on 2-pick entries.
+
+The engine itself is strong; the problem is how you’re using it.  
+The board shows 967 props loaded, strong MLB focus, and a ton of SOVEREIGN/ELITE edges with clear reliability tags and market-mispricing flags. But your history is absolutely flooded with APPROVED-tier “OVER” props, many at tiny stakes, often on fantasy scores, PRA, and strikeouts—basically the noisiest stuff. That’s exactly where overconfidence and variance crush people.
+
+You’re systematically overconfident.  
+The calibration section calls out APPROVED tier: 43.0% actual vs 51.3% stated, an -8.3 percentage point gap and labels it “overconfident.” Probability buckets show the same: your 50–55% stated range is actually hitting 35.5%, while a weird pocket of 60–65% is smashing at 98%—meaning when you really have an edge, you’re right, but you drown that signal in a sea of mediocre plays.
+
+You’re betting like a volume grinder with a non-grinder edge.  
+Session stats show 760+ props on the MLB optimizer board, with 368 SOVEREIGN, 257 ELITE, 135 APPROVED, and $2,842 of “total action” modeled. But your actual ledger is mostly $0–$2 bets scattered across dozens of days, often chasing “OVER” on players and lines that look more like entertainment than disciplined exploitation of the best edges. The system even warns: “1 audit failure(s) detected. Review before placing bets.”
+
+The tech stack is overbuilt relative to your current discipline.  
+You’ve got GitHub Gists, auto-harvesters, Unabated feeds, EV line movement, PrizePicks scraping, and a Kelly fraction of 0.15 with a unit of $8.92 on a $297.45 bankroll. That’s serious infrastructure. But the weekly self-learning says MLB and WNBA have enough bets yet still haven’t found a clear pattern to adjust—because your signal is noisy and inconsistent.
+
+You know what this feels like? You’ve built a race car and then keep driving it like a DoorDash scooter—lots of trips, not much intention.
+
+If you want, once you finish fixing the other tabs and say “finished”, I’ll give you a tighter, step-by-step plan on:
+
+Exactly which tiers and prop types you should be focusing on.
+
+How many bets per day makes sense for your bankroll and current calibration.
+
+A simple rule-set for when to not bet, even if the board looks juicy.
+
+What’s your gut feeling right now—do you feel more “unlucky” or more “out of control”?
+
+right now give me the analysis on the tabs i posted, once i fix the error i'll redo it again
+Abraham — absolutely. You’ve posted three full tabs so far:
+
+System
+
+History
+
+Full Board / EV Optimizer (MLB)
+
+That’s already enough to give you a real, grounded, professional analysis of your engine’s current state — not hype, not generic advice, but a direct evaluation based on the actual content you provided.
+
+Below is the full analysis of exactly the tabs you posted, written from the perspective of a bettor with 30 years of experience who understands models, variance, calibration, and market behavior.
+
+🧠 FULL ANALYSIS OF THE TABS YOU POSTED (System + History + Full Board)
+1️⃣ SYSTEM TAB — ENGINE HEALTH & MODEL REALITY
+The engine is strong. The calibration is not.
+Your System tab shows a model with:
+
+967 props loaded
+
+8 active models
+
+14 sources
+
+Auto-refreshing EV snapshots
+
+Full telemetry
+
+Circuit breakers
+
+Fetch health
+
+Harvester health
+
+Calibration engine
+
+Audit engine
+
+Risk controls
+
+This is serious infrastructure.
+But the calibration metrics reveal the truth:
+
+Calibration: 68/100 (FAIR)
+“your predictions are landing somewhat off from what’s expected”
+
+This is the engine telling you:
+
+You’re not hitting your stated probabilities.
+
+Your confidence curves are misaligned.
+
+Your edges are overstated.
+
+Your bet sizes should be reduced.
+
+And it explicitly says:
+
+“Bet sizes are reduced across every sport until this improves.”
+
+This is exactly what a disciplined model should do.
+
+🔍 Probability Bucket Reality
+The buckets show a massive overconfidence problem:
+
+50–55% stated → 35.5% actual
+
+0–50% stated → 5.3% actual
+
+60–65% stated → 98% actual (this is the only strong pocket)
+
+This tells me:
+
+**When your model thinks it has a real edge (60–65%), it’s deadly accurate.
+But you drown those edges in a sea of mediocre picks.**
+
+🔍 Tier Calibration Reality
+Sovereign: 22 bets → calibrated
+
+Elite: 14 bets → not enough data
+
+Approved: 637 bets → overconfident by -8.3pp
+
+Lean: 0 bets → no data
+
+This is the biggest structural issue:
+
+You are betting almost exclusively in the worst-calibrated tier (Approved).
+Your ledger confirms this.
+
+🔍 Audit Engine Reality
+You have:
+
+7 PASS
+
+3 WARN
+
+1 FAIL
+
+The fail is important:
+
+Tier Integrity FAIL — 13 mismatches
+This means:
+
+Edges and tiers are not aligned
+
+Some props are mis-tiered
+
+Some Sovereign picks should be Elite
+
+Some Elite should be Approved
+
+Some Approved should be Lean
+
+This is a model hygiene issue — not catastrophic, but it affects trust.
+
+🔍 Harvester Health
+MLB harvesters:
+
+1 fresh
+
+6 stale
+
+9 dead
+
+27 never seen
+
+This is normal for a multi-source scraper, but it means:
+
+Your board is currently PrizePicks-heavy and sportsbook-light.
+This matches what we saw in the Line Shop tab earlier.
+
+🔍 Performance
+Enrichment stage:
+
+127.99s — SLOW
+
+This is a bottleneck.
+It’s not breaking anything, but it’s a sign your pipeline is doing too much work per load.
+
+🔍 Risk Controls
+All green:
+
+Max locks/day: 8
+
+Stop-loss: -15%
+
+Stop-win: +25%
+
+This is excellent discipline.
+
+⭐ SYSTEM TAB VERDICT
+Engine: A‑ tier
+Calibration: C+
+Operational health: B
+Data freshness: B‑
+Tier integrity: C‑
+Overall: A powerful engine running with misaligned confidence curves.
+2️⃣ HISTORY TAB — YOUR ACTUAL BETTING BEHAVIOR
+This tab reveals the real story:
+
+294W — 380L (43.6% hit rate)
+Net: -$50.76
+Most bets are APPROVED tier
+Most bets are OVER props
+Most bets are $0–$2 stakes
+Many props are fantasy score / PRA / noisy markets
+Many props have absurd lines (e.g., 4524.5 PRA)
+You are not betting your best edges.
+Let’s break it down.
+
+🔍 Tier Distribution
+Your ledger is almost entirely:
+
+APPROVED tier
+
+OVER props
+
+Fantasy score / PRA / strikeouts / noisy markets
+
+But your calibration engine says:
+
+APPROVED tier is overconfident by -8.3pp.
+So you’re betting in the worst-performing tier.
+
+Meanwhile:
+
+Sovereign has only 22 bets
+
+Elite has only 14 bets
+
+Lean has 0 bets
+
+This is the opposite of what a veteran bettor would do.
+
+🔍 Prop Type Distribution
+You are heavily betting:
+
+Fantasy score
+
+PRA
+
+Strikeouts
+
+Hits+Runs+RBIs
+
+Rebounds
+
+Points
+
+Assists
+
+These are high-variance props.
+
+Your model’s strongest edges (from the Full Board tab) are:
+
+UNDER 1.5 Total Bases
+
+UNDER 0.5 Hits
+
+UNDER 0.5 Runs
+
+UNDER 0.5 RBIs
+
+But your ledger shows almost no UNDER bets.
+
+This is a major mismatch.
+
+🔍 Stake Behavior
+Most bets are:
+
+$0.0
+
+$1.0
+
+$2.0
+
+This is fine for testing, but it means:
+
+Your calibration engine is learning from noisy, low-signal bets.
+It’s not learning from your best edges.
+
+🔍 Sports Distribution
+You’re mixing:
+
+MLB
+
+WNBA
+
+Golf
+
+Tennis
+
+NBA
+
+Soccer
+
+UFC
+
+But your calibration engine says:
+
+**Only MLB and WNBA have enough data to evaluate patterns.
+Everything else is still collecting.**
+
+So your multi-sport betting is diluting your calibration.
+
+⭐ HISTORY TAB VERDICT
+Bet selection: C‑
+Tier discipline: D
+Prop type discipline: D
+Stake discipline: B
+Variance exposure: High
+Overall: You are betting the weakest edges and ignoring the strongest ones.
+3️⃣ FULL BOARD TAB — THE MODEL’S BEST WORK
+This tab shows the true strength of your engine.
+
+368 Sovereign picks
+257 Elite picks
+135 Approved picks
+760 props loaded
+$2842.02 modeled action
+Strong board
+Spotlights with 67.7% confidence and +20% edges
+This is the best part of BetCouncil.
+
+🔍 Spotlights
+All three spotlights are:
+
+UNDER 1.5 Total Bases
+
++20% edge
+
+67.7% model confidence
+
+Grade A
+
+Reliability 4/4
+
+Market mispricing
+
+Driven by Base Model Strength
+
+These are elite edges.
+
+But your ledger shows:
+
+You are not betting these.
+🔍 Sovereign Table
+The Sovereign table is full of:
+
+UNDER 1.5 TB
+
+UNDER 0.5 Hits
+
+UNDER 0.5 Runs
+
+UNDER 0.5 RBIs
+
+OVER 0.5 Hits
+
+OVER 0.5 TB
+
+OVER 0.5 Runs
+
+All with:
+
++14% to +20% edges
+
+60–72% model confidence
+
+Reliability 3/4 or 4/4
+
+Clean consensus grades
+
+Strong EV+
+
+This is exactly what a veteran bettor wants.
+
+But again:
+
+Your ledger shows almost none of these bets.
+🔍 Model Strength
+The model is strongest in:
+
+UNDER props
+
+Total Bases
+
+Hits
+
+Runs
+
+RBIs
+
+But your ledger is dominated by:
+
+Fantasy score
+
+PRA
+
+Strikeouts
+
+Points
+
+Rebounds
+
+This is a mismatch between:
+
+**What the model is good at
+vs
+What you are betting.**
+
+⭐ FULL BOARD TAB VERDICT
+Model strength: A
+Edge quality: A
+Reliability: A‑
+User alignment with model: D
+Overall: The model is excellent. The betting behavior is not aligned with it.
+🧠 FINAL ANALYSIS (Based on the tabs you posted)
+**Your engine is strong.
+Your model is strong.
+Your edges are strong.
+Your calibration is fair.
+Your betting behavior is weak.**
+
+You are:
+
+Betting the wrong tiers
+
+Betting the wrong prop types
+
+Betting the wrong directions
+
+Betting the wrong sports
+
+Betting the wrong edges
+
+Betting too many noisy props
+
+Ignoring the strongest edges
+
+Feeding the calibration engine bad data
+
+Diluting your model’s learning
+
+Overconfident in the weakest tier
+
+Underconfident in the strongest tier
+
+**The model is not the problem.
+Your bet selection is.**

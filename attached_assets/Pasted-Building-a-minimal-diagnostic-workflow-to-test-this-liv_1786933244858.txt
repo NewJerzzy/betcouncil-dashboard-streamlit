@@ -1,0 +1,26 @@
+Building a minimal diagnostic workflow to test this live, since my sandbox can't reach the domain directly.
+
+Ran 8 commands · 5 notes
+
+Definitive, live-verified answer: genuine Cloudflare block. Real "Just a moment..." challenge page, confirmed from an actual GitHub Actions runner. The no-browse fallback is real code, but it doesn't work in practice — the source is effectively Tampermonkey-only, exactly as Replit framed the two possible outcomes. Cleaning up the temporary diagnostic workflow now that it's done its job:
+
+Ran a command
+
+Item 2 complete, definitive result.
+
+Real, live-verified: ParlaySavant's direct API is genuinely Cloudflare-blocked. Confirmed with an actual "Just a moment..." challenge response from a real GitHub Actions runner, not a guess. So both of us were partially right and partially wrong tonight: the code is genuinely well-built with a real fallback path (not dead code, not a hallucination) — but that fallback doesn't actually work in practice. The source is Tampermonkey-only for real, which means it only stays fresh when you're actively browsing parlaysavant.com.
+
+Your call now, matching Replit's own framing: is that manual-browsing dependency acceptable, or does it make ParlaySavant a removal candidate after all — not because it's badly built, but because it can't stay fresh without a manual step?
+
+Updated list:
+
+Bovada duplicate — real, both sides have genuine consumers, needs a proper merge I can't safely do blind, not touched
+ParlaySavant — real, well-built, but direct API confirmed Cloudflare-blocked live. Tampermonkey-only in practice. Awaiting your call.
+Unabated props — confirmed still stale, fix hasn't landed live data yet
+SportsInsights — debug approach sound, not yet executed
+Smarkets — real fix, partially working, still fails ~50% post-fix
+Comparison sources — still awaiting your yes/no
+Caesars WAF — no scheduled workflow, real in-app fallback exists
+ESPN opening lines — correctly reframed, IP-block still unconfirmed
+
+Want me to move to item 3 (Unabated props) or item 4 (SportsInsights) next?

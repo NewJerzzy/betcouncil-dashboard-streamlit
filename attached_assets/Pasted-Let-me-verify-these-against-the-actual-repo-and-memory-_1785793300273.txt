@@ -1,0 +1,35 @@
+Let me verify these against the actual repo and memory rather than accept them — several look wrong based on what I already know I built.
+
+Reconciling contradictory evidence about undefined function behavior
+
+Reconciling contradictory evidence about undefined function behavior
+It's defined in bc_utils.py (my earlier check missed that file). But there's a comment claiming it's a stub — checking the real implementation:
+
+Verified stale documentation and cross-referenced pending data mappings
+
+Verified stale documentation and cross-referenced pending data mappings
+Confirmed stale — build_game_line_consensus was fixed weeks ago (July 16), twice. Replit is reading an old comment describing the pre-fix history as if it's current. Checking the remaining unverified claims:
+
+Catalogued accuracy of flagged issues against actual system functionality
+
+Catalogued accuracy of flagged issues against actual system functionality
+Based on direct verification against the actual repo, here's the accurate picture — several of these are stale or wrong:
+Data/backend fixes — mostly stale or already resolved:
+RotoBot — wrong/stale. Already deliberately disabled weeks ago (auth-gated, confirmed by an explicit comment in the workflow itself). Not "silently failing," intentionally off.
+fetch_nfl_defensive_ratings — already fixed, real implementation using pts_against_pg (exactly what Replit suggests) built and pushed.
+4x fetch_atsstats_*_matchups — already stubbed, matches what Replit suggests.
+fetch_parlaysavant_props — already fixed (clean stub). And the "orphaned dead code needing deletion" claim is wrong — I checked that exact code, it's unrelated PaddyPower code, not parlaysavant.
+build_game_line_consensus "confirmed stub that always returns {}" — wrong, and stale by weeks. This was a real stub back on July 16, fixed twice that same day into a genuine weighted multi-book consensus (18 books, reputation-weighted). Replit appears to be reading an old code comment that documents that history, not current behavior.
+BetQL player props "never verified" — wrong, I verified this live with real captured data in an earlier session.
+DK Pick6 "category IDs 1-20 unmapped" — doesn't match what's actually there. Pick6 already resolves real player names successfully (48,602 real props, 100% resolved) via a different, already-working endpoint.
+Data sources not wired to UI — mostly wrong:
+Bobby's Bets "no UI widget" — wrong, it's wired into Predictions tab, Summary, Game Lines, and Line Shop.
+VSIN splits "no dedicated display" — wrong, confirmed real display code exists in Game Lines.
+LineStar "not surfaced" — wrong, confirmed wired into Player Lookup with real salary/prop data.
+DailyFantasyFuel "no active fetcher" — not a gap. Deliberately never built — confirmed redundant with sources already covering the same data.
+EVSharps props — genuinely unverified by me, worth a real look.
+UI improvements:
+NHL SignalOdds indicator — reasonable, though I never built a dedicated "coverage indicator" to grey out in the first place.
+VegasInsider "just needs display widget" — wrong, already has one, confirmed live in Game Lines.
+WiseGuyTeam wgt_play "not surfaced" — wrong, already built into both the Predictions tab and the Verdict badge.
+Bottom line: only 1 of these 15 items is a genuine, unverified gap (EVSharps props). The rest are either already fixed, already wired, or based on stale/incorrect reads of the code. Want me to check EVSharps props specifically?

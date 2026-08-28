@@ -1,0 +1,30 @@
+Consolidate per-book/per-league Gist writers into a few merged files (group by purpose: props, lineups, snapshots) to reduce file churn and Gist slot contention.
+Implement a centralized Gist write manager with leasing/backoff so only one process writes at a time and writers retry with exponential backoff.
+Introduce retention/eviction rules for Gist content (keep N newest per category, trim stale) to control total file count.
+Batch and parallelize high-cardinality fetches (e.g., MLB per-player calls) with controlled concurrency and per-batch timeouts instead of sequential loops + sleeps.
+Attach/propagate Streamlit ScriptRunContext into worker threads used by _fetch_parallel to restore cache checks and avoid redundant fetches.
+Replace blocking patterns that nullify per-future timeouts (e.g., as_completed misuse) with correct concurrent.futures usage or asyncio.
+Add consistent, repo-wide caching (read-through caches) for expensive fetches with TTLs and cache-read-before-fetch semantics to avoid write-only heavy fetch loops.
+Normalize sport/league keys centrally and make all lookup operations case-insensitive (use .casefold()) to avoid duplicate processing and mismatches.
+Consolidate duplicate scrapers/transformers: factor common HTTP headers, retry/backoff, JSON extraction, normalization into shared utilities.
+Convert IO-heavy scrapers to async (aiohttp/asyncpg) where safe to reduce thread/process overhead and improve throughput.
+Add robust retry/backoff + jitter for all network calls; centralize into an HTTP client wrapper with metrics.
+Implement per-writer rate-limits and global write-rate limits to prevent rapid fill-in of freed Gist slots.
+Enforce per-file size management: trim payloads before writing, compress large JSON (gz) or split by time window rather than many tiny files.
+Replace many tiny per-sport files with time-sharded combined files (e.g., props_combined_{date}.json) to reduce object count and read overhead.
+Add a prioritized consolidation plan: identify top N biggest writers by size/count and consolidate them together during a maintenance window.
+Add server-side deduplication and canonicalization (market/prop keys) so duplicate sources map to same market_key and reduce downstream work.
+Improve health-check/registry consistency: standardize merged-file shapes (wrapper vs root) and make health logic resilient to both shapes.
+Move heavy imports (requests, bs4, pandas) to module-level only where needed, and declare dependencies in requirements/pyproject so CI/staging consistency is ensured.
+Add instrumentation/metrics (timings, counts, HTTP latencies, gist writes, file creation rates) and dashboards/alerts to detect rushes and hotspots.
+Add robust per-source unit/integration tests and end-to-end smoke tests (including gist read/write dry-run mode) to prevent regressions.
+Use streaming JSON parsing for very large responses (ijson) to avoid building huge in-memory objects.
+Limit memory use by bounding concurrency and using generators/iterators when processing large arrays (avoid building full lists when not necessary).
+Add push-frequency coordination: scheduled jobs should jitter and optionally cooperatively back off if Gist slot pressure is high.
+Replace brittle ad-hoc parsing with schema-validated extractors (pydantic/dataclasses) and defensive field access to avoid silent parse failures.
+Aggregate small scheduled writers into a single scheduled pipeline (one process produces multiple combined outputs) to reduce simultaneous writers.
+Implement stronger idempotency for writers (check existing gist content; diff and only write if changed) to reduce unnecessary writes.
+Add per-source sampling CI/verification (on workflow_dispatch) to capture live payloads post-change and validate keys/names before merging.
+Harden concurrency around file deletion/cleanup (use locks or transactional rename patterns) to prevent race conditions with other writers.
+Introduce global configuration for “in-season” active sports so scrapers can skip empty/off-season targets and reduce unnecessary fetches.
+Create a prioritized roadmap: (A) central gist-writer + lease, (B) consolidate top 5 largest writers together, (C) attach ScriptRunContext to threads, (D) add caching + TTLs, (E) add metrics + retention policy.

@@ -1,0 +1,51 @@
+Two real issues need fixing in the BetCouncil repo. I've already done extensive diagnosis on both — here's exactly where things stand and what's actually needed.
+
+## 1. Unabated props (scripts/unabated_refresh.py)
+
+Real, confirmed background: the OLD endpoint (data.unabated.com) is dead (401). 
+A CDN-based fix was already added for straight lines and is confirmed working via 
+a real job log. A second attempt was added for props specifically — new functions 
+fetch_cdn_props() and flatten_cdn_props(), wired into main() right after the 
+straight-lines CDN block, writing debug output to 
+betcouncil_unabated_cdn_props_debug.json.
+
+The problem: dispatched this workflow twice tonight and that debug file never 
+appears — meaning the new code path never even runs. No crash, no error 
+annotation, just silence. Already ruled out: the shared "sharp_feeds" lock is 
+confirmed free (not stuck), so it's not a lock-contention issue.
+
+What I need: pull the actual job log text from the most recent "Unabated Refresh" 
+workflow run (I don't have access to GitHub's log storage domain from my 
+environment, so I've been debugging blind via Gist-based debug writes only — 
+if you can see the real log output directly, that would immediately show where 
+execution is actually stopping). Once we know that, fix whatever's actually 
+blocking it from reaching the new CDN-props code.
+
+## 2. ESPN opening lines (scripts/espn_opening_lines_refresh.py)
+
+Real, confirmed: every sport returns HTTP 403 from ESPN's scoreboard endpoint 
+when this runs on GitHub Actions. I tried matching headers exactly to the same 
+endpoint working successfully elsewhere in this codebase (fetchers.py, used from 
+the live Streamlit app) — identical headers, still 403'd. That rules out headers 
+as the cause.
+
+Real working hypothesis, unconfirmed: ESPN may be blocking based on GitHub 
+Actions' known datacenter IP ranges specifically, since the exact same request 
+succeeds from Streamlit Cloud's IPs.
+
+What I need: 
+(a) First, confirm or kill this hypothesis — try hitting 
+https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=YYYYMMDD 
+directly from your own environment (a different IP than GH Actions) and see if 
+it succeeds. 
+(b) If confirmed as an IP block: the real fix is running this specific script 
+somewhere with a non-datacenter IP instead of GitHub Actions — either have this 
+one script run from Replit on a schedule instead of GH Actions, or find another 
+real workaround that changes the source IP. 
+(c) If NOT an IP block: something else is different between the two code paths 
+and that needs finding — check for things like TLS fingerprinting, missing 
+cookies, or request ordering that headers alone wouldn't fix.
+
+For both: please make real, tested changes only — no guesses presented as fixes. 
+If you can't get a definitive answer on either, say so plainly rather than 
+claiming resolution.

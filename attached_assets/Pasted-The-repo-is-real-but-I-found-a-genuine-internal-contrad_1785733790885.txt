@@ -1,0 +1,23 @@
+The repo is real, but I found a genuine internal contradiction in its own README before trusting Replit's summary — the top says Kelly staking is implemented, a section further down says "flat-$100 is the entire bet sizing layer in Phase 1." Checking the actual source file to resolve this:
+
+Excavated contradictions between documentation and actual performance data
+Excavated contradictions between documentation and actual performance data
+
+Verified before trusting — real repo, but the actual methodology doc (not just the README Replit summarized) tells a very different story than the pitch.
+
+What's confirmed real: Kelly staking, Platt calibration, source reweighting — all genuinely implemented, detailed formulas documented. The README's "out of scope: Kelly sizing" line is just stale leftover text contradicted by their own changelog — not a real limitation.
+
+What actually matters for us, and isn't what Replit implied:
+
+MLB: 0 graded bets. Their own doc says "Statcast backfill in progress" — this isn't a validated backtest, it's an unproven model. BetCouncil's #1 sport has zero track record in their system.
+NBA: 0 graded bets. Same situation — "no graded bets yet."
+ATP: -6.8% ROI, actively losing money in their own backtest. Pulling this in as a "source" would mean importing a signal their own data says is bad.
+NHL and WNBA aren't in Flashcat's source list at all — 2 of BetCouncil's 5 core sports, not covered.
+NFL is genuinely strong — +11.7% ROI on 635 graded bets, real validated signal.
+PGA: 0 graded bets ("forward-only, no results yet").
+
+So "walk-forward backtests for NFL, MLB, ATP, WTA, PGA" is technically true (backtests exist) but misleading — only NFL has actually cleared their own bar for being trustworthy. The rest are either unproven or losing.
+
+One more flag: their own docs contradict each other — the README's source-status table calls FanDuel/DraftKings "stub," their methodology doc's source-provenance table calls Bovada/FanDuel "Live." That's a real signal their documentation isn't fully current, worth being skeptical of any single claim in isolation.
+
+My honest recommendation: don't do the full integration Replit proposed. The 260-line adapter buys you validated signal for exactly one sport (NFL) that BetCouncil already covers well elsewhere, plus a pile of MLB/NBA data with literally no track record. If you want anything from this at all, it'd be a much narrower NFL-only pilot using their weights/calibration — not the full blend across all five sports as pitched.

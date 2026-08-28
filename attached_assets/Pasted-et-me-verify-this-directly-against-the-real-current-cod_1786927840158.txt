@@ -1,0 +1,39 @@
+et me verify this directly against the real, current code rather than defend or concede blind — this needs an actual re-check.
+
+Ran a command
+
+That docstring is real and verbatim — not a hallucination. But the counter-claim points to specific different line numbers (17958, 5185-5240) for other real functions I may have missed. Checking those directly:
+
+Ran a command
+
+Line 17958 is actually Bet365 fallback logic, not ParlaySavant at all — the counter-claim's line numbers don't match this file. Searching for the specific quoted string directly, which is definitive either way:
+
+Ran 2 commands · 1 note
+
+I owe a real, direct correction — I quoted the wrong function. fetch_parlaysavant_props (which I cited) is genuinely a dead stub — but there's a separate, real function, fetch_parlaysavant_from_gist, that's the actual primary mechanism with a genuine two-layer fallback (Gist-harvester primary, direct API secondary). I missed it entirely and drew a conclusion from the wrong evidence. Checking the remaining claims — registry wiring and real callers — before saying anything else:
+
+Ran a command
+
+Zero real callers of this function anywhere — meaning it's well-built but never actually invoked, a different but real problem. Checking the specific line numbers cited for the registry and dispatch table:
+
+Ran a command
+
+Those specific line numbers don't match anything ParlaySavant-related either — but I did find a real comment block earlier around line 11885 ("ParlaySavant +EV confirmation overlay... but nothing"). Let me view that in full, since that's the genuinely real location:
+
+Ran a command
+
+This is genuinely real, active, wired into the core scoring function — directly contradicts what I told you. Checking where ev_signal_lookup actually gets populated, since that determines whether this signal is truly live:
+
+Ran 2 commands · 1 note
+
+Confirmed real and well-built — but reading from parlaysavant_ev_h, populated by a real Tampermonkey browser-extension hook (found in app.py), meaning it genuinely requires you to be actively browsing parlaysavant.com — similar to the manual-dependency pattern, just genuinely true here unlike my earlier MyBookie mistake. Checking the real Gist file to see if this has ever actually produced live data:
+
+Ran 3 commands · 1 note
+
+Real, genuine, but 39 days stale — captured July 9, no freshness check before it's consumed in scoring. That's the complete, accurate picture now.
+
+Full correction, owed clearly: I was wrong on the "dead code" and "Cloudflare-blocked" claims. I quoted a different, genuinely dead stub function (fetch_parlaysavant_props) as if it represented the whole mechanism, and never found the real one. The actual mechanism — Tampermonkey browser extension → parlaysavant_ev_h → wired directly into compute_multi_signal_edge, the core scoring function — is real, well-built, and has genuinely worked before (real MLB batter data with realistic odds sitting in the Gist right now).
+
+But here's the real, current problem, and it's arguably worse than dead code: that data is 39 days old, and the consuming code only checks if _ps_ev: (does data exist) — not whether it's fresh. So if this session state ever gets populated again from an old cache or stale write, decades-old odds could silently feed into live scoring as if they were current +EV confirmations. That's a real bug worth fixing regardless of whether you keep the source.
+
+Revised, honest answer to your original question: this isn't a clean "redundant, cut it" case like DFF was. It's real, active, and has provided real value before — it just requires you to actually be browsing parlaysavant.com to stay fresh, and currently isn't. The choice is between (a) accepting the manual-browsing dependency and using it when it's fresh, or (b) cutting it if that dependency isn't realistic for how you actually use the app. That's a real trade-off, not a clear-cut redundancy.

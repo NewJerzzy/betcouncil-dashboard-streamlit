@@ -1,0 +1,1320 @@
+Daily Briefing - 2026-08-24
+Filter: MLB · generated 2026-08-24T10:17:38 · 56 plays scored across 1 slates
+★ POTD — Pirate’s Pick of the Day
+Today: SD ML (PIT @ SD)  RIDE IT — Blackbeard confirms
+Blackbeard-confirmed (bet): 66-33 (67%, +21% ROI)  ·  Blackbeard-silent: 10-10 (50%, -10% ROI)
+Recent form: last 14 slates 8-6 (57%) · last 21 slates 15-6 (71%) (small sample — recency context, not an edge)
+Rule: ride only when Blackbeard is on the same side; downgrade/skip when he’s silent. (n=119 graded, 2026-04-12→2026-08-23; Pirate odds ~99% logged, so ROI is real.)
+⚾ Live Over/Under Playbook — per-game in-play leans from box-score history
+open →
+📊 Convergence Edge Report — day / time / POTD / bet-type deep-dive (as of 2026-06-29)
+open →
+📈 Trending Briefing — recent form by tier: promotion watch, cooling TRUST, hot-but-refused
+open →
+⚠ Decay watch — a TRUST edge is cooling
+Pirate Run Line -1.5 L30: 44% / -8.1u (n=45) ← season 56% / +9.0u (n=162)
+Wins on the season but has lost units over the last 30 slates (≥20 decisions, odds-aware — a favorite can bleed at a winning %). Not a fade: bet the live number and size down until it stabilizes. Rising patterns are never flagged. Recent = last 30 SLATES through 2026-08-23 (game days, not calendar days). Includes edges that have already slipped out of TRUST.
+Today's plays by tier
+Act on TRUST. It is the confirmed, still-winning tier — walk-forward 54.5% / -1.0% ROI (n=352), 57% over the last 30 days. SOLID (patterns at their in-sample ROI peak, which regress forward) is excluded as a top play — none on today's card.
+TRUST
+2 plays
+the edge to act on — confirmed +EV, walk-forward 57% and rising (~63% last 30 days)
+Moneyline
+2
+⨁ All → parlay
+MLB · PIT @ SD
+ML SD ML -105 ★ POTD ✓Blackbeard — ride
+Pattern: POTD + Blackbeard
+ROI +19.7%/u (lo +3%) · hit 66.3% · n=98
+Sources: Beef, BeefAI, Blackbeard, ClaudeAI, Faro, Pirate
+DK
+-104
+FD ★
+-102
+MGM
+-110
+Caesars
+-105
+theScore
+-110
+HardRock
+-105
+ProphetX
+-102
+MLB · TEX @ CWS
+ML CWS ML -132
+Pattern: Blackbeard 60-65%
+ROI +13.1%/u (lo +2%) · hit 64.6% · n=237
+Sources: BeefAI, Blackbeard, Faro, Pirate
+DK
+-129
+FD
+-126
+MGM
+-140
+Caesars
+-130
+theScore
+-131
+HardRock
+-125
+ProphetX ★
+-124
+WATCH
+28 plays
+Moneyline
+8
+⨁ All → parlay
+MLB · TB @ DET
+ML TB ML -130
+Pattern: Blackbeard+Pirate@Ml
+ROI +5.4%/u (lo -1%) · hit 56.8% · n=784
+Sources: BeefAI, Blackbeard, ClaudeAI, Pirate
+DK
+-130
+FD
+-128
+MGM
+-140
+Caesars
+-130
+theScore
+-140
+HardRock
+-130
+ProphetX ★
+-123
+MLB · PHI @ SEA
+ML PHI ML -110
+Pattern: Blackbeard+Pirate@Ml
+ROI +5.4%/u (lo -1%) · hit 56.8% · n=784
+Sources: Blackbeard, ClaudeAI, Faro, Pirate
+DK
+-109
+FD
+-110
+MGM
+-115
+Caesars
+-111
+theScore
+-120
+HardRock
+-110
+ProphetX ★
+-108
+MLB · CIN @ SF
+ML CIN ML -150
+Pattern: Blackbeard+Pirate@Ml
+ROI +5.4%/u (lo -1%) · hit 56.8% · n=784
+Sources: Blackbeard, ClaudeAI, Pirate
+DK
+-154
+FD
+-154
+MGM
+-160
+Caesars
+-154
+theScore
+-162
+HardRock
+-150
+ProphetX ★
+-148
+MLB · CHC @ AZ
+ML CHC ML -138
+Pattern: Blackbeard+Pirate@Ml
+ROI +5.4%/u (lo -1%) · hit 56.8% · n=784
+Sources: Blackbeard, ClaudeAI, Pirate
+DK
+-136
+FD
+-138
+MGM
+-145
+Caesars ★
+-135
+theScore
+-140
+HardRock
+-135
+ProphetX
+-136
+MLB · MIN @ ATH
+ML MIN ML -152
+Pattern: Blackbeard+Pirate@Ml
+ROI +5.4%/u (lo -1%) · hit 56.8% · n=784
+Sources: Blackbeard, Pirate
+DK
+-153
+FD
+-150
+MGM
+-160
+Caesars
+-153
+theScore
+-155
+HardRock
+-150
+ProphetX ★
+-148
+MLB · BOS @ MIA
+ML MIA ML +112
+Pattern: Blackbeard+Faro@Ml
+ROI +2.5%/u (lo -4%) · hit 56.4% · n=844
+Sources: Blackbeard, Faro
+DK
++112
+FD
++114
+MGM
++110
+Caesars ★
++115
+theScore
++111
+HardRock
++115
+ProphetX
++115
+MLB · CLE @ LAA
+ML CLE ML -155
+Pattern: Blackbeard+Faro@Ml
+ROI +2.5%/u (lo -4%) · hit 56.4% · n=844
+Sources: Blackbeard, ClaudeAI, Faro
+DK
+-158
+FD
+-156
+MGM
+-170
+Caesars
+-157
+theScore
+-165
+HardRock
+-155
+ProphetX ★
+-152
+MLB · COL @ WSH
+ML WSH ML -175
+Pattern: Blackbeard+Claudeai@Ml
+ROI +1.9%/u (lo -5%) · hit 56.0% · n=688
+Sources: Blackbeard, ClaudeAI
+DK
+-182
+FD
+-180
+MGM
+-190
+Caesars
+-180
+theScore
+-190
+HardRock
+-180
+ProphetX ★
+-176
+Run Line
+3
+⨁ All → parlay
+MLB · BOS @ MIA
+RL MIA +1.5 -135
+Pattern: Claudeai+Pirate@Spread
+ROI +42.0%/u (lo -2%) · hit 76.9% · n=13
+Sources: BeefAI, ClaudeAI, Pirate
+DK
+-162
+FD
+-160
+MGM
+-160
+Caesars
+-160
+theScore
+-160
+HardRock ★
+-150
+ProphetX
+↗ no price
+MLB · CLE @ LAA
+RL LAA +2 -148
+Pattern: Pirate Run Line +1.5
+ROI +3.5%/u (lo -7%) · hit 57.3% · n=286
+Sources: BeefAI, Pirate
+DK
+-171
+FD
+↗ no price
+MGM
+↗ no price
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · COL @ WSH
+RL WSH -1 -125
+Pattern: Pirate Run Line -1.5
+ROI +5.5%/u (lo -9%) · hit 55.6% · n=162
+Sources: BeefAI, Pirate
+DK
+-140
+FD
+↗ no price
+MGM
+↗ no price
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX ★
+-130
+Total — Over/Under
+13
+⨁ All → parlay
+MLB · PIT @ SD
+Total UN 8.0
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: ClaudeAI, Pirate
+⛔ Multi-source UNDER consensus ran ~47.5% — below breakeven; the panel cannot pick unders together (Beef/Blackbeard-driven).
+DK ★
+-145
+FD
+↗ no price
+MGM
+-145
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · TB @ DET
+Total OV 7.5 -113
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501
+Sources: Blackbeard, Pirate
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
+-115
+FD
+-120
+MGM
+-115
+Caesars
+-115
+theScore
+-120
+HardRock ★
+-110
+ProphetX
+↗ no price
+MLB · PHI @ SEA
+Total OV 6.5
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: Beef, BeefAI, Blackbeard, Pirate
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
+-125
+FD
+-118
+MGM
+-125
+Caesars
+-125
+theScore
+-125
+HardRock ★
+-115
+ProphetX
+↗ no price
+MLB · BOS @ MIA
+Total OV 7.0 -113
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501
+Sources: Beef, BeefAI, Blackbeard, Pirate
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK ★
+-139
+FD
+↗ no price
+MGM
+-145
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · CIN @ SF
+Total OV 7.0 -113
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501
+Sources: Blackbeard, Pirate
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK ★
+-146
+FD
+↗ no price
+MGM
+-150
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · CHC @ AZ
+Total OV 8.5 -130
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501
+Sources: Beef, BeefAI, Blackbeard, ClaudeAI, Pirate
+DK
+-144
+FD
+-142
+MGM
+-150
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock ★
+-130
+ProphetX
+↗ no price
+MLB · COL @ WSH
+Total UN 9.0
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: Pirate
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK ★
+-170
+FD
+↗ no price
+MGM
+-175
+Caesars
+-184 ↗
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · TEX @ CWS
+Total UN 9.0
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: ClaudeAI, Pirate
+⛔ Multi-source UNDER consensus ran ~47.5% — below breakeven; the panel cannot pick unders together (Beef/Blackbeard-driven).
+DK
+-129
+FD
+-128
+MGM
+-140
+Caesars
+↗ no price
+theScore
+-125
+HardRock ★
+-115
+ProphetX
+↗ no price
+MLB · MIN @ ATH
+Total OV 10.0
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: ClaudeAI, Pirate
+DK
+-143
+FD
+↗ no price
+MGM
+-150
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX ★
+-136
+MLB · CLE @ LAA
+Total UN 8.5
+Pattern: Pirate Total Spec
+ROI +2.7%/u (lo -2%) · hit 54.0% · n=1501 · price not logged
+Sources: ClaudeAI, Pirate
+⛔ Multi-source UNDER consensus ran ~47.5% — below breakeven; the panel cannot pick unders together (Beef/Blackbeard-driven).
+DK ★
+-149
+FD
+-150
+MGM
+-155
+Caesars
+-154 ↗
+theScore
+↗ no price
+HardRock
+-150
+ProphetX
+↗ no price
+MLB · TB @ DET
+Total UN 8.5
+Pattern: Total High Under
+ROI +3.4%/u (lo -5%) · hit 54.0% · n=535 · price not logged
+Sources: ClaudeAI
+DK ★
+-147
+FD
+-150
+MGM
+-155
+Caesars
+-154 ↗
+theScore
+↗ no price
+HardRock
+-150
+ProphetX
+↗ no price
+MLB · BOS @ MIA
+Total UN 8.0
+Pattern: Total High Under
+ROI +3.4%/u (lo -5%) · hit 54.0% · n=535 · price not logged
+Sources: ClaudeAI
+DK ★
+-147
+FD
+↗ no price
+MGM
+-150
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · PIT @ SD
+Total OV 7.5 -113
+Pattern: Total Low Over
+ROI +3.4%/u (lo -5%) · hit 54.3% · n=508
+Sources: Blackbeard
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
+-103
+FD
+-104
+MGM
+-105
+Caesars
+-105
+theScore
+-105
+HardRock
++105
+ProphetX ★
++111
+First Inning — NRFI / YRFI
+4
+⨁ All → parlay
+MLB · COL @ WSH
+1st Inning YRFI
+Pattern: ClaudeAI YRFI (solo)
+ROI +11.9%/u (lo +1%) · hit 57.9% · n=302 · price not logged
+Sources: ClaudeAI
+⛔ ClaudeAI's SOLO YRFI has stopped clearing the price it is charged: 50.9% since 2026-07-16 and 48.8% over the last 30 slates, against a ~52% break-even — a −1.0 to −3.5 pt margin where it ran +5.1 through mid-July. The league's 1st-inning scoring rate fell to ~44-48% and books only partly followed. His selection edge is intact and still rising; the number is not. Playable with a 2nd source, not alone.
+DK
+-105
+FD ★
++100
+MGM
+-105
+Caesars
+-105
+theScore
+↗ no price
+HardRock
+-110
+ProphetX
+↗ no price
+MLB · CHC @ AZ
+1st Inning YRFI
+Pattern: Blackbeard Yrfi Any
+ROI +6.6%/u (lo -3%) · hit 54.0% · n=383 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK
+-120
+FD
+-138
+MGM ★
+-118
+Caesars
+-125
+theScore
+↗ no price
+HardRock
+-125
+ProphetX
+↗ no price
+MLB · TEX @ CWS
+1st Inning YRFI
+Pattern: Blackbeard Yrfi Any
+ROI +6.6%/u (lo -3%) · hit 54.0% · n=383 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK
+-130
+FD
+-115
+MGM ★
+-105
+Caesars
+-115
+theScore
+↗ no price
+HardRock
+-120
+ProphetX
+↗ no price
+MLB · MIN @ ATH
+1st Inning YRFI
+Pattern: Blackbeard Yrfi Any
+ROI +6.6%/u (lo -3%) · hit 54.0% · n=383 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK
+-160
+FD
+-162
+MGM
+-150
+Caesars ★
+-145
+theScore
+↗ no price
+HardRock
+-155
+ProphetX
+↗ no price
+NEGATIVE
+26 plays
+Moneyline
+5
+⨁ All → parlay
+MLB · TB @ DET
+ML DET ML +121
+Pattern: Ml Dog
+ROI -2.2%/u (lo -10%) · hit 45.2% · n=708
+Sources: Faro
+DK ★
++121
+FD
++120
+MGM
++115
+Caesars
++120
+theScore
++120
+HardRock
++120
+ProphetX
++120
+MLB · CIN @ SF
+ML SF ML +139
+Pattern: Ml Dog
+ROI -2.2%/u (lo -10%) · hit 45.2% · n=708
+Sources: Faro
+DK
++143
+FD
++142
+MGM
++135
+Caesars
++144
+theScore
++143
+HardRock
++140
+ProphetX ★
++146
+MLB · CHC @ AZ
+ML AZ ML +125
+Pattern: Ml Dog
+ROI -2.2%/u (lo -10%) · hit 45.2% · n=708
+Sources: Faro
+DK
++127
+FD
++128
+MGM
++120
+Caesars
++125
+theScore
++120
+HardRock
++125
+ProphetX ★
++130
+MLB · TEX @ CWS
+ML TEX ML +115
+Pattern: Ml Dog
+ROI -2.2%/u (lo -10%) · hit 45.2% · n=708
+Sources: ClaudeAI
+DK
++120
+FD
++118
+MGM
++115
+Caesars
++120
+theScore
++116
+HardRock
++115
+ProphetX ★
++121
+MLB · MIN @ ATH
+ML ATH ML +138
+Pattern: Ml Dog
+ROI -2.2%/u (lo -10%) · hit 45.2% · n=708
+Sources: Faro
+DK
++142
+FD
++140
+MGM
++135
+Caesars
++143
+theScore
++137
+HardRock
++140
+ProphetX ★
++146
+Total — Over/Under
+4
+⨁ All → parlay
+MLB · COL @ WSH
+Total OV 8.5
+Pattern: Total 8 Over
+ROI -5.5%/u (lo -12%) · hit 49.6% · n=828 · price not logged
+Sources: Blackbeard, ClaudeAI
+⛔ Totals consensus overruling a lone Pirate dissent won 39.0% (n=100, Wilson upper 48.8%) — skip.
+DK
++101
+FD
+-104
+MGM
++100
+Caesars
+↗ no price
+theScore
++105
+HardRock ★
++110
+ProphetX
+↗ no price
+MLB · TEX @ CWS
+Total OV 8.5
+Pattern: Total 8 Over
+ROI -5.5%/u (lo -12%) · hit 49.6% · n=828 · price not logged
+Sources: Blackbeard
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
++100
+FD
++100
+MGM ★
++105
+Caesars
+↗ no price
+theScore
++105
+HardRock
++105
+ProphetX
+↗ no price
+MLB · CLE @ LAA
+Total OV 8.0
+Pattern: Total 8 Over
+ROI -5.5%/u (lo -12%) · hit 49.6% · n=828 · price not logged
+Sources: Blackbeard
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
+-101
+FD
+↗ no price
+MGM ★
++100
+Caesars
+↗ no price
+theScore
+↗ no price
+HardRock
+↗ no price
+ProphetX
+↗ no price
+MLB · MIN @ ATH
+Total UN 10.5 -103
+Pattern: Total High9 Quant
+ROI -12.3%/u (lo -22%) · hit 46.0% · n=337
+Sources: Blackbeard
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+DK
+-103
+FD
+-106
+MGM
+-102
+Caesars
+-105
+theScore
+-105
+HardRock ★
++100
+ProphetX
+↗ no price
+First 5 — Moneyline
+10
+⨁ All → parlay
+MLB · PIT @ SD
+F5 ML SD ML F5 +110
+Pattern: F5 Home Only
+ROI -0.8%/u (lo -9%) · hit 53.7% · n=495
+Sources: ClaudeAI, Pirate
+DK
+-105
+FD ★
++110
+MGM
++100
+Caesars
++100
+theScore
++100
+HardRock
+↗ no price
+ProphetX
+-105
+MLB · BOS @ MIA
+F5 ML MIA ML F5
+Pattern: F5 Home Only
+ROI -0.8%/u (lo -9%) · hit 53.7% · n=495 · price not logged
+Sources: ClaudeAI
+DK
+-115
+FD
+-102
+MGM
+-102
+Caesars
+-105
+theScore
+-105
+HardRock
+↗ no price
+ProphetX ★
++102
+MLB · COL @ WSH
+F5 ML WSH ML F5
+Pattern: F5 Home Only
+ROI -0.8%/u (lo -9%) · hit 53.7% · n=495 · price not logged
+Sources: ClaudeAI
+DK
+-220
+FD
+-230
+MGM
+-210
+Caesars
+-210
+theScore
+-220
+HardRock
+↗ no price
+ProphetX ★
+-205
+MLB · MIN @ ATH
+F5 ML ATH ML F5
+Pattern: F5 Home Only
+ROI -0.8%/u (lo -9%) · hit 53.7% · n=495 · price not logged
+Sources: ClaudeAI
+DK
++105
+FD ★
++126
+MGM
++115
+Caesars
++120
+theScore
++120
+HardRock
+↗ no price
+ProphetX
++106
+MLB · TB @ DET
+F5 ML TB ML F5 -135
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235
+Sources: ClaudeAI, Pirate
+DK
+-154
+FD
+-148
+MGM
+-155
+Caesars ★
+-145
+theScore
+-160
+HardRock
+↗ no price
+ProphetX
+-174
+MLB · PHI @ SEA
+F5 ML PHI ML F5 -115
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235
+Sources: ClaudeAI, Pirate
+DK
+-120
+FD
+-122
+MGM
+-118
+Caesars
+-115
+theScore
+-125
+HardRock
+↗ no price
+ProphetX ★
+-113
+MLB · CIN @ SF
+F5 ML CIN ML F5
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235 · price not logged
+Sources: ClaudeAI
+DK
+-180
+FD
+-188
+MGM
+-185
+Caesars
+↗ no price
+theScore ★
+-175
+HardRock
+↗ no price
+ProphetX
+-200
+MLB · CHC @ AZ
+F5 ML CHC ML F5 -140
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235
+Sources: ClaudeAI, Pirate
+DK
+-154
+FD
+-168
+MGM ★
+-150
+Caesars
+-150
+theScore
+-155
+HardRock
+↗ no price
+ProphetX
+-174
+MLB · TEX @ CWS
+F5 ML TEX ML F5
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235 · price not logged
+Sources: ClaudeAI
+DK
++100
+FD
++102
+MGM
++110
+Caesars
++110
+theScore
++100
+HardRock
+↗ no price
+ProphetX ★
++116
+MLB · CLE @ LAA
+F5 ML CLE ML F5
+Pattern: F5 Away
+ROI -16.0%/u (lo -28%) · hit 44.7% · n=235 · price not logged
+Sources: ClaudeAI
+DK
+-166
+FD
+-176
+MGM
+-165
+Caesars
+-160
+theScore
+-175
+HardRock
+↗ no price
+ProphetX ★
+-152
+First Inning — NRFI / YRFI
+7
+⨁ All → parlay
+MLB · PIT @ SD
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK
+-135
+FD
+-160
+MGM ★
+-130
+Caesars
+-140
+theScore
+↗ no price
+HardRock
+-145
+ProphetX
+↗ no price
+MLB · TB @ DET
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Beef, BeefAI, Blackbeard, ClaudeAI
+DK ★
+-130
+FD
+-140
+MGM
+-135
+Caesars
+-130
+theScore
+↗ no price
+HardRock
+-135
+ProphetX
+↗ no price
+MLB · PHI @ SEA
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK ★
+-150
+FD
+-162
+MGM
+-160
+Caesars
+-170
+theScore
+↗ no price
+HardRock
+-175
+ProphetX
+↗ no price
+MLB · BOS @ MIA
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK ★
+-140
+FD
+-156
+MGM
+-140
+Caesars
+-150
+theScore
+↗ no price
+HardRock
+-160
+ProphetX
+↗ no price
+MLB · CIN @ SF
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK ★
+-130
+FD
+-154
+MGM
+-145
+Caesars
+-135
+theScore
+↗ no price
+HardRock
+-145
+ProphetX
+↗ no price
+MLB · COL @ WSH
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard
+⛔ ClaudeAI opposes this side on a first-inning/total market — ClaudeAI-opposed sides ran 43.4% (first_inning) / 40.4% (total), both well under breakeven.
+⛔ Solo-source NRFI is 49.4% (n=524, −35.4u) — below the ~54% its own price demands. Note 2+ sources is NOT the fix: that cohort is 52.6% (n=361, −16.1u) at real first-inning prices, which need ~55.6%. No NRFI cohort clears its price today.
+DK
+-125
+FD
+-128
+MGM ★
+-120
+Caesars
+-125
+theScore
+↗ no price
+HardRock
+-120
+ProphetX
+↗ no price
+MLB · CLE @ LAA
+1st Inning NRFI
+Pattern: Blackbeard Nrfi Any
+ROI -4.0%/u (lo -11%) · hit 51.8% · n=602 · price not logged
+Sources: Blackbeard, ClaudeAI
+DK
+-130
+FD ★
+-128
+MGM
+-130
+Caesars
+-130
+theScore
+↗ no price
+HardRock
+-130
+ProphetX
+↗ no price
+What’s running hot
+Recent form only. Nothing here changes a tier — every play above is rated by its pattern’s ROI 95% CI lower bound, and a hot market has never been shown to make a play win more (walk-forward tests the pattern, not the mood). Read a hot column against the season figure in the same row. Windows are SLATES and count picks; a · cell has fewer than 25 decided. Full table: /stats · staking: /trending <amount>.
+Market	L7	L14	L30	Season (units)	Trend
+YRFI	60.0%
+30-20 · n=50
+60.3%
+47-31 · n=78
+57.6%
+118-87 · n=205
+56.0%
+667-524 · n=1191
++93.5u
++3.7
+F5_run_line	63.6%·
+7-4 · n=11
+59.3%
+16-11 · n=27
+52.2%
+24-22 · n=46
+57.7%
+71-52 · n=123
++7.9u
++3.0!
+ML	59.9%
+202-135 · n=337
+52.7%
+358-321 · n=679
+53.7%
+843-727 · n=1570
+54.0%
+4000-3413 · n=7413
++52.7u
++1.2
+team_total	46.2%
+18-21 · n=39
+47.4%
+37-41 · n=78
+49.6%
+70-71 · n=141
+48.7%
+152-160 · n=312
+-19.0u
++0.0
+F5_ML	57.4%
+27-20 · n=47
+49.3%
+33-34 · n=67
+51.4%
+73-69 · n=142
+51.5%
+419-394 · n=813
+-35.5u
+-0.3
+total	48.7%
+127-134 · n=261
+51.1%
+262-251 · n=513
+52.1%
+515-474 · n=989
+51.5%
+1868-1761 · n=3629
+-65.7u
+-0.5
+NRFI	41.4%
+55-78 · n=133
+54.5%
+138-115 · n=253
+55.0%
+284-232 · n=516
+51.7%
+926-866 · n=1792
+-89.3u
+-0.8
+run_line	48.5%
+47-50 · n=97
+53.3%
+105-92 · n=197
+53.4%
+175-153 · n=328
+54.9%
+428-352 · n=780
++14.6u
+-2.4!
+By convergence — distinct backers, beef clones count once (games, last 30 calendar days)
+Cohort	Season	Last 30d
+NRFI 2+ distinct sources	52.4%
+n=431 games
+51.3%
+n=115 games
+NRFI one source	49.6%
+n=625 games
+55.0%
+n=229 games
+YRFI 2+ distinct sources	57.0%
+n=265 games
+53.7%
+n=41 games
+YRFI one source	54.3%
+n=551 games
+59.6%
+n=104 games
+A pooled market row can describe neither half. NRFI is the live example: the last 30 days are up on the market as a whole, and that rise sits in the one-source cohort the scorer demotes to NEGATIVE (44.1% season, n=238) — while the 2+ source cohort a play actually needs is running under the −110 line. A ! marks a market whose halves diverge; /stats <market> splits it.
+The anchor
+His own picks run 53.5% (n=1760). With 2+ other sources on the same bet: 55.5% (n=1145) — a +2.0 point lift. One other capper agreeing is not convergence: it measures the same as him alone, so the lift starts at two.
+Cohort	W-L	Hit	ROI (priced)	Coverage
+PIRATE ALONE	941-819	53.5%	+2.9%	33%
++1 other	527-465	53.1%	-2.5%	60%
++2 others	300-238	55.8%	+11.5%	76%
++3 or more	335-272	55.2%	+3.7%	87%
+ALL	2103-1794	54.0%	+3.2%	54%
+Hit% is every graded pick. ROI is the priced subset only and Coverage is how much of the cohort that is — it runs from 38% to 91% across these rows, so compare the cohorts on hit%, not on ROI. Counts his PICKS (his pick counts once for him however many others piled on), which is why this is unaffected by the convergence counting mode.
+Ballpark conditions
+Built 10:17 AM — readings marked forecast are modelled for the game hour and move during the day; stadium is MLB's own observation, which only appears near first pitch. For the live number ask the bot: /weather TEAM.
+Game	First pitch	Temp	Hum	Wind vs the park	The card on this total
+TB @ DET
+Comerica Park
+6:40 PM EDT	🌡️ 75°F
+feels 72°
+💧 44%	💨 8 mph out to LF
+↗️ 7.2 mph carrying OUT forecast
+OV 7.5 WATCH · UN 8.5 WATCH
+BOS @ MIA
+loanDepot park
+6:40 PM EDT	🌡️ 88°F
+feels 95°
+💧 64%	💨 7 mph in from CF
+↘️ 7.0 mph knocking DOWN forecast
+OV 7.0 WATCH · UN 8.0 WATCH
+COL @ WSH
+Nationals Park
+6:45 PM EDT	🌡️ 83°F
+feels 82°
+💧 39%	💨 7 mph left to right
+↗️ 2.6 mph carrying OUT forecast
+UN 9.0 WATCH · OV 8.5 NEGATIVE
+TEX @ CWS
+Rate Field
+6:40 PM CDT	🌡️ 70°F
+feels 70°
+💧 65%	💨 7 mph in from RF
+↘️ 4.0 mph knocking DOWN forecast
+UN 9.0 WATCH · OV 8.5 NEGATIVE
+CLE @ LAA
+Angel Stadium
+6:38 PM PDT	🌡️ 81°F
+feels 81°
+💧 61%	💨 13 mph out to LF
+↗️ 12.1 mph carrying OUT forecast
+UN 8.5 WATCH · OV 8.0 NEGATIVE
+CHC @ AZ
+Chase Field
+6:40 PM MST	🔥 107°F
+feels 103°
+💧 13%	💨 8 mph left to right
+↔️ blowing across forecast
+OV 8.5 WATCH
+PIT @ SD
+Petco Park
+6:40 PM PDT	🌡️ 77°F
+feels 82°
+💧 77%	💨 6 mph left to right
+↔️ blowing across forecast
+OV 7.5 WATCH · UN 8.0 WATCH
+MIN @ ATH
+Sutter Health Park
+6:40 PM PDT	🔥 90°F
+feels 85°
+💧 21%	💨 10 mph out to CF
+↗️ 10.5 mph carrying OUT forecast
+OV 10.0 WATCH · UN 10.5 NEGATIVE
+PHI @ SEA
+T-Mobile Park
+6:40 PM PDT	🌡️ 77°F
+feels 76°
+💧 53%	💨 8 mph in from RF
+↘️ 6.2 mph knocking DOWN forecast
+OV 6.5 WATCH
+CIN @ SF
+Oracle Park
+6:45 PM PDT	🌡️ 62°F
+feels 59°
+💧 85%	💨 14 mph out to CF
+↗️ 12.7 mph carrying OUT forecast
+OV 7.0 WATCH
+What these conditions have actually been worth — and why none of it is a play
+Detailed slate scorers
+slate_2026-08-24-MLB.html (picks_2026-08-24-MLB.json, 56 plays)
+Convergence tracker daily briefing. Tiers driven by the odds-aware ROI (P&L per unit) of matched historical patterns — including the MLB singleton signals (model_pct≥60, ML −150…−199 sweet spot, NRFI specialists, …) that earlier briefings never scored. TRUST is the tier to act on = ROI 95% CI lower bound > 0 (confirmed +EV) — walk-forward 54.5% / -1.0% ROI (n=352), 57% over the last 30 days. WATCH = leans +EV (CI straddles 0), NEGATIVE = mean ≤ 0, NOISE = <10 decided. SOLID is NOT a stronger tier: it is the bucket of patterns caught at their in-sample ROI peak (floor > +5%), and a peak regresses — the same signals win at TRUST-level floors but go walk-forward 44.4% / −17.4% ROI (below the −110 break-even every window) when they run this hot. Carving them out is what keeps TRUST clean at 57%, so SOLID ranks below TRUST and is a "hot, expect regression" caution, not a top play.

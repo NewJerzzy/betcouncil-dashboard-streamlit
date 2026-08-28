@@ -1,0 +1,20 @@
+Let me verify theoddsgap.com's claims live before trusting them.
+
+Testing API sport parameter defaults across categories
+
+Testing API sport parameter defaults across categories
+Confirmed real, matches Replit's field structure exactly, real 19-book list including Kalshi/Polymarket/ProphetX. Checking the sport filter and the DFS-edges endpoint:
+
+Identified API parameter failures contradicting vendor claims
+
+Identified API parameter failures contradicting vendor claims
+Found a real inaccuracy — the sport=MLB filter parameter has zero effect. Same tennis-only results as the unfiltered call, and limit=5 was also ignored (still returned 10). The pitch's specific claim about sport filtering doesn't hold. Checking the DFS-edges endpoint next:
+
+Validated endpoint accessibility and identified data staleness issue
+
+Validated endpoint accessibility and identified data staleness issue
+Verified — the core claims are largely accurate, but with two real corrections found through testing:
+Both endpoints are real, confirmed live, no auth. The 19-book list matches exactly (including Kalshi, Polymarket, ProphetX as claimed). The dfs-edges endpoint is genuinely massive — hundreds of real PrizePicks/Underdog/DK Pick6/Betr picks with goblin/demon flags, win%, market lines.
+Correction 1 — the sport filter doesn't work. I tested ?sport=MLB against the widget-data endpoint directly — identical results to the unfiltered call, still all tennis matches. The limit param was also ignored (asked for 5, got 10). This means Game Lines integration needs to fetch everything and filter client-side using each game's own sport field, not rely on the query params as the pitch describes.
+Correction 2 — the dfs-edges data looks stale. The response includes "generated_at":"2026-07-22T18:07:10" — about two weeks old as of today. That's worth confirming before treating this as a "live, real-time" feed the way the pitch frames it. It might refresh on its own schedule that just hasn't hit again, or it might be closer to a periodic snapshot than a live feed — I can't tell which from one fetch.
+Given this is two separate, sizable integrations (a Game Lines widget source + a full-board edge-matching system), rather than build both blind, tell me: want me to build the Game Lines source first (smaller, and I already know exactly what needs correcting), then come back and re-verify dfs-edges' freshness before committing to the Full Board piece? Or do you want both built now with the staleness caveat flagged in the code itself?

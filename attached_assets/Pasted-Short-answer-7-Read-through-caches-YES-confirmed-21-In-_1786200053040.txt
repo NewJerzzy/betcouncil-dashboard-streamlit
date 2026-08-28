@@ -1,0 +1,19 @@
+Short answer:
+
+#7 (Read-through caches): YES — confirmed.
+#21 (In-season gating): YES — confirmed.
+#5 (ScriptRunContext propagation): NO — I couldn’t find any evidence in the repo that add_script_run_ctx / ScriptRunContext propagation exists.
+#6 (as_completed misuse fixed): NO — I could not verify the historical misuse/fix; as_completed is still used in live code (legitimately in several scripts), and I cannot find the _fetch_parallel implementation to confirm the claimed fix.
+Evidence (quick pointers)
+
+#7 caches: many uses of Streamlit caching (examples: sdv_source.py uses @st.cache_data). Also the repo docs describe multi-layer caching (GEM_INSTRUCTIONS_V52.md).
+Example: sdv_source.py — multiple @st.cache_data functions.
+#21 in-season gating: scripts check seasonal activity and skip off-season targets (e.g., game_board_snapshot_headless.py uses in_season_sports(); betcouncil_auto_scraper.py has season gating and config-driven enables).
+#5 missing: search for add_script_run_ctx and ScriptRunContext returned no results; the token _fetch_parallel only appears in documentation (GEM_INSTRUCTIONS_V52.md), not as a symbol I could inspect in code.
+#6 ambiguous: as_completed is used legitimately (examples: betcouncil_auto_scraper.py, linestar_harvester.py). The repository contains docs claiming the as_completed misuse was fixed, but I could not locate the referenced _fetch_parallel implementation or the exact patched code to verify.
+Notes and next steps
+
+My code search is limited to the repository content I can read here; results may be incomplete. If you want conclusive verification for #5/#6, give me either:
+The file path (or commit/branch/ref) for app_core.py or the module that defines _fetch_parallel, or
+A grep target string/line numbers you referenced (you previously mentioned app_core.py:12513-12536 / 12557 etc. — if you can point me to that exact file path or commit OID, I’ll open and inspect those lines directly).
+Alternatively I can run broader scans for likely synonyms (e.g., any function that wraps ThreadPoolExecutor and injects Streamlit context) if you want me to keep hunting. Which do you prefer?

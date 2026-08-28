@@ -1,0 +1,32 @@
+Let me verify PropCruncher's actual technical characteristics before commenting — every other "needs Playwright" claim this session turned out to have a real underlying JSON API when actually checked.
+
+Reconsidering Playwright necessity; server-side rendering undermines browser requirement
+Reconsidering Playwright necessity; server-side rendering undermines browser requirement
+
+This directly contradicts Replit's Playwright claim. The page rendered fully with real content — player names, props, lines, Best Play Score ratings — via a plain fetch, no browser automation needed. There's also a "Developer" link suggesting a real documented API might exist. Checking that first:
+
+Weighed tool limitations and proposed definitive testing approach
+Weighed tool limitations and proposed definitive testing approach
+
+Robots.txt blocks /developer specifically — respecting that. But the main page rendering fully is the key finding. Let me confirm this with a plain requests.get() via GH Actions (not my own fetch tool, which might behave differently) since this directly determines what the scraper actually needs to look like:
+
+Reconciled bot detection mechanics and clarified PropCruncher scraper architecture
+Reconciled bot detection mechanics and clarified PropCruncher scraper architecture
+
+A more nuanced picture than either Replit's claim or my first fetch suggested. My own fetch got full real content (confirming the site does NOT require JS execution to render data — Replit's "CSR" reasoning is wrong). But a plain requests.get() from GitHub Actions gets a 403. So the real blocker isn't rendering — it's bot-detection blocking simple scripted requests, a different problem entirely. Cleaning up and giving you the accurate picture:
+
+Clean up test scaffolding, nothing was pushed to the app itself per instruction
+Clean up test scaffolding, nothing was pushed to the app itself per instruction
+
+You're right that PropCruncher and theoddsgap are different products — that part checks out. But I checked Replit's technical claim before repeating it, and it's wrong in an important way.
+
+Replit's claim: "It's CSR, needs Playwright to render JavaScript." Not accurate. I fetched the actual page myself and got back full real content — player names (Frederick Freeman, Jackson Merrill, real props like "Hits O 0.5", real "S" ratings) with zero JavaScript execution. If it needed client-side rendering to produce that data, my fetch wouldn't have seen it.
+
+What's actually happening: I then tested a plain requests.get() from GitHub Actions specifically, and that got a 403. So the real blocker isn't rendering — it's bot-detection distinguishing "browser-like request" from "script-like request." That's a genuinely different problem than CSR, and it matters for what the fix looks like:
+
+Playwright would likely work, since it presents a full browser fingerprint — but it's solving the wrong problem as diagnosed, and it's the heaviest possible fix (new dependency, slower, more fragile in CI)
+A lighter fix — real browser headers (User-Agent, Accept-Language, etc.) on a plain requests call — might get through without any new dependency at all, the same pattern that's worked for other lightly-protected sites this session. I haven't confirmed this would work, only that the block is header/fingerprint-based rather than JS-based, which makes it worth trying before reaching for Playwright.
+
+On game_board_snapshot_headless.py — Replit's right that it's not reusable here, wrong reason doesn't matter much since the conclusion holds: it's built for a specific game-lines snapshot job, not a generic scraping pattern.
+
+Bottom line on the shape of the scraper: the JSON output shape Replit sketched (player/stat/line/side/score) is a reasonable target. But before committing to Playwright as "the main lift," it's worth trying the lighter header-based approach first — cheaper, faster, and matches what's actually blocking it rather than what was assumed to be blocking it. Nothing pushed, as asked.

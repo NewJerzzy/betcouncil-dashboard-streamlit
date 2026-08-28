@@ -1,0 +1,17 @@
+Confirmed real, fresh (11 min old), 300 edges with real MLB stars (Vladimir Guerrero Jr., Elly De La Cruz, Corbin Carroll). Now verifying the actual consumer wiring in the live repo matches what I built, and that matching would find real overlaps:
+
+Flagging intentional design limitation in badge visibility
+
+Flagging intentional design limitation in badge visibility
+Confirmed live and matches exactly what was built. One honest caveat I should flag: this only renders in Full Board's Cards view (not the default Table view) — worth being upfront about that visibility limit. Testing the actual name-matching logic works correctly against real data:
+
+Verified data pipeline integrity across multiple system components
+
+Verified data pipeline integrity across multiple system components
+Confirmed — yes, theoddsgap DFS data is genuinely flowing into the model. Checked every link in the chain, not just assumed it:
+Real, fresh data exists right now: 300 edges, captured 11 minutes ago, real current MLB players (Vladimir Guerrero Jr., Elly De La Cruz, Corbin Carroll, Freddy Peralta — this is today's actual slate, not stale sample data)
+The consumer function is correctly wired to the new post-split file location (market_feeds.json), confirmed against the live repo, not an assumption from memory
+Full Board's matching code is live and correct — calls the consumer once, matches by normalized player name against every card
+The name-matching itself is robust — tested it against real formatting variants (e.g. "Vladimir Guerrero Jr." vs "Vladimir Guerrero Jr" without the period both normalize to the same match)
+One honest limitation worth knowing: this only renders in Full Board's Cards view, not the default Table view — that was a deliberate choice earlier to avoid touching the dense, already-tested table-row code. If you're checking Full Board and don't see Market Edge badges, switch to Cards view first.
+Given real overlapping player pools (both theoddsgap and your other prop sources are pulling from the same live MLB slate), you should see real matches show up on Cards whenever a player on your board also has a theoddsgap PrizePicks/Underdog/DK/Betr line today.

@@ -1,0 +1,25 @@
+Found something important Replit's pitch didn't mention — the arbitrage response itself contains "limited":true, "trialActive":true. This directly contradicts the "no subscription needed" framing. Checking what this actually means:
+
+Reconciling pricing tiers and distinguishing premium feature access
+Reconciling pricing tiers and distinguishing premium feature access
+
+Real, material finding that changes the plan. The homepage confirms: "Free: daily value picks & analytics. PRO ($9.99/mo): arbs, alerts, simulator & bankroll sizing."
+
+The /api/picks/today endpoint is genuinely free — confirmed. But the arbitrage endpoint is a paid feature ($9.99/mo). What that API call returned was a "limited":true, "trialActive":true, "totalCount":1" trial preview, not stable ongoing free data. Replit's pitch presented both endpoints as equally free with "no subscription" — that's not accurate for the arb side. Checking the track-record claim too:
+
+Delineated feature distinctions and synthesized implementation guidance
+Delineated feature distinctions and synthesized implementation guidance
+
+Can't fetch that specific URL without it appearing in a prior result, but the core finding already stands. Here's the accurate picture:
+
+Real and safe to build on: /api/picks/today — genuinely free, no auth, confirmed live with real current data (Nationals ML, Sky ML, Aces ML — real games, real odds, real reasoning strings). This part of Replit's spec is accurate.
+
+Not what it was presented as: /api/arbitrage/today is a $9.99/mo PRO feature. The unauthenticated call happened to return data, but the response itself says "limited":true, "trialActive":true, "totalCount":1" — that's a limited trial leak, not a stable free source. Building a permanent "Arbitrage Opportunities" section around this means building on top of something the site is actively trying to monetize and could lock down, throttle, or reduce to nothing at any time without warning. I wouldn't treat this as a real data source to integrate.
+
+Corrected recommendation:
+
+Wire the picks endpoint, skip the arbitrage endpoint. Real value, real reliability, matches how every other source got built this session — verified before trusted, not verified after the fact.
+Tab placement — Predictions, not Game Lines. This is another source with its own independent picks and reasoning, same category as SignalOdds/Pickswise/BetQL/WiseGuyTeam — it belongs in the "each source's own take" pattern already built there, not bolted onto Game Lines' internal model output.
+One more thing worth checking before building: the response includes a real, visible track record (result, profitUnits, CLV) per pick — that's genuinely valuable and worth surfacing, more so than the arb angle ever was.
+
+Want me to build the picks integration into Predictions the way I built the others?

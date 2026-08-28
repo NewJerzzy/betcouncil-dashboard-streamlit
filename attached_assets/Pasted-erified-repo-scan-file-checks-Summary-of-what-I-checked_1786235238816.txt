@@ -1,0 +1,68 @@
+erified (repo scan + file checks). Summary of what I checked and what remains:
+
+What I confirmed
+
+gist_lock.py exists and is present in scripts/ (scripts/gist_lock.py). Good — the lock helper you mentioned is real.
+Many consolidation changes are present in the code (I saw merger logic in prizepicks and other scripts that use the lock to write combined files).
+I could NOT verify the live Gist file count from the repo (no API access here), so I accept your live-check assertion that the Gist is ~250 files and that the secondary write-rate limit is the active blocker right now.
+Remaining workflow / CI issues I found in the repo (need attention once the GitHub write-rate cooldown finishes)
+
+Heredoc secret expansion still incorrect in daily_board_grading.yml
+
+File: .github/workflows/daily_board_grading.yml
+Problem: the secrets block is written with a single-quoted heredoc (<< 'EOF') so ${...} will NOT expand. This will write literal placeholders into .streamlit/secrets.toml.
+Action: change << 'EOF' → << EOF.
+Token-name inconsistency still present
+
+Multiple workflows reference different secret names (PICK6_GIST_TOKEN, PICK6_GIST_TOKEN_2, and at least one uses GIST_TOKEN). Examples seen: linestar_refresh.yml, ls_verify.yml, oddsshark_consensus_refresh.yml, etc.
+Problem: inconsistent tokens make it easy to run a workflow with a collaborator token that cannot create files, or to override built-in GITHUB_TOKEN unintentionally.
+Action: standardize on one secret name (recommend GIST_TOKEN or PICK6_GIST_TOKEN_OWNER), update workflows to export that env var, and change scripts to read that env var. Do NOT overwrite built-in GITHUB_TOKEN unless intentional.
+Many workflows still install only requests (missing pinned requirements)
+
+I saw many workflows doing: run: pip install requests
+Problem: scripts import bs4, playwright, curl_cffi, etc., so jobs will fail with ImportError.
+Action: add a repo-level requirements.txt and change workflows to pip install -r requirements.txt (Playwright jobs still need playwright install steps).
+Several workflows still override GITHUB_TOKEN with a secret
+
+Example: linestar_refresh.yml and others set env GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}.
+Problem: confusing/resets built-in token behavior and scope; prefer a dedicated env var (GIST_TOKEN).
+Action: use dedicated env like GIST_TOKEN and leave GITHUB_TOKEN alone.
+Some workflows still use the old exit-code harness (set +e / echo exit_code) — fragile but present
+
+Examples: unabated_playwright_probe, baseballsavant_refresh.
+Action (optional): replace with continue-on-error + explicit conclusion check, or keep but ensure harness always writes $GITHUB_OUTPUT even on interpreter failure.
+Writers and shared-file behavior are updated to use gist_lock.py in many scripts
+
+Good: scripts such as prizepicks_ssr_scraper.py, wagerbird_refresh.py, signalodds_refresh.py use acquire_lock/release_lock flows.
+Note: lock logic is present and appears used correctly; still depends on token permissions and the Gist being below cap.
+The repo contains preflight rate-limit checks in some scripts
+
+e.g., _rate_limit_ok() in signalodds_refresh.py checks GitHub rate_limit and skips runs when budget low — good practice.
+But you reported the secondary write-rate limit (rate-limiting at GitHub side) is tripped — that is an infra problem; scripts will need cooldown.
+Practical verification commands you can run locally (copy/paste in repo root) — these will show the exact remaining occurrences and help quantify scope:
+
+Count workflows referencing each secret:
+
+grep -R --line-number "PICK6_GIST_TOKEN" .github/workflows || true
+grep -R --line-number "PICK6_GIST_TOKEN_2" .github/workflows || true
+grep -R --line-number "GIST_TOKEN" .github/workflows || true
+Find workflows that only install requests:
+
+grep -R --line-number "pip install requests" .github/workflows || true
+Find heredoc usages (to locate any other single-quoted heredoc problems):
+
+grep -R --line-number "<< 'EOF'" .github/workflows || true
+Find workflows that set GITHUB_TOKEN from a secret:
+
+grep -R --line-number "GITHUB_TOKEN:.*secrets" .github/workflows || true
+Show scripts that call acquire_lock / release_lock:
+
+grep -R --line-number "acquire_lock" scripts || true
+Post-rate-limit retest steps (what to do once GitHub cooldown clears)
+
+Re-run the failing workflows (workflow_dispatch) for the LineStar jobs (IDs you listed) and check run logs:
+Look for gist PATCH responses and their bodies. If secondary write-rate limit appears, the logs will include an error with explanatory text — capture full response body.
+If you see 403 / 429 / "secondary write-rate limit" messages:
+Wait the cooldown suggested in GitHub docs (a few minutes typically) and re-run, or space re-runs by 30–60s.
+If commands show "file count near cap" (you already reported ~250), you’re in good shape — no immediate deletion required. If the count climbs again near 300, consider pruning debug files as earlier discussed.
+Confirm scripts using gist_lock successfully acquire/release lock in logs (search for "acquire evbets_combined lock" or "Could not acquire").

@@ -1,0 +1,46 @@
+Let me verify the most consequential claim immediately — that gist_lock.py doesn't exist directly contradicts what I built and tested extensively today.
+
+Exposed critical flaw in Replit's diagnostic analysis regarding lock overhead
+Exposed critical flaw in Replit's diagnostic analysis regarding lock overhead
+
+Confirmed false again — same class of error. gist_lock.py exists (7360 bytes), imported by 27 scripts right now. "Does not exist, lock calls = 0" is flatly wrong, and it's load-bearing — Replit used that false premise to rule out locking overhead as a factor. Also: thescore_scores_refresh doesn't exist anymore — I deleted it earlier today (confirmed dead consumer), but it's listed in the staggering table as if still active. Verifying the remaining 7 crons directly before trusting the plan:
+
+Recognized redundant configuration already implemented from prior fix
+Recognized redundant configuration already implemented from prior fix
+
+unabated_refresh is already staggered at exactly the value Replit proposes — it's not still on */15, and wasn't fixed by this recommendation, it already was, earlier this session. So the real remaining cluster is 6, not 8. Building the corrected plan using live-verified data, avoiding collisions with already-staggered marks from earlier work:
+
+Orchestrated staggered minute offsets to eliminate concurrent workflow collisions
+Orchestrated staggered minute offsets to eliminate concurrent workflow collisions
+
+Building the corrected stagger for the real 6, using genuinely unused minute marks:
+
+Ran a command
+Ran a command
+
+Using Python instead:
+
+Ran a command
+Ran a command
+
+Validating YAML for all 6 before pushing:
+
+Ran a command
+Ran a command
+
+Pushing:
+
+Ran a command
+Ran a command
+
+Applied — corrected version, verified before acting.
+
+Two real errors caught in Replit's analysis before I touched anything:
+
+"gist_lock.py doesn't exist, lock calls = 0" — false. It exists, 27 scripts import it, actively used all session. This was used to wrongly rule out locking overhead as a factor.
+thescore_scores_refresh — doesn't exist, I deleted it earlier today (confirmed dead). Listed in the stagger table as if active.
+Also found: unabated_refresh was already staggered to the exact value proposed — not a */15 workflow needing this fix at all, from earlier work this session.
+
+The real, remaining */15 cluster was 6 workflows, not 8. Staggered those 6 (auto_scraper, lineterminal, oddsapiio_bet365, prizepicks, prophetx, sharptrack) to distinct minute marks that don't collide with any existing schedule in the repo — verified against the full live cron list first, not guessed. Same 15-minute freshness, no simultaneous burst.
+
+The core diagnosis (simultaneous same-minute writes triggering GitHub's secondary limit) is real and matches everything observed — that part checks out.

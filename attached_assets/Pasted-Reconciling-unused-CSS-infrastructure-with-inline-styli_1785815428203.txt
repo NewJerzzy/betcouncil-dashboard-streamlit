@@ -1,0 +1,62 @@
+Reconciling unused CSS infrastructure with inline styling patterns
+Reconciling unused CSS infrastructure with inline styling patterns
+.bc-card hover CSS exists but is completely unused (zero applications). There IS a generic div[style*="border-radius:8px"]:hover rule though — checking if my actual cards match that radius:
+
+
+Verifying remaining claims before architecting fixes
+Verifying remaining claims before architecting fixes
+Confirmed — cards use 10px/12px radius, not the 8px the existing hover CSS covers. That claim is accurate. Moving to execution on the verified, safely-buildable items:
+
+
+Expediting remaining feature implementations within time constraints
+Expediting remaining feature implementations within time constraints
+Confirmed — real tier badge is even smaller than claimed (padding:1px 6px; font-size:11px). Finding all occurrences of this pattern to fix consistently:
+
+
+Identified single tier badge styling issue and prepared targeted fix
+Identified single tier badge styling issue and prepared targeted fix
+Now the card hover state — extending to cover the actual radii used:
+
+
+Ran 2 commands, edited a file
+Ran 2 commands, edited a file
+Syntax check both, then checking odds display for the pill-chip conversion:
+
+
+Syntax check so far
+Syntax check so far
+Now checking Full Board's sidebar filter to add the quick-filter pill row:
+
+
+Discovering existing sort functionality contradicts earlier assessment
+Discovering existing sort functionality contradicts earlier assessment
+Both claims false — already exist. Sort ("Sort by": BQ Score/Edge%/L5 Hit%/Line/Reliability) and Tier filter are both already right there in the primary filter bar, not buried in a sidebar. Confirming they're actually applied, not just displayed:
+
+
+Prioritizing odds display verification before tackling remaining features
+Prioritizing odds display verification before tackling remaining features
+Confirmed fully working (real sort_map, real caption confirmation). Both claims wrong — ignoring, no action. Checking odds display format for the pill-chip conversion:
+
+
+Prioritized highest-impact odds formatting over comprehensive codebase refactor
+Prioritized highest-impact odds formatting over comprehensive codebase refactor
+Given odds display is decentralized across dozens of inline locations with no single formatting function, converting only some sites would create visual inconsistency worse than the current uniform state — skipping rather than doing it partially. P&L/win-rate charts declined for the same reason as the odds sparklines — real data-storage infrastructure needed first, not a quick add. Final syntax check and pushing the confirmed fixes:
+
+
+Ran 2 commands, edited a memory
+Ran 2 commands, edited a memory
+False, ignored:
+
+Full Board sort — already exists, real, working
+Tier filter "buried in sidebar" — it's in the primary filter bar
+"No charting library at all" — st.line_chart already in use
+Fixed and pushed:
+
+Tier badges (were 11px/1px padding) → 13px, 3px/9px padding
+Card hover state → extended to actual 10px/12px card radii (was only matching an unused 8px)
+Declined, real reasons:
+
+Odds pill chips — decentralized across dozens of inline sites, no shared function; fixing some would look worse than fixing none
+Sparklines / P&L charts — need real historical-data storage that doesn't exist yet
+Proactive push alerts — Streamlit is pull-based, no true push
+Pick sharing, global search, SVG icon set, sport-color palette, simplified mode — new infrastructure or design calls, not scoped fixes

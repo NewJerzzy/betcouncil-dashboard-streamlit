@@ -1,0 +1,48 @@
+mmediate unblock (do this first)
+
+Inspect the Gist file list and backup everything (DO NOT DELETE YET)
+List files and count: curl -s -H "Authorization: Bearer $GIST_TOKEN" "https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5" | jq '.files | keys | length, keys'
+Backup all files to a local directory (recommended): mkdir -p gist_backup &&
+curl -s -H "Authorization: Bearer $GIST_TOKEN" "https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5"
+| jq -r '.files | to_entries[] | .key + " " + (.value.raw_url // .value.url)'
+| while read name url; do curl -s -H "Authorization: Bearer $GIST_TOKEN" "$url" -o "gist_backup/$name"; done
+Identify candidates to delete (old/diagnostic or tiny files)
+List names + sizes: curl -s -H "Authorization: Bearer $GIST_TOKEN" "https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5"
+| jq -r '.files | to_entries[] | [.key, (.value.size|tostring), (.value.truncated|tostring)] | @tsv'
+| sort -k2 -n
+Pick files that are obviously diagnostic/dead (e.g., tiny debug files, repurposed legacy names mentioned in docs).
+Delete (or repurpose) files to free slots (example: delete betcouncil_oddsshark_CFB.json)
+Delete a file: curl -s -X PATCH -H "Authorization: Bearer $GIST_TOKEN"
+-H "Accept: application/vnd.github+json"
+https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5
+-d '{"files": {"betcouncil_oddsshark_CFB.json": null}}' | jq .
+Confirm file count decreased to < 300 (re-run count in step 1).
+Fast temporary fix (if you cannot delete files now)
+
+Use an owner-token capable of creating files and then consolidate into a single file name that many scripts will PATCH. But the cap still prevents infinite growth — prefer deletion.
+Short-term repo changes to avoid repeat failures (I can PR these)
+
+Standardize secret name across all workflows
+Pick one: GIST_TOKEN (or PICK6_GIST_TOKEN_OWNER for owner-level) and update all workflows to set env GIST_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }} and scripts to read GIST_TOKEN (instead of varying PICK6_GIST_TOKEN_2 / PICK6_GIST_TOKEN / GIST_TOKEN).
+Make all gist writers PATCH existing filenames only and not attempt to create new names by default
+Update writers to accept a TARGET_FILENAME env var and default to a known existing filename.
+Add idempotent write behavior
+Read current file content, compute diff, PATCH only if content changed.
+Add pre-flight check in writers: if gist file count == 300 then either (a) refuse to create new files and log explicit error, or (b) delete/evict a candidate only if an operator-approved env var is present.
+Add a simple writer backoff/lease pattern:
+Read → attempt write with retries + exponential backoff and random jitter; if a 409 or 429 occurs, retry read and reattempt.
+(Do NOT implement cross-process locks that rely on non-existent gist_lock.py — will add a small in-repo gist_lock helper or use repository-based lock if you want.)
+Create/standardize requirements.txt and update all workflows to pip install -r requirements.txt.
+Fix heredoc in daily_board_grading.yml: change << 'EOF' to << EOF so secrets expand.
+Longer-term improvements (next PRs)
+
+Consolidate many per-sport files into time-sharded combined files to reduce count.
+Implement a centralized gist-writer process (one Action or scheduled job that receives payloads, merges, and writes) to reduce writers.
+Add a retention/eviction policy and automated consolidation during a maintenance window.
+Add instrumentation & workflow-level debug logging for gist write errors.
+What I can do right now (choose one)
+
+A: Create an emergency PR that (safe-only) standardizes the GIST_TOKEN env name across all workflows, replaces pip install requests with pip install -r requirements.txt where obvious, fixes the heredoc, and adds a debug step to failing workflows so you can see the exact gist API error in Action logs. This PR does NOT delete anything.
+B: Create the same PR plus implement an idempotent gist_write wrapper and small gist_lock utility (file-based backoff) and update writers to use it (still dry-run until you provide owner token).
+C: Do nothing until you free gist slots (you or ops delete legacy files). I can then follow up with PRs to prevent recurrence.
+Recommended immediate action: free at least 1–5 gist slots right now (delete repurpose-debug files) so failing workflows can create needed files; then merge PR A to standardize tokens + deps + debug, re-run, capture any further errors.

@@ -1,0 +1,21 @@
+Let me verify this directly rather than take it at face value — I already tried a Chrome User-Agent from GH Actions and got 403, so I want to see if the exact headers proposed here make a real difference, and confirm the JSON-LD structure is genuinely there.
+
+Debunked headers-only solution; confirmed Cloudflare blocks automated requests regardless
+Debunked headers-only solution; confirmed Cloudflare blocks automated requests regardless
+
+Confirmed false, tested directly. With the exact proposed headers, from GitHub Actions, this returns a genuine Cloudflare challenge — "Just a moment..." with challenges.cloudflare.com in the CSP header. Not a User-Agent problem. This is the same real Cloudflare-protection category as MyBookie and Bookmaker already confirmed this session. Cleaning up:
+
+Clean up test scaffolding
+Clean up test scaffolding
+
+Both revised claims don't hold up. Here's what I actually confirmed, testing the exact code proposed:
+
+"Same pattern that worked for EVBets, VSIN, BookMaker" — this claim is backwards. BookMaker is explicitly one of the sites this session already confirmed needs manual cookie refresh because of Cloudflare — it's in the "known dead-end" list, not the "working pattern" list. Citing it as proof headers are sufficient is citing a site that itself isn't fixed by headers.
+
+The JSON-LD claim never got tested against reality — it hit the wall first. With the exact headers proposed, from GitHub Actions (the only place this can actually run on a schedule), the response is a genuine Cloudflare interstitial: <title>Just a moment...</title> with challenges.cloudflare.com referenced in the Content-Security-Policy. That's Cloudflare's real JS-challenge page, not the site's actual content — so there was no JSON-LD to find in that response at all.
+
+Why my own fetch worked and this doesn't: Anthropic's fetch tool almost certainly has its own IP standing or challenge-handling that lets it through — that's not something a requests.get() from a GitHub Actions runner inherits. Datacenter IPs are exactly what Cloudflare's bot challenge is built to catch, regardless of what User-Agent string rides along.
+
+So, accurately: PropCruncher is not CSR (that part was right), but it is genuinely Cloudflare-gated for scripted/datacenter access — the same category as MyBookie and BookMaker already sitting in this repo's confirmed dead-end list, not a simple header fix. A 30-line fetcher built on this plan would 403 on every single scheduled run.
+
+Not worth building as proposed. If you still want this data, the honest options are the same ones already established for Cloudflare-gated sources: a real browser-based harvester (Tampermonkey, like several other sources here) that runs from your own browser session rather than GitHub's servers, or accepting it's not accessible right now. Nothing pushed, per your standing instruction to verify before building.

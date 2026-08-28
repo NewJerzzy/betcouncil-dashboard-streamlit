@@ -1,0 +1,97 @@
+Let me verify this myself with actual cache-busting headers rather than accept the explanation — I can test this directly with curl.
+
+Test dfs-edges directly with cache-busting headers from my own sandbox
+
+Test dfs-edges directly with cache-busting headers from my own sandbox
+My sandbox gets a 403 directly (blocked, matching the pattern seen with many domains this session — not evidence against the claim). Testing via GH Actions instead, my established reliable channel:
+
+Validated API data freshness and diagnosed CDN caching behavior
+
+Validated API data freshness and diagnosed CDN caching behavior
+Confirmed independently via GH Actions — the core claim is true. Both with and without the special headers, I got the exact same fresh data: generated_at: 2026-08-04T15:57:50 (today), real event "Dodgers @ Cubs" on Aug 5. The dfs-edges data is genuinely live.
+One nuance my test refined: from GH Actions, I got fresh data without the Cache-Control/Pragma headers too — so the staleness I originally saw was likely specific to my earlier fetch tool routing through a cached path, not a universal requirement. I'll include the headers defensively anyway since they can't hurt, but the real fix is just using a standard request from the scraper (which I've now confirmed works). Building both integrations now.
+
+Architected dual refresh mechanisms and validated edge data structure
+
+Architected dual refresh mechanisms and validated edge data structure
+Now building both real integrations. First, the widget-data (Game Lines) scraper:
+
+Ran a command, created a file
+
+Ran a command, created a file
+Syntax check, then building the DFS-edges scraper:
+
+Refined response payload by distilling essential fields from massive dataset
+
+Refined response payload by distilling essential fields from massive dataset
+Syntax check both scripts, then building the workflows:
+
+Syntax check both scripts
+
+Syntax check both scripts
+Testing both normalizers against the exact real captured data before proceeding:
+
+Ran 2 commands
+
+Ran 2 commands
+Both confirmed correct — mult/mult_under correctly included only when present. Now building the workflows:
+
+Created 2 files, ran a command
+
+Created 2 files, ran a command
+Now the fetchers.py consumer functions for both:
+
+Ran a command, edited a file
+
+Ran a command, edited a file
+Syntax check:
+
+Syntax check
+
+Syntax check
+Now wiring displays. First, Game Lines — adding a theoddsgap comparison caption:
+
+Ran 4 commands, edited a file
+
+Ran 4 commands, edited a file
+Syntax check:
+
+Syntax check
+
+Syntax check
+Testing the caption logic against the real captured game data:
+
+Test caption output against real captured game
+
+Test caption output against real captured game
+Now the Full Board edge-matching. Finding the card render point:
+
+Recalibrated understanding of data structure and caching mechanism
+
+Recalibrated understanding of data structure and caching mechanism
+This is a different sub-feature (board-paste analyzer), not the main Full Board rows. Finding the correct location:
+
+Ran 2 commands
+
+Ran 2 commands
+Given the risk of modifying the dense, already-tested table row code (the same one I deliberately avoided touching earlier this session), adding the Market Edge badge to the Cards view instead — safer, and I already know its structure well since I built it:
+
+Ran a command, edited a file
+
+Ran a command, edited a file
+Syntax check:
+
+Syntax check
+
+Syntax check
+Testing the Market Edge display against real captured data:
+
+Test edge display against real captured PrizePicks goblin data
+
+Test edge display against real captured PrizePicks goblin data
+Confirmed correct. Functional import check, then pushing everything:
+
+Functional and final syntax check
+
+Functional and final syntax check
+Pushing all 6 files:

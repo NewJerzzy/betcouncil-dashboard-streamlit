@@ -1,0 +1,82 @@
+Removing _pf_dk_sal and _pf_parlayplay — deleting the function defs, replacing tuple entries with None/removing to keep positional order simple:
+
+Navigated intricate code refactoring requiring precise multi-location coordination
+
+Navigated intricate code refactoring requiring precise multi-location coordination
+Given real risk of miscounting an 84-slot positional tuple by hand, doing this programmatically (match by name, not manual counting) to avoid breaking anything:
+
+Ran a command
+
+Ran a command
+Now removing them from both tuples (call-tuple and result-tuple), matched by name to keep positional alignment safe:
+
+Weighed downstream dependencies before refactoring data pipeline architecture
+
+Weighed downstream dependencies before refactoring data pipeline architecture
+Stopping — found a real risk before breaking anything. Both dead slots have real downstream consumers (dk_salaries feeds apply_dk_salary_signal + session_state; parlayplay_props_raw feeds a real elif branch). Removing them from the 84-slot positional tuple requires touching multiple downstream lines too — real risk for a fix that's already near-zero cost (a lambda returning [] instantly costs microseconds, no network I/O). Reverting my def-removal to avoid leaving the tuple pointing at nothing:
+
+Ran a command
+
+Ran a command
+Restoring both defs to keep the tuple valid:
+
+Analyzed performance optimization strategy and validated architectural improvements
+
+Analyzed performance optimization strategy and validated architectural improvements
+Good — net zero change, safe. Now the real, valuable fix: moving EVBets + VSIN splits into the parallel batch (confirmed genuinely sequential today). Checking exact code:
+
+Evaluated structural trade-offs for adding parallel functions
+
+Evaluated structural trade-offs for adding parallel functions
+Adding as 2 new slots at the end of the tuple (safest — no renumbering of existing 84 slots needed):
+
+Edited 2 files, ran a command
+
+Edited 2 files, ran a command
+Now adding to both tuples (call-tuple end, result-tuple end):
+
+Ran a command, edited a file
+
+Ran a command, edited a file
+Now the result-unpack tuple end:
+
+Ran a command, edited a file
+
+Ran a command, edited a file
+Now replacing the old sequential post-batch calls with direct use of the new parallel results:
+
+Replace sequential post-batch EVBets/VSIN-splits calls with results already fetched in the parallel batch above
+
+Replace sequential post-batch EVBets/VSIN-splits calls with results already fetched in the parallel batch above
+Now removing the now-redundant duplicate slot definitions I added earlier by mistake, cleaning up, and syntax checking:
+
+Ran a command
+
+Ran a command
+Clean — no leftovers (that first attempt never landed since the str_replace failed). Syntax check:
+
+Ran a command
+
+Ran a command
+Verifying positional count matches exactly between both tuples (critical for correctness):
+
+Ran 2 commands
+
+Ran 2 commands
+Found the real one at line 14030. Recounting precisely:
+
+Ran a command
+
+Ran a command
+Both tuples: 95 = 95, exact match, positional alignment confirmed safe. Final check and push:
+
+Ran 3 commands
+
+Ran 3 commands
+Pushed. EVBets + VSIN splits now fire in the parallel batch instead of sequentially after it — 2 real HTTP round-trips removed from the critical path.
+Dead-slot cleanup: not done. Real downstream consumers exist for both (dk_salaries, parlayplay_props_raw), and both are already zero-cost no-ops (no network call). Risk of a manual 95-slot renumber isn't worth a near-zero gain — skipped correctly, not forgotten.
+On the new assessment — same verdict as last time: mixed.
+Dead slots, real fix framing (#3) — accurate on the code, but "consume a thread slot" overstates the cost. A return [] lambda is microseconds, not meaningful load. Correctly identified, wrongly weighted.
+Unabated/EVBets/VSIN splits sequential (#2) — accurate for EVBets + VSIN splits, just fixed. Unabated was already wrong — already confirmed in the parallel batch before this session even started, not sequential.
+Bobby's Bets "4 sequential, biggest win" (#1) — same false claim as the last assessment, repeated. Confirmed twice now: all 5 Bobby's Bets slots already sit in the parallel batch. No sequential chain exists to fix.
+Net: 1 of 3 claims fully accurate and now fixed, 1 partially accurate (Unabated wrong, others right, fixed), 1 flatly false and unchanged because there was nothing to change.

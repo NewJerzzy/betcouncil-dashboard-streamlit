@@ -1,0 +1,29 @@
+document with the screenshots is far better than a secondhand summary. A few things upfront so we both know what this will and won't tell us:
+
+What I can actually do with 100 slips: look at real player names, real prop types, real lines, real odds, and real matchup context across all of them, and tell you honestly what shows up repeatedly — sport distribution, position/role patterns, line ranges, odds ranges, book patterns, day-of-week or matchup-context patterns. That's real, not invented.
+
+What I still can't fix by having more of them: if all 100+ are winners, I can tell you what winning slips have in common with each other — I can't tell you if that pattern actually beats the market, because I never see what a losing slip with the same pattern looks like. A rule that "worked" 100 times out of 100 observed could still be a coin flip if this capper posts 300 losers you never saw. I'll flag this honestly in whatever I find rather than oversell a correlation as an edge.
+
+One thing worth doing if it's possible: if you have access to this capper's losing slips too — even just knowing roughly how often they post picks and roughly their real win rate — that changes this from "here's a pattern" to "here's a pattern that might actually be worth testing," which is a meaningfully different and more useful thing to hand off to be built.
+
+Go ahead and post the document when it's ready. Once I see them, I'll tell you plainly what's real, what's noise, and — if anything looks genuinely specific and repeatable — exactly what data we'd need to check whether it holds up before building anything.
+
+im not worried about the winning or losing, but more focused on if there is a pattern spotted, why are the players being selected, why are the certain props being selected, do they have a forumula we can spot.   thats my goal
+
+Excavated selection patterns to decode underlying capper methodology
+Excavated selection patterns to decode underlying capper methodology
+
+That's a cleaner, more honest goal — and it's genuinely something I can help with. Reverse-engineering "why this player, why this prop" from the pattern of selections is a real, tractable thing to look at, separate from whether the picks actually win.
+
+One thing worth setting expectations on upfront: what I'll be able to give you is common threads across the picks — recurring characteristics in player role, prop type, matchup context, line placement, odds range, and so on. That's a real, honest observation. What I can't do is confirm that's the formula this capper consciously uses — I don't have their reasoning, just the output. If five different characteristics show up together repeatedly, that's a strong signal worth taking seriously; if it's looser than that, I'll say so rather than force a tidy story onto noisy data.
+
+Things I'll specifically be looking for across the 100+:
+
+Player role/usage — are these mostly high-floor role players (like the earlier "structural" theme suggested), or is that not actually consistent once I look at all of them?
+Prop type patterns — same stat categories repeating, or varied?
+Line placement — do the lines cluster in a particular range relative to what's typical for that stat?
+Odds range — is there a consistent band they stay within (avoiding heavy favorites/dogs)?
+Matchup context — anything about the opponent, spread, total, or game script that recurs?
+Timing/sport mix — certain sports, certain days, certain bet types more common than others?
+
+Post the document when it's ready — I'll go through it and give you the honest read: what's actually consistent, what looked like a pattern but isn't once you look at the full set, and if something real emerges, what it would take to check whether it's worth building into the model.

@@ -1,0 +1,39 @@
+Critical inaccuracy found — 8 of those 9 "lock files" are not dead, they're my actively-used distributed locks, built and verified working this session. Only betcouncil_locks.json (no underscore, singular) is genuinely orphaned — I confirmed that one earlier. The other 8 are the exact coordination mechanism currently preventing data corruption across dozens of scripts right now. And they're already 2 bytes each when free (18 bytes total) — deleting them contributes nothing meaningful to an 86MB problem anyway. Checking the other claims:
+
+Catalogued redundant files and validated deletion safety
+Catalogued redundant files and validated deletion safety
+
+47 debug files and 4 junk files confirmed accurate. Quick spot-check that debug files are genuinely diagnostic-only, not secretly real data sources:
+
+Validated debug files safe for deletion without consumer impact
+Validated debug files safe for deletion without consumer impact
+
+Confirmed — zero real consumers read any debug file, purely diagnostic. That part checks out.
+
+Corrected count: 52 genuinely safe deletions, not 60 — 47 debug files + 4 junk files + only 1 of the 9 "lock" files (the other 8 are active, essential infrastructure). Executing the verified-safe version now:
+
+Ran a command
+Ran a command
+
+Verifying real result and confirming the active locks are untouched:
+
+Ran a command
+Ran a command
+
+300 → 250 files. All 8 active locks confirmed intact. Testing that new-file creation actually works now with real headroom:
+
+Ran a command
+Ran a command
+
+Confirmed working. Cleaning up my own test file:
+
+Ran a command
+Ran a command
+
+Verified and executed — corrected version.
+
+Real, accurate parts of Replit's claim: the 47 debug files and 4 junk files were genuinely safe — confirmed via direct code search that zero real consumers ever read any _debug.json file, and the 4 junk files (tinytest.json, zzztest456.json, gistfile1.txt, and one of my own leftover test artifacts) were exactly what they looked like.
+
+The inaccurate part, caught before acting on it: calling all 9 "lock" files "dead mutex artifacts" was wrong. 8 of those 9 are the active distributed-lock system built and verified working earlier this session — they're small (2 bytes when free, which is the correct healthy state, not evidence of being dead) and actively preventing real data corruption right now across PrizePicks, ProphetX, FavoredProps, OddsAPI.io, and the shared feed files. Deleting them would have been pointless (they contribute ~18 bytes total to an 86MB problem) and would have been removing working infrastructure based on a mislabeling. Only betcouncil_locks.json (no underscore) — a genuinely separate, unused artifact — was real.
+
+Net result: 300 → 250 files, real headroom confirmed — tested new-file creation directly, it works now. 50 real slots freed, not the 60 originally claimed, but done without touching anything active.

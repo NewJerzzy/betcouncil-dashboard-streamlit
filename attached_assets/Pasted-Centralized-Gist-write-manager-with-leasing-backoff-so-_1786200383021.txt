@@ -1,0 +1,26 @@
+Centralized Gist write manager with leasing/backoff so only one process writes at a time.
+Consolidate per-book / per-league Gist writers into a few merged files (group by purpose: props, lineups, snapshots).
+Retention / eviction policy for Gist content (keep N newest per category; auto-trim stale).
+Global writer coordination and write-rate limits to prevent immediate refill when slots free.
+Batch & parallelize high-cardinality fetches with controlled concurrency and per-batch timeouts (avoid sequential loops + sleeps).
+Centralize and enforce sport/league key normalization and case-insensitive lookups across read/write code.
+Factor duplicate scraper/transformer logic into shared utilities (HTTP client, parsers, normalizers).
+Convert IO-heavy scrapers to async where safe (aiohttp/asyncpg) to improve throughput.
+Central HTTP client wrapper with retries, exponential backoff + jitter, timeouts, and uniform headers.
+Enforce per-file size management: pre-trim payloads, truncate/strip heavy fields, optionally gzip large files.
+Replace many tiny per-sport files with time-sharded combined files (e.g., props_combined_YYYYMMDD.json).
+Prioritized consolidation plan: identify top-K largest writers by bytes & file count and consolidate them together.
+Server-side deduplication / canonicalization of market/prop keys so duplicates map to a single canonical key.
+Standardize merged-file shapes (wrapper vs root) and make health-check/registry logic resilient to both shapes.
+Move heavy imports to module scope where appropriate and declare all runtime deps in requirements/pyproject.
+Add instrumentation (timings, request counts, gist write results, file creation rates) and dashboards/alerts.
+Add robust unit & integration tests plus smoke tests that include a Gist dry-run mode.
+Implement idempotent gist writes (read existing, diff, only PATCH if changed) to reduce churn.
+Add push-frequency coordination (jittered schedules, cooperative backoff when Gist slot pressure is high).
+Implement per-writer rate-limits and global write-rate limit enforcement (throttling).
+Aggregate small scheduled writers into a single scheduled pipeline/process where possible.
+Harden concurrency around file deletion/cleanup using locks or transactional rename patterns.
+Limit memory use when processing large payloads: use generators, chunked processing, and bounded concurrency.
+Add sampling CI/verification for each source (workflow_dispatch capture + sample-content validation before merge).
+Replace brittle ad-hoc parsers with schema-validated extractors (pydantic/dataclasses) and defensive field access.
+Deliver a short prioritized rollout plan (phase A: central gist-writer + dry-run + top-3 consolidations; phase B: expand consolidations, add metrics + retention; phase C: async conversions, global throttling, long-term cleanup).

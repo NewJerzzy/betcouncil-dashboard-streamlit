@@ -1,0 +1,41 @@
+Verifying before trusting — some of Replit's "findings" are just quoting my own diagnostic log messages back, not independent discoveries. Checking the genuinely new claims: RotoBot, the OLD VSIN script (different from the one I built), and the 403 rate-limit theory.
+
+Verifying RotoBot's deliberate disablement and authentication constraints
+Verifying RotoBot's deliberate disablement and authentication constraints
+
+RotoBot is already deliberately disabled (comment confirms: "auth-gated, Supabase key points to billing DB only") — Replit's "3/3 failures" is stale historical data from before it was disabled. No action needed. Checking VSIN next:
+
+Investigated VSiN endpoint discrepancy and request construction differences
+Investigated VSiN endpoint discrepancy and request construction differences
+
+Real, currently-active source with real consumers (not redundant with my splits work) — different endpoint (vegas-odds-linetracker vs betting-splits). Comparing against my working script's headers to find a fixable difference:
+
+Verified endpoint functionality contradicts reported errors, now investigating parser issues
+Verified endpoint functionality contradicts reported errors, now investigating parser issues
+
+Replit's VSIN 403 claim is wrong — confirmed live, this endpoint returns real 200 with 634KB of real HTML right now. Testing the actual parser against it:
+
+Verified workflow status and cross-referenced against reported failures
+Verified workflow status and cross-referenced against reported failures
+
+VSIN succeeds — confirmed live, directly contradicts Replit's claim. Verifying real fresh data landed:
+
+Pinpointing silent Gist push failures across multiple workflows
+Pinpointing silent Gist push failures across multiple workflows
+
+Genuinely zero VSIN files exist despite the workflow reporting "success" — same silent-failure pattern as Underdog/WiseGuyTeam. Checking if vsin_harvester.py's push has verification at all:
+
+Identified recurring vulnerability pattern across urllib-based scripts requiring systematic remediation
+Identified recurring vulnerability pattern across urllib-based scripts requiring systematic remediation
+
+Found it — vsin_harvester.py uses urllib.request (not requests), which my earlier batch-hardening search pattern didn't match, so it was missed entirely. Checking for other urllib-style scripts with the same gap:
+
+Ran 2 commands
+Ran 2 commands
+
+False positive on evsharps_dingers (already fixed, just different variable naming). Fixing the genuinely remaining 3:
+
+Ran 2 commands
+Ran 2 commands
+
+Fixing all 3 with the same content-verification pattern used successfully elsewhere:

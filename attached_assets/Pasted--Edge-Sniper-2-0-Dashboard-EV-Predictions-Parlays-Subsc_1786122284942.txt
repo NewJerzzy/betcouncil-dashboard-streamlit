@@ -1,0 +1,349 @@
+
+Edge Sniper 2.0
+
+Dashboard
+
++EV
+
+Predictions!
+
+Parlays
+
+Subscribe
+
+Prop Drop!
+
+More
+A
+
+DATA LOADS AT 8:30AM AND 10:30AM CST
+TOP PLAYS
+
+DAYRANK
+
+PICK
+
+MATCHUP
+
+RANKTIER
+
+LEAGUE
+
+BETTYPE
+
+EDGEPCT
+
+1
+New York Yankees
+Atlanta Braves @ New York Yankees
+Strong
+MLB
+ML
+3.90%
+
+2
+San Diego Padres
+Houston Astros @ San Diego Padres
+Strong
+MLB
+ML
+4.00%
+
+3
+Miami Marlins
+Los Angeles Angels @ Miami Marlins
+Strong
+MLB
+ML
+3.90%
+
+4
+Cleveland Guardians
+Cleveland Guardians @ Chicago White Sox
+Strong
+MLB
+ML
+3.40%
+
+5
+Tampa Bay Rays
+Tampa Bay Rays @ Seattle Mariners
+Lean
+MLB
+ML
+2.20%
+ALL MATCHUPS
+
+Filter
+CONFIDENCE SCORE: 83
+
+Colorado Rockies at St. Louis Cardinals
+Away score: 3.4
+Home score: 5
+
+Moneyline:
+St. Louis Cardinals
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Kyle Leahy (3.44 ERA, 7.6 K/9) has a significant ERA edge over Ryan Feltner (5.75 ERA, 6.7 K/9). St. Louis Cardinals carries a weaker lineup advantage (vs RHP platoon) (.695 vs .760 OPS). Model: 64% win probability. Odds: -158. Tier: Skip.
+CONFIDENCE SCORE: 83
+
+Los Angeles Angels at Miami Marlins
+Away score: 3.3
+Home score: 5.5
+
+Moneyline:
+Miami Marlins
+Recommendation: Lean
+Unit Size: 0.25
+
+Sides:
+ 
+
+Tyler Phillips (3.53 ERA, 6.7 K/9) has a significant ERA edge over George Klassen (11.57 ERA, 11.6 K/9). Miami Marlins carries a stronger lineup advantage (vs RHP platoon) (.734 vs .688 OPS). Model: 62% win probability. Odds: -142. Kelly: 0.3u (Lean).
+CONFIDENCE SCORE: 81
+
+Houston Astros at San Diego Padres
+Away score: 3.3
+Home score: 5
+
+Moneyline:
+San Diego Padres
+Recommendation: Lean
+Unit Size: 0.25
+
+Sides:
+ 
+
+Robbie Ray (3.08 ERA, 7.8 K/9) has a significant ERA edge over Ronel Blanco (7.36 ERA, 9.8 K/9). San Diego Padres carries a weaker lineup advantage (vs RHP platoon) (.703 vs .750 OPS). Model: 56% win probability. Odds: -110. Kelly: 0.3u (Lean).
+CONFIDENCE SCORE: 81
+
+Cleveland Guardians at Chicago White Sox
+Away score: 4.5
+Home score: 2.8
+
+Moneyline:
+Cleveland Guardians
+Recommendation: Lean
+Unit Size: 0.25
+
+Sides:
+ 
+
+Parker Messick (2.57 ERA, 8.9 K/9) has a significant ERA edge over Noah Schultz (5.82 ERA, 8.0 K/9). Cleveland Guardians carries a weaker lineup advantage (vs RHP platoon) (.690 vs .723 OPS). Model: 60% win probability. Odds: -136. Kelly: 0.3u (Lean).
+CONFIDENCE SCORE: 80
+
+Minnesota Twins at Milwaukee Brewers
+Away score: 3.4
+Home score: 5
+
+Moneyline:
+Milwaukee Brewers
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Shane Drohan (3.48 ERA, 9.1 K/9) has a significant ERA edge over Zebby Matthews (5.22 ERA, 7.7 K/9). Model: 65% win probability. Odds: -164. Tier: Skip.
+CONFIDENCE SCORE: 80
+
+Atlanta Braves at New York Yankees
+Away score: 3.3
+Home score: 4.9
+
+Moneyline:
+New York Yankees
+Recommendation: Play
+Unit Size: 0.5
+
+Sides:
+ 
+
+Max Fried (3.12 ERA, 8.2 K/9) has a significant ERA edge over Tyler Mahle (5.13 ERA, 8.5 K/9). New York Yankees carries a weaker lineup advantage (vs RHP platoon) (.721 vs .751 OPS). Model: 60% win probability. Odds: -128. Kelly: 0.5u (Play).
+CONFIDENCE SCORE: 76
+
+Toronto Blue Jays at Philadelphia Phillies
+Away score: 3.2
+Home score: 4.8
+
+Moneyline:
+Philadelphia Phillies
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Zack Wheeler (2.49 ERA, 10.8 K/9) edges José Soriano (3.29 ERA, 9.3 K/9) on the mound. Philadelphia Phillies carries a stronger lineup advantage (vs RHP platoon) (.716 vs .696 OPS). Model: 68% win probability. Odds: -205. Tier: Skip.
+CONFIDENCE SCORE: 72
+
+Tampa Bay Rays at Seattle Mariners
+Away score: 4.2
+Home score: 2.6
+
+Moneyline:
+Tampa Bay Rays
+Recommendation: Lean
+Unit Size: 0.25
+
+Sides:
+ 
+
+Drew Rasmussen (2.91 ERA, 9.4 K/9) edges Logan Gilbert (3.46 ERA, 9.4 K/9) on the mound. Tampa Bay Rays carries a stronger lineup advantage (vs RHP platoon) (.755 vs .703 OPS). Model: 50% win probability. Odds: +105. Kelly: 0.3u (Lean).
+CONFIDENCE SCORE: 68
+
+Cincinnati Reds at Washington Nationals
+Away score: 3.6
+Home score: 5.3
+
+Moneyline:
+Washington Nationals
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Cade Cavalli (3.52 ERA, 9.8 K/9) edges Chase Petty (4.50 ERA, 4.2 K/9) on the mound. Washington Nationals carries a stronger lineup advantage (vs RHP platoon) (.759 vs .696 OPS). Model: 54% win probability. Odds: -113. Tier: Skip.
+CONFIDENCE SCORE: 67
+
+Baltimore Orioles at Texas Rangers
+Away score: 3.2
+Home score: 4.7
+
+Moneyline:
+Texas Rangers
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Even SP matchup: Nathan Eovaldi (4.31 ERA, 9.5 K/9) vs Shane Baz (3.86 ERA, 7.8 K/9). Model: 59% win probability. Odds: -139. Tier: Skip.
+CONFIDENCE SCORE: 64
+
+New York Mets at Pittsburgh Pirates
+Away score: 3.2
+Home score: 4.8
+
+Moneyline:
+Pittsburgh Pirates
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Even SP matchup: Carmen Mlodzinski (3.15 ERA, 7.3 K/9) vs Zac Thornton (2.88 ERA, 6.3 K/9). Pittsburgh Pirates carries a stronger lineup advantage (vs RHP platoon) (.768 vs .683 OPS). Model: 55% win probability. Odds: -127. Tier: Skip.
+CONFIDENCE SCORE: 62
+
+Los Angeles Dodgers at Arizona Diamondbacks
+Away score: 5.5
+Home score: 3.8
+
+Moneyline:
+Los Angeles Dodgers
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Even SP matchup: Merrill Kelly (5.04 ERA, 6.0 K/9) vs Roki Sasaki (4.64 ERA, 9.2 K/9). Los Angeles Dodgers carries a stronger lineup advantage (vs RHP platoon) (.781 vs .681 OPS). Model: 62% win probability. Odds: -168. Tier: Skip.
+CONFIDENCE SCORE: 62
+
+Phoenix Mercury at Connecticut Sun
+Away score: 88.6
+Home score: 83.1
+
+Moneyline:
+Phoenix Mercury
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Phoenix Mercury carries a offensive edge per team efficiency ratings. Model: 65% win probability. Odds: -235. Tier: Skip.
+CONFIDENCE SCORE: 60
+
+Athletics at Boston Red Sox
+Away score: 3.7
+Home score: 5.2
+
+Moneyline:
+Boston Red Sox
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Starting pitchers not yet confirmed — pick based on lineup and park data. Model: 72% win probability. Odds: -260. Tier: Skip.
+CONFIDENCE SCORE: 58
+
+Chicago Cubs at Kansas City Royals
+Away score: 5.2
+Home score: 3.9
+
+Moneyline:
+Chicago Cubs
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Chicago Cubs carries a stronger lineup advantage (vs RHP platoon) (.734 vs .711 OPS). Model: 58% win probability. Odds: -160. Tier: Skip.
+CONFIDENCE SCORE: 55
+
+Detroit Tigers at San Francisco Giants
+Away score: 4.8
+Home score: 3.2
+
+Moneyline:
+Detroit Tigers
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Starting pitchers not yet confirmed — pick based on lineup and park data. Model: 56% win probability. Odds: -127. Tier: Skip.
+CONFIDENCE SCORE: 50
+
+Atlanta Dream at Washington Mystics
+Away score: 88.1
+Home score: 82.9
+
+Moneyline:
+Atlanta Dream
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Atlanta Dream carries a offensive edge per team efficiency ratings. Model: 66% win probability. Odds: -220. Tier: Skip.
+CONFIDENCE SCORE: 47
+
+Golden State Valkyries at Dallas Wings
+Away score: 81
+Home score: 81.9
+
+Moneyline:
+Dallas Wings
+Recommendation: Skip
+Unit Size: 0
+
+Sides:
+ 
+
+Dallas Wings carries a offensive edge per team efficiency ratings. Model: 51% win probability. Odds: -115. Tier: Skip.
+
+NRFI/YRFI Model

@@ -1,6 +1,12 @@
 - [theScore Bet GraphQL](thescore-bet-graphql.md) — real endpoint is subdomain, not homepage; hash current but 37 schema errors, not 1; sectionId required not competitionSlug
 - [Pick6 Props Pipeline](pick6-pipeline.md) — gist at 300-file cap so uses betcouncil_pick6_props.json; SSR has no player names (confirmed all APIs); token is collaborator, can't create new files
 - [EVBets endpoint](evbets-endpoint.md) — SSR Astro on Cloudflare, bet data in HTML table, no JS needed; requests must decode as UTF-8 explicitly or bookmaker names mojibake
+- [EVSharps NFL access](evsharps-nfl-access.md) — live NFL and touchdown boards require a legitimate Bearer session; anonymous NFL Analysis data is historical results, not current picks
+- [Action Network source status](action-network-source-status.md) — scoreboard and sport-suffixed public-betting routes are live; public splits moved from odds to markets; projection feed is empty and PRO-only
 - [VSIN Splits endpoint](vsin-splits-endpoint.md) — SSR HTML at data.vsin.com/betting-splits, no auth; splits table fully embedded, sp-row tbody rows, confirmed 2026-08-01
 - [Gist 300-file cap rename](gist-300-file-rename.md) — at cap, use GitHub Gist PATCH rename API to atomically rename a dead file to the new filename; check existence first via GET
-- [DoinkSports source status](doinksports-source-status.md) — server-rendered research app; provider clues are Odds API, OddsBlaze, Unabated, Sportradar; terms forbid automated access
+- [Edge Sniper app access](edgesniper-app-access.md) — public share link is an email-gated Glide app; no public data API or APIDog documentation was found
+- [Outlier.bet access](outlier-bet-access.md) — paid Cognito-gated analytics app; no public developer API or APIDog project, and its name is unrelated to EVSharps “outliers” feed
+- [Pirates Picks board structure](pirates-picks-board-structure.md) — authorized board capture returns pre-rendered cards with tiers, convergence, rolling results, context reads, and multi-book links; formulas/providers remain hidden
+- [BallparkPal source status](ballparkpal-source-status.md) — MLB projections and park factors API; no odds/weather/history and current beta license is personal/non-commercial
+- [DoinkSports access decision](doinksports-source-status.md) — do not automate the undocumented service without Doink's written programmatic-use permission.
