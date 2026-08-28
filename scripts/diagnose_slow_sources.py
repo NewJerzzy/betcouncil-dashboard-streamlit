@@ -374,6 +374,7 @@ TARGETS = [
     ("OddsWrap", "fetch_oddswrap_props", ("MLB",), False),
     ("PlayerProps.AI", "fetch_playerprops_ai", ("MLB",), False),
     ("EVSharps NFL TDs", "fetch_ev_nfl_tds", (), False),
+    ("ParlayAPI Props NFL", "fetch_parlayapi_props", ("NFL",), False),
     ("EVSharps NFL Preseason", "fetch_ev_nfl_preseason", (), False),
     ("Kalshi Markets", "fetch_kalshi_markets", ("MLB",), False),
 
