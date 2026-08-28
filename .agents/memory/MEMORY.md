@@ -3,3 +3,4 @@
 - [EVBets endpoint](evbets-endpoint.md) — SSR Astro on Cloudflare, bet data in HTML table, no JS needed; requests must decode as UTF-8 explicitly or bookmaker names mojibake
 - [VSIN Splits endpoint](vsin-splits-endpoint.md) — SSR HTML at data.vsin.com/betting-splits, no auth; splits table fully embedded, sp-row tbody rows, confirmed 2026-08-01
 - [Gist 300-file cap rename](gist-300-file-rename.md) — at cap, use GitHub Gist PATCH rename API to atomically rename a dead file to the new filename; check existence first via GET
+- [DoinkSports source status](doinksports-source-status.md) — server-rendered research app; provider clues are Odds API, OddsBlaze, Unabated, Sportradar; terms forbid automated access
