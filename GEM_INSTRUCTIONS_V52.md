@@ -679,121 +679,22 @@ adj_k9 = clamp(stabilized_k9 * xwoba_scale, 3.0, 15.0)
 
 ---
 
-## SECTION: VSiN Intelligence Layer (Added June 2026)
+## SECTION: VSiN Intelligence Layer
+VSiN (`data.vsin.com`) is a confirmed live source, scraped daily to `vsin_intelligence.json`.
 
-### New Data Sources — Live via BetCouncil Scraper
+**RLM (Reverse Line Movement)** — public ≥55% one side, line moves opposite = sharp money. Strong (≥70% public): +3% edge. Moderate (60-70%): +1.5%. Weak (55-60%): flag only, no multiplier. Never cite as a standalone signal — requires model-edge confirmation. If RLM agrees with your model, raise confidence 1 tier; if it opposes, lower 1 tier.
 
-**VSiN** (`data.vsin.com`) is now a confirmed live data source. The following signals are scraped daily and available in `vsin_intelligence.json` on Gist.
+**ATS_HOT/COLD** (season ATS ROI per team): HOT (≥+8% ROI) = +1 tier betting that team ATS. COLD (≤-12%) = -1 tier, higher edge threshold required, and never use as a primary signal — 3+ signal stack minimum. OVER_LEAN (≥58% overs)/UNDER_LEAN (≤42%) weight game totals involving that team accordingly.
 
----
+**Makinen total projection**: divergence from book total ≥0.8 = lean toward Makinen's side; ≥1.5 = primary signal; 0.8-1.4 = supporting signal only. Starter-rating gap ≥15 = real SP edge. `eff_line` = Makinen's efficient line, compare to market for value.
 
-### Signal: RLM_DETECTED (Reverse Line Movement)
+**Power rank** (1=best, 30=worst): tiebreaker only between otherwise-equal plays, never a standalone signal.
 
-Fires when public betting % ≥55% on one side but the line moves the opposite direction — indicating sharp/professional money.
+**BetOnline (BOL)** — confirmed sharp book alongside Pinnacle. BOL+Pinnacle agree = sharp consensus, raise confidence tier. Diverge = flag for review, reduce size. BOL moves alone = possible book-specific sharp action, monitor. Provides pitcher handedness (factor into platoon splits) and team totals (F5 props).
 
-**Edge multipliers:**
-- Strong RLM (≥70% public, line moves opposite): +3% edge multiplier
-- Moderate RLM (60-70%): +1.5% edge multiplier  
-- Weak RLM (55-60%): flag only, no multiplier
+**Source confidence tiers**: HIGH = Pinnacle, BOL, EV Sharps API. MED = VSiN line tracker (Circa/Westgate/South Point/Wynn/Stations — sharp-friendly but not leading-indicator like Pinnacle/BOL), DraftKings, BetMGM, Caesars. LOW = PrizePicks, Underdog, Novig, Betr, other public books.
 
-**Source fields:** `spread_bet_pct_home`, `spread_handle_pct_home`, `opening_spread_home`, `current_spread_home`
-
-**Rule:** RLM toward a side is a sharp indicator. If RLM aligns with your model, raise confidence tier by 1. If RLM opposes your model, reduce confidence tier by 1.
-
----
-
-### Signal: ATS_HOT / ATS_COLD
-
-From VSiN Team Summary — full season ATS ROI per team.
-
-- `ATS_HOT`: team RL ROI ≥ +8% → boost confidence +1 tier when betting that team ATS
-- `ATS_COLD`: team RL ROI ≤ -12% → reduce confidence -1 tier, require higher edge threshold
-- `OVER_LEAN`: team hits over 58%+ → weight toward over on game totals involving this team
-- `UNDER_LEAN`: team hits under 42%- → weight toward under
-
-**Rule:** Never bet ATS_COLD team as a primary signal. Only as part of a 3+ signal stack.
-
----
-
-### Signal: MAKINEN_PROJ (Total Projection)
-
-Makinen daily ratings provide per-game score projections (away_score_proj + home_score_proj = projected_total).
-
-**Rule:** When `projected_total` diverges from book total by ≥0.8 runs/points:
-- Makinen proj > book total → lean OVER
-- Makinen proj < book total → lean UNDER
-- Divergence ≥1.5 → treat as primary signal
-- Divergence 0.8-1.4 → treat as supporting signal only
-
-**Additional Makinen inputs:**
-- `starter_rating` differential → sharp teams have SP advantage when gap ≥15 points
-- `bullpen_rating` differential → use for late-game/live betting edge
-- `eff_line` → Makinen's efficient line; compare to market line for value
-
----
-
-### Signal: POWER_RANK
-
-Makinen composite power rank (1 = best team in league, 30 = worst).
-
-**Rule:** Use as tiebreaker between otherwise equal plays. Never use alone. Lower composite rank = stronger team overall.
-
-Fields: `power_rating` (PR), `eff_runs` (ER), `starter_rating` (SPPR), `bullpen_rating` (BPPR)
-
----
-
-### New Source: BetOnline Game Lines (BOL)
-
-BetOnline is now a **confirmed sharp book** alongside Pinnacle. Lines scrape via `betonline_props_scraper.py`.
-
-**BOL-specific data available:**
-- `AwayPitcher` / `HomePitcher` with handedness (e.g. "K. Bradish -R")
-- `AwayTeamTotal` / `HomeTeamTotal` — use for F5 and team total props
-- `SportCastFixtureId` — links to Diffusion topic tree for live data
-
-**Sharp consensus rule:**
-- BOL + Pinnacle agree on same side → treat as sharp consensus, raise confidence tier
-- BOL + Pinnacle diverge → flag for manual review, reduce position size
-- BOL moves without Pinnacle → possible BOL-specific sharp action, monitor
-
----
-
-### Updated Source Confidence Tiers
-
-| Tier | Sources |
-|------|---------|
-| HIGH | Pinnacle, BetOnline (BOL), EV Sharps API (evsharps.com) |
-| MED  | VSiN line tracker (8 Vegas books), DraftKings, BetMGM, Caesars |
-| LOW  | PrizePicks, Underdog, Novig, Betr, public-facing books |
-
-**VSiN line tracker** sits at MED because it aggregates Vegas books (Circa, Westgate, South Point, Wynn, Stations) — these are sharp-friendly books but not as leading-indicator as Pinnacle/BOL.
-
----
-
-### Team Name Resolution
-
-All cross-source team name matching now uses `team_canon.py` (canonical form + sport-scoped aliases).
-
-**Rule:** Never flag a team name mismatch as a signal conflict without running canon resolution first.
-
-Sport-scoped collisions:
-- "Kings" → Sacramento Kings (NBA) or LA Kings (NHL)
-- "Jets" → New York Jets (NFL) or Winnipeg Jets (NHL)  
-- "Cardinals" → Arizona Cardinals (NFL) or St. Louis Cardinals (MLB)
-- "Rangers" → New York Rangers (NHL) or Texas Rangers (MLB)
-
-Abbreviations like "NYY", "LAD", "NYK" are resolved to full canonical names before any comparison.
-
----
-
-### Non-Negotiable Rules (additions to existing rules 1-35)
-
-36. Never cite RLM as a standalone signal — requires model edge confirmation
-37. ATS_COLD teams require 3+ signal stack minimum before inclusion
-38. Makinen projected total is supporting signal only when divergence <1.5; primary only at ≥1.5
-39. BOL pitcher handedness must be factored into platoon splits when available
-40. VSiN public % and handle % are DraftKings-sourced — most reliable volume proxy available
-
+**Team name resolution**: all cross-source matching goes through `team_canon.py` — never flag a name mismatch as a signal conflict without running canon resolution first. Known sport-scoped collisions: Kings (Sacramento NBA / LA NHL), Jets (NY NFL / Winnipeg NHL), Cardinals (Arizona NFL / St. Louis MLB), Rangers (NY NHL / Texas MLB).
 
 ---
 
