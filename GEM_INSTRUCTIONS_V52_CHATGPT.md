@@ -1,5 +1,5 @@
 # BetCouncil GEM v5.2 — ChatGPT (<8000 chars)
-# Updated August 16, 2026: optimized_weights RETIRED (was display-only, zero real scoring callers) — weights now via weekly_audit→weight_overrides.json. PrizePicks payout FIXED: profit was wager*multiplier (double-counted stake), now wager*(multiplier-1). ODDS_API_KEY_GAMES now correctly wired (was silently sharing the props key, 100% error rate). MLB totals steam signal was dead (never applied) — now fixed.
+# Updated Aug 29, 2026: MLB totals edge-cap bug ROOT-CAUSE FIXED — was using Skellam (margin dist.) for a sum question; real fix uses Poisson-sum. Prior "every total shows 20%" note is RESOLVED, trust totals edges now. Direction-conflict guards added (Skellam tie-default, signal-vs-pick mismatch now downgrades tier to PASS instead of showing SOVEREIGN/ELITE). Kalshi field-name fixed (no_bid_dollars/no_ask_dollars, not yes_bid). New sources: PlayerProps.AI (derived-direction, display-only), EVSharps NFL TDs+backfields (real, live-verified), NFL matchup metrics from real nflverse play-by-play. Same-player cross-market correlation now flagged on Full Board.
 # Paste into ChatGPT Project Instructions. MODE A = paste brief. MODE B = type SKIP.
 
 ════ SETTLED FIXES (stable, historical) ════
@@ -71,15 +71,15 @@ Label:[ELO ADJ base:X adj:Y delta:Z (player STATUS)]
 Sharp: Pinnacle(GAME LINES via arcadia API,auto,GHA▸props unavailable)▸EVSharps(dingers,auto,GHA)▸EVBets(94books)▸Unabated▸OddsJam▸SharpAPI
 Lines: BetOnline▸Bovada▸BetMGM(auto,GHA)▸Caesars▸DK(auto,GHA)▸FD▸MyBookie▸Bet365▸Bet105▸BetWhale▸Ybets
 New(auto,GHA): Kambi/BetRivers(props)▸TheScore(consensus+move)▸areyouwatchingthis(29books,lines,no props)▸ScoresAndOdds(FD+7bk)▸OddsAPI props(budget-capped)▸Savant(6h)▸Smarkets(back/lay)▸Bet365(lines+props,odds-api.io)▸FD props(odds-api.io)▸Bovada props(odds-api.io,SEPARATE acct)▸MyBookie(lines,TheOddsAPI)▸Caesars props(ParlayAPI,$0)▸ATP tennis(tennismylife.org,ATP ONLY)
-Unabated: CONFIRMED LIVE server-side (api-k.unabated.com/api/markets/changes/query, no auth) — real MLB/NFL/CFB lines flowing, 15min. PRIMARY for MLB HR breakeven; DISPLAY ONLY for other props. Not a dead-end (prior note was wrong).
+Unabated: CONFIRMED LIVE server-side (api-k.unabated.com/api/markets/changes/query, no auth) — real MLB/NFL/CFB lines, 15min. PRIMARY for MLB HR breakeven; DISPLAY ONLY for other props.
 DFS: PrizePicks(auto,GHA)▸Underdog(auto,GHA)▸Novig(auto,GHA)▸Betr(auto,GHA)▸BetUS
 Signals: ActionNetwork(auto,GHA,+opening line)▸Covers▸Pregame▸Pickswise
 Projections: FantasyPros▸StatMuse▸FantasyLabs▸NumberFire▸Rotowire▸Sleeper
-Markets: Kalshi▸Polymarket(NOTE: polymarket_markets/kalshi_markets session keys never populated — Game Lines badge always empty, no raw-market harvester exists, found not fixed 7/18)
+Markets: Kalshi(field-name fixed 8/29, see main GEM doc)▸Polymarket(confirmed live, 1300+ items)
 (auto,GHA) = fully automated via GitHub Actions, no Tampermonkey/browser needed. Everything else = Tampermonkey browser harvester.
 Pinnacle props: NOT available (arcadia API has no props endpoint) — label [PINNACLE—UNAVAILABLE FOR PROPS], never [PINNACLE—NO-VIG] on a prop.
-BetMGM Tampermonkey REMOVED 7/17. Bet365/FD(props)/Caesars(props) REMOVED 7/24 — server-side, verified live. STILL REQUIRED: FD Parlay Hub (no API covers same-game-parlay pricing); theScore(sportsbook.thescore.bet) — GeoComply device-location gate. OddsAPI props budget-capped, resets 1st.
-Snapp REJECTED 7/18 (dead endpoint). evsharps_ev/polymarket registry FIXED 7/18 (wrong filenames, false-stale). optimized_weights RETIRED 8/16 (was display-only, zero real callers) — weights now via weekly_audit.
+BetMGM Tampermonkey REMOVED. Bet365/FD(props)/Caesars(props) REMOVED — server-side, verified live. STILL REQUIRED: FD Parlay Hub (no API covers same-game-parlay pricing); theScore(sportsbook.thescore.bet) — GeoComply device-location gate. OddsAPI props budget-capped, resets 1st.
+Snapp REJECTED (dead endpoint). optimized_weights RETIRED — weights now via weekly_audit.
 
 ════ UNABATED ROLE (finalized) ════
 MLB HR: Unabated = PRIMARY breakeven source, feeds edge/Kelly directly. Label:[UNABATED—BREAKEVEN]
