@@ -612,183 +612,21 @@ SCAN = full report. Paste anything = instant analysis.
 
 
 ---
-## Session 9 Addendum (June 13, 2026)
-
-### Updated Book Coverage
-The auto scraper now covers 7 books with parallel fetching:
-1. **PrizePicks** — curl_cffi, 4,000-7,000 props per run
-2. **Underdog** — curl_cffi, 17,000+ props (all sports combined)
-3. **Novig** — GraphQL, 2,000+ props
-4. **Betr** — GraphQL (api.fantasy.betr.app), 500-950 props, no auth
-5. **DraftKings** — curl_cffi, 130+ NBA props (MLB subcategory under investigation)
-6. **BetMGM** — curl_cffi fixture-offers, 68-122 props
-7. **Bovada** — curl_cffi, 2,500-5,000 game lines
-
-### Disabled Books
-- Sleeper: API returns 500 (deprecated)
-- BetOnline: endpoints return 405/400
-- FanDuel: PerimeterX WAF blocks curl_cffi (OddsPAPI fallback in app)
-- Caesars: CloudFront WAF blocks curl_cffi (OddsPAPI fallback in app)
-
-### Scraper Performance
-- Parallel fetching via ThreadPoolExecutor (PP/UD/Novig/Betr/DK run simultaneously)
-- Browser logins disabled for DK/FD/MGM/Caesars (saves 2+ minutes)
-- Total run time: ~2-3 minutes for --all
-
-### Slip Analyzer
-- OCR.space replaces Claude Vision (no Anthropic credits)
-- Multi-sport parser handles all sports
-- Win/Loss detection from header "Win" keyword
-- Wager extraction from "$X.XX to win/pay" pattern
+### Settled facts (from Session 9, June 2026)
+- Sleeper's API returns 500 — deprecated, do not re-attempt.
+- Slip Analyzer uses OCR.space (not Claude Vision) for screenshot parsing, with sport auto-detection and win/loss/wager pattern extraction.
 
 ---
-## Session 10 Addendum (June 14, 2026)
+### EV Sharps API — book-key reference and MLB HR edge adjustments
+Source: `api-production-3a3b.up.railway.app/api/ev`, no auth, ~2min updates, MLB/NBA/NFL/NHL. Confirmed still live as of the Aug 26-29 addendum.
 
-### EV Sharps API — 20+ Books Now Integrated
+Book keys: hr=Hard Rock, dk=DraftKings, fd=FanDuel, mgm=BetMGM, cz=Caesars, espn=ESPN Bet, circa=Circa, pn=Pinnacle, bv=Bovada, br=BetRivers, fn=Fanatics, b365=Bet365, bol=BetOnline, nv=NoVig, kal=Kalshi, poly=Polymarket, re=Rebet, fl=Fliff, kambi/wynn/uni=Kambi-powered books.
 
-**Source:** `https://api-production-3a3b.up.railway.app/api/ev`
-**Auth:** None required (public endpoint — may close at any time)
-**Update frequency:** ~2 minutes
-**Sports:** MLB, NBA, NFL, NHL
+Per-prop fields: `bookOdds` (American odds per book), `handicap` (the real line — not `line`), `ev`, `fairVal`, `kelly` (¼ Kelly), `hitRates` (season/LY/L5/L10/L20), `savant` (exit velo/barrel%/hard hit%/xwOBA), `pitcherData`, `stadiumRank`, `links` (betslip deep links).
 
-#### Books now available in BetCouncil (via EV API):
-| Key | Book |
-|-----|------|
-| hr | Hard Rock Bet ✅ NEW |
-| dk | DraftKings |
-| fd | FanDuel |
-| mgm | BetMGM |
-| cz | Caesars |
-| espn | ESPN Bet ✅ NEW |
-| circa | Circa ✅ NEW (sharp book) |
-| pn | Pinnacle ✅ NEW (sharpest) |
-| bv | Bovada |
-| br | BetRivers ✅ NEW |
-| fn | Fanatics ✅ NEW |
-| b365 | Bet365 ✅ NEW |
-| bol | BetOnline ✅ NEW |
-| nv | NoVig ✅ NEW |
-| kal | Kalshi (prediction market) |
-| poly | Polymarket (prediction market) |
-| re | Rebet ✅ NEW |
-| fl | Fliff ✅ NEW |
-| hr_oh | Hard Rock (OH) ✅ NEW |
-| kambi | Kambi ✅ NEW |
-| hr | HardRock (via Kambi) ✅ NEW |
-| wynn | WynnBet (via Kambi) ✅ NEW |
-| uni | Unibet (via Kambi) ✅ NEW |
+MLB HR prop edge adjustments (apply in this order): stadium rank 1-5 = +3%, 6-15 = +1%, 16-25 = neutral, 26-30 = -2%. Barrel% ≥15% = +2%. Exit velo ≥92mph = +1%. HR percentile ≥90th = +2%. No-vig from Pinnacle/Circa via this API supersedes a manual Pinnacle search when the board is loaded — label `[EV API — DEVIGGED SHARP CONSENSUS]`.
 
-#### Data per prop (from EV API):
-- `bookOdds` — American odds string per book (e.g. `"325"` or `"300/-595"` for over/under split)
-- `handicap` — stat threshold (e.g. `0.5` for HR props) — **this is the real line, not `line`**
-- `ev` — Expected Value % vs devigged market
-- `fairVal` — Fair value (no-vig probability)
-- `kelly` — ¼ Kelly sizing recommendation
-- `hitRates` — Season / Last Year / L5 / L10 / L20 hit rates with W/T/P fields
-- `savant` — Statcast: exit velocity, barrel%, hard hit%, launch angle, xwOBA, sweet spot%
-- `batter_percs` — MLB percentile ranks: HR percentile, HR/PA rate percentile, vs LHP/RHP
-- `pitcherData` — Pitcher ERA, xwOBA, barrel% allowed, fly ball %
-- `stadiumRank` — Park factor HR rank (1=best for HRs)
-- `links` — Direct betslip deep links per book (e.g. `links.hr` = Hard Rock bet link)
-- `updated` — Per-book timestamp of last odds update
-
-#### How this changes the GEM's MODE B workflow:
-
-**For no-vig / Pinnacle confirmation:**
-- EV API includes Pinnacle (`pn`) and Circa (`circa`) odds directly
-- In MODE B, Pinnacle line is now retrievable in one API call instead of searching
-- If Streamlit has loaded the board, `EVSharpEV` column shows best EV% across all books
-- Circa + Pinnacle together = sharpest no-vig baseline available; use consensus of both
-
-**For line shopping:**
-- BetterLineNote on every board prop now checks 20+ books automatically
-- Full Board `EV+` column shows best EV% from EV API per prop
-- Line Shop tab shows all 20 books side-by-side with Best Book / Best Line columns
-
-**For MLB specifically (EV API is strongest here):**
-- Statcast data (barrel%, exit velo, hard hit%) now on every MLB HR prop
-- Hit rates (L5/L10/L20) and pitcher matchup data pre-calculated
-- Stadium HR rank included — factor this into MLB edge adjustments:
-  - Rank 1-5 = +3% edge boost (extreme hitter parks: Coors, Fenway, Great American)
-  - Rank 6-15 = +1% edge boost (above average)
-  - Rank 16-25 = neutral
-  - Rank 26-30 = -2% edge penalty (pitcher parks: Petco, Oracle, Dodger)
-- Barrel% ≥ 15% = elite HR contact quality → +2% edge
-- Exit velo avg ≥ 92 mph = above-average power → +1% edge
-- HR percentile ≥ 90th = elite HR hitter → +2% edge
-
-**New mandatory MLB HR prop checklist (MODE B):**
-1. Get EV API line + odds (or retrieve from Streamlit board `EVBooks` field)
-2. Apply Statcast adjustments: barrel%, exit velo, HR percentile
-3. Apply stadium rank adjustment
-4. Apply pitcher ERA + barrel% allowed (pitcher data in `pitcherData`)
-5. Apply L10 hit rate as H2H proxy if opponent game log unavailable
-6. Compute no-vig using Pinnacle and/or Circa from EV API
-7. Label: `[EV API — PINNACLE NO-VIG]` or `[EV API — CIRCA NO-VIG]`
-
-#### Updated fallback chain — NO-VIG VALIDATION:
-Insert after current Step 1 (Pinnacle search):
-
-**1a. EV API via Streamlit (BEST — zero latency)**
-→ If board is loaded, `EVSharpFV` = pre-computed fair value from devigged sharp books
-→ `EVSharpEV` = best EV% across all 20 books
-→ Label: `[EV API — DEVIGGED SHARP CONSENSUS]`
-→ This supersedes manual Pinnacle search when available
-
-#### Updated book coverage (total active books in BetCouncil):
-**DFS:** PrizePicks, Underdog, Novig, Betr
-**Sportsbooks (direct scraper):** DraftKings, BetMGM, Bovada
-**Game lines (direct API — no auth):**
-- Bovada, BetOnline (offering-by-league POST)
-- HardRock, WynnBet, Unibet, Bet365, ESPN BET, Fanatics, theScore (Kambi)
-- BetRivers, Superbook (direct)
-- Pinnacle (arcadia guest API — sharpest free line available)
-
-**Game lines (cookie/token — ~24h manual refresh):**
-- Caesars (Bearer JWT from Gist), BetMGM (session cookie)
-
-**Game lines + props EV (SharpAPI free tier):**
-- DraftKings + FanDuel lines with Pinnacle no-vig EV pre-computed
-- Props with is_ev_positive flag
-
-**Props (direct scrapers):**
-- PrizePicks (CDN scraper), Underdog, Betr, DraftKings
-- Bovada props (public API), Caesars props (Bearer JWT)
-- OddsPAPI (DK/FD/BetMGM via The Odds API)
-
-**Sharp benchmarks:**
-- Pinnacle arcadia (no-vig fair lines), Unabated (Pinnacle consensus), EVSharps (20+ books)
-
-**Public betting %:**
-- Action Network (free, real-time ML/spread/total splits)
-- Covers.com consensus (via ScraperAPI proxy)
-
-**Prediction markets:**
-- Kalshi (yes/no contracts on player props)
-- Polymarket (sports prediction markets)
-
-**ParlayAPI:** +EV vs Pinnacle + arbitrage scanner
-**Total: 30+ books/sources**
-
-#### GEM output format additions:
-
-Add to the **LOCK OF THE DAY — PROP** block:
-```
-EV API: FV:[X]% | Best book: [Book] @ [odds] | EV:[+X]%
-Statcast: ExitVelo:[X]mph Barrel%:[X]% HardHit%:[X]% HR-pct:[X]th
-L10 Hit Rate: [W]/[T] ([P]%)  Stadium Rank: #[N]
-```
-
-Add to **FULL PROP BOARD** rows:
-```
-[TIER] [Player] O/U [Line] ... EV+:[X]% [EV API] Books:[N]
-```
-
-#### ⚠️ EV API stability warning:
-The endpoint is currently unsecured (CORS wildcard, no auth). This was likely unintentional by EVSharps. It may be closed or rate-limited at any time. BetCouncil stores the last successful fetch in session state as fallback. If the API goes down:
-- Fall back to OddsJam / Unabated for Pinnacle no-vig
-- Fall back to existing scraper books (DK, BetMGM, Bovada) for line data
-- StatsHub Statcast data will not be available until API restored or Baseball Savant scraper added
+If this endpoint ever goes down: fall back to OddsJam/Unabated for Pinnacle no-vig, existing scraper books for lines; Statcast data has no fallback.
 
 
 ---
@@ -1452,14 +1290,7 @@ This matches Rithmm/Dimers methodology. In GEM analysis, for MLB/NHL/Soccer tota
 ---
 
 ### 5. Updated Source Priority Stack — v5.2
-
-**Tier 1 (Real-time Pinnacle):** Scanbet drops, SharpAPI steam
-**Tier 2 (Sharp book consensus):** SportsInsights, Unabated, Signal Odds AI
-**Tier 3 (Betting splits + public %):** **SportsbookReview (PRIMARY — direct handle %)**, Action Network, Covers, OddsShark, BettingPros
-**Tier 4 (Multi-book line shopping):** SportsLine (opening lines + 5-book comparison), existing book scrapers
-**Tier 5 (Props market):** Props.cash, OddsJam, Outlier, EVSharps EV
-**Tier 6 (Exchange / prediction markets):** Smarkets, Kalshi, Polymarket
-**Tier 7 (Context signals):** BaseballPress lineups, Weather, Rotowire injuries, DFS ownership
+Superseded by the later "Priority Stack (MODE A) — v5.2" 13-level list further down this document — use that one.
 
 ---
 
