@@ -1,6 +1,7 @@
 # BetCouncil GEM Instructions v5.2
 # Updated: July 9, 2026 — v5.2: Monte Carlo Engine (Poisson/Skellam/Log5), SportsbookReview public %, SportsLine multi-book, full sport MC coverage, Unabated MLB-HR breakeven finalized, live power ratings all 5 sports, NBA/Gist/book-field bug fixes, bc_utils devig/Kelly math fixes
 # Session addendum July 12, 2026: BetMGM auto-scraper fixed (WAF blocks specific curl_cffi TLS fingerprints, not IP — rotating impersonation profile fixes it), BetMGM/DraftKings/Novig/Betr now run fully automated via GitHub Actions (no Tampermonkey needed), OddsAPI props NameError fixed (was 100% failure rate), line-deviation-from-consensus signal NameError fixed (was silently never firing) — see Session 12 Addendum below for full detail.
+# Session addendum Aug 26-29, 2026: MLB totals edge-cap root cause found and fixed (Skellam margin-distribution math was wrong for a sum question, replaced with real Poisson-sum calc) — the real fix behind the "every total shows 20%" bug. 3 separate direction-conflict bugs fixed (Skellam tie-default, per-signal verdict, tier badge itself). 2 correlation gaps fixed (auto-slip builder, same-player cross-market on Full Board). Kalshi traced through 3 layers to the real, current field names. Tier-stats calibration gap fixed to match its sibling function. New real sources: PlayerProps.AI, second SharpAPI key, NFL matchup metrics (real nflverse play-by-play), EVSharps NFL TDs + backfields — see Session Addendum (Aug 26-29) below for full detail, including sources evaluated and explicitly declined.
 # Replace your current Gem system prompt with everything below this line.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2806,3 +2807,174 @@ hardcoded constant, $468.49) instead of the real live value shown
 correctly elsewhere on the same page — removed rather than left
 misleading real money numbers on screen; the same info already displays
 correctly elsewhere in the same tab.
+
+### Session Addendum (Aug 26–29, 2026) — real, confirmed changes
+
+**Totals edge math — root cause finally found and fixed (real, core-model
+correction).** Two rounds of reports flagged that every MLB total showed
+the identical 20.0% edge regardless of the actual projection-vs-market
+gap. First fix removed a redundant local clamp that was prematurely
+saturating results. That helped but didn't fully resolve it — the real,
+deeper cause: totals were computed via `compute_fair_prob_skellam`, a
+function built for margin/spread markets (models home_runs minus
+away_runs), applied to what is genuinely a sum question (home_runs plus
+away_runs). An 8.5 total line was being evaluated as an 8.5-run *margin*
+— a near-impossible blowout in real MLB — verified directly with real
+scipy computation (0.35% probability under the wrong interpretation vs.
+53.1% under the correct one on identical inputs). Built
+`compute_fair_prob_total`, using the real, standard statistical fact that
+the sum of two independent Poisson-distributed scoring rates is itself
+Poisson(mu_a+mu_b). Verified with a standalone test across 5 different,
+realistic games before pushing: genuinely varied edges (19.7%, 7.2%,
+14.0%), not one repeated number. Applies to MLB/NHL/Soccer totals (shared
+code path).
+
+**Direction-conflict bugs — 3 separate, confirmed instances, not one
+bug.** (1) Skellam side-selection defaulted to UNDER on a genuine tie
+(near-zero total_edge falling through a strict `>0` check) — added an
+explicit near-zero-edge guard before any side gets chosen. (2) The
+per-prop signal verdict (`render_signal_chart`) computed its own
+direction independently from raw signal values, never cross-checked
+against the prop's real, final side — could silently show "signals
+pointing OVER" on a card whose actual pick was UNDER. Fixed at two
+levels: the overall verdict text, and (a separate, confirmed gap) each
+individual signal row's own "Favors OVER/UNDER" label. (3) The tier badge
+itself (SOVEREIGN/ELITE/etc.) had zero awareness of any of this —
+`get_tier` only ever saw the numeric edge. Found the real, direct
+insertion point where signals/side/tier are all available together
+(matching the exact same pattern already used for injury-suppression,
+`tier = "PASS"`) and wired in a real downgrade: a genuine signal/side
+conflict now forces `tier = "PASS"` rather than displaying a misleading
+SOVEREIGN/ELITE label. Verified with a standalone test across
+conflict/agreement/no-signal scenarios before pushing.
+
+**Correlation gaps — 2 separate, confirmed instances.** (1)
+`build_optimal_portfolio` (the automatic slip/Flex/Parlay-of-the-Day
+generator) tracked same-*game* concentration but never called
+`compute_parlay_correlation` at all, missing teammates or correlated
+stat types spread across *different* games. Wired in the existing,
+already-correct correlation function to the same greedy-selection loop.
+(2) Same-player, cross-market correlation (e.g. a pitcher's strikeouts
+prop and outs-recorded prop, both driven by innings pitched) was
+detectable by the existing correlation function but never applied to the
+Full Board itself. Added a real, centralized pass: any player with 2+
+correlated props on the board now gets a visible `CorrelatedProps` note
+on every one of their entries.
+
+**Kalshi — traced through 3 layers, real root cause found.** A prior
+session's own comment claimed Kalshi's series tickers were "unguessable
+internal codes" and switched to matching "baseball"/"mlb" against raw
+market title/subtitle text — both the original claim and that
+replacement were wrong. Confirmed via multiple independent sources that
+Kalshi has real, documented, predictable series tickers (KXMLBGAME,
+KXNBAGAME, KXNFLGAME, KXNHLGAME), and that real market titles use team
+names, never sport-name words — so the keyword filter would
+systematically fail to match anything. Rebuilt `fetch_kalshi_markets` to
+filter by the real, correct `series_ticker` param, then found a second,
+separate bug: the code read a `yes_bid` field that doesn't exist in the
+current API schema at all (only a historical `previous_yes_bid_dollars`
+does) — the real, current fields are `no_bid_dollars`/`no_ask_dollars`
+as decimal-string values. Fixed to compute yes-side probability as 1
+minus the midpoint of the real no-side bid/ask. **Important finding
+during this:** `fetch_kalshi_markets` turned out to be dead code, never
+called anywhere in the live app — the real, live Kalshi path is
+`fetch_kalshi_from_gist`, reading from the scheduled `kalshi_refresh.py`
+harvester, which was independently confirmed already correct (real,
+varied live probabilities: 0.45/0.49/0.52, not the broken 0/1 pattern).
+The `fetch_kalshi_markets` fix stands as a real, correct improvement to a
+currently-unused function, not a fix to what was actually broken.
+
+**Tier-stats calibration — confirmed real gap vs. a sibling function.**
+`compute_tier_stats` (source of the Sovereign/Elite/Approved win-rate
+display) had two real gaps already fixed in the adjacent
+`compute_calibration_buckets` but never applied here: no filter for
+`has_real_prob` (confirmed elsewhere that a large share of resolved bets
+carry placeholder-default prob values, not genuine model predictions,
+polluting tier hit rates), and no minimum sample-size gate at all (n=1
+was treated as reportable). Applied both fixes here, with a 15-bet floor
+(vs. the sibling function's 30, appropriate for tier-level aggregates).
+
+**Weather timestamps.** `fetch_weather_from_gist` was silently discarding
+the real `captured_at` timestamp already present in the raw harvester
+data. Now returns it as a third value; the one real caller updated to
+match (and attaches it to the weather dict as `fetched_at`). Caught and
+fixed a real tuple-unpack mismatch mid-fix — the same class of bug as
+the ParlayPlay production crash from an earlier session — verified the
+fix actually made it into the live repo on a second pass after an
+earlier attempt silently failed to push.
+
+**Honest, explicit "verify before betting" notes added** (not full
+fixes, deliberately) for two things that couldn't be safely, fully
+resolved without a larger, untraced refactor: totals recommendations now
+carry a `line_verify_note` telling the user to confirm the real, current
+line at their actual book; lineup-derived props carry a
+`LineupStatusNote` noting starter/lineup status may not be real-time.
+
+**New real data sources added, all live-verified before being wired in
+(not trusted on claim):**
+- **PlayerProps.AI** (`fetch_playerprops_ai`) — real, independent
+  multi-book player-prop projection source. No provider-authored
+  directional pick (confirmed via direct inspection of the raw response,
+  not just the vendor's claim) — direction is derived from
+  projection-vs-book-line and explicitly marked `derived_direction: True`.
+  Wired into the Predictions tab, display/comparison only, same
+  convention as FavoredProps — never wired into core edge math.
+- **Second SharpAPI key** (`SHARPAPI_KEY_2`) — `fetch_sharpapi_props` now
+  uses its own key, separate rate-limit budget from `fetch_sharpapi_lines`.
+- **NFL matchup metrics** — new scheduled harvester
+  (`nfl_matchup_metrics_refresh.py`) pulls real, live nflverse
+  play-by-play data (confirmed real URL, real gzip file, verified before
+  building against it) and computes real per-team pressure rate,
+  explosive-play rate, and success rate using nflverse's own standard
+  columns — no invented formulas. `fetch_nfl_matchup_metrics` reads it;
+  genuinely visible in the Predictions tab.
+- **EVSharps NFL TDs** (`fetch_ev_nfl_tds`, `/api/tds`) — real
+  first/anytime-touchdown-scorer props, confirmed live (463 real items at
+  verification time), wired into the fetch batch and genuinely visible.
+- **EVSharps NFL backfields** (`fetch_ev_nfl_backfields`,
+  `/api/backfields`) — real snap/red-zone/target share with
+  week-over-week comparison, confirmed live (158 real items), fills a
+  real, previously-confirmed gap (BetCouncil had no source at all for
+  this before). Wired in and genuinely visible.
+- Both new EVSharps NFL functions required careful, double-checked edits
+  to the real fetch-batch tuple and its positional unpack — this is the
+  exact class of bug (positional count mismatch) that caused a real,
+  live production crash earlier this session; every addition was
+  manually, carefully re-counted before pushing.
+
+**Real sources evaluated and explicitly declined — noted so this doesn't
+get re-litigated:**
+- **BallparkPal** — real, legitimate, but license is personal/
+  non-commercial only, and the underlying signals (park factors, weather,
+  matchups) are already covered by existing sources.
+- **Sportradar official API** — real and legitimate, but confirmed
+  enterprise pricing ($500–1,000+/month minimum), and everything it
+  offers pregame is already covered for free (ESPN, RotoWire, the new
+  nflverse pipeline).
+- **PickFinder.app** — real, live-verified data, but no provider-
+  authored directional pick.
+- **Doink Sports, SportBot AI, Linemate.io** — all confirmed to require
+  either an authenticated session or explicit terms-of-service
+  prohibition on automated/scripted access. Declined on principle, not
+  technical grounds — the data itself looked genuinely good in more than
+  one case (Linemate especially).
+- **SportsGameOdds, PropCruncher, DataStreak, OpticOdds** — confirmed,
+  directly, not referenced anywhere in the codebase; not pursued.
+- **EVSharps Preseason and Futures endpoints** — real, live, working, but
+  Preseason is redundant with existing NFL odds infrastructure and
+  Futures doesn't match the confirmed pregame-prop/line use case.
+- **WhaleAlerts/WarOnCappers Discord (Polymarket sharp-wallet
+  consensus)** — real, paid subscriber access via a legitimate Discord
+  bot API, technically buildable, but MLB/NFL presence in the signal mix
+  is thin and inconsistent, and the underlying track record is unproven
+  PnL claims rather than a resolved win/loss record. Declined for now;
+  revisit only if a real, resolved record justifies it.
+
+**ParlayAPI already supports NFL — confirmed, no new code needed.**
+`fetch_parlayapi_props` was already written generically (real NFL sport
+mapping and NFL-specific stat names already present) and is already
+called with whatever sport is currently active. Live-tested with
+sport=NFL: genuine success, zero items — expected and correct, since
+real NFL Week 1 props hadn't posted yet at test time (season opens
+Sep 9). Nothing to fix; will start returning data automatically once the
+real season begins.
