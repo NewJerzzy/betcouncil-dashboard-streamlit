@@ -126,6 +126,21 @@ from fetchers import _map_prop_to_stat_key  # wildcard import excludes underscor
 from fetchers import _gist_data_age_minutes  # wildcard import excludes underscore-prefixed names
 from prop_market_intelligence import record_prop_snapshot, get_odds_type_flips
 from sdv_source import *  # sportsdataverse: NFL/NBA/MLB/NHL/WNBA stats, rosters, injuries
+from job_storage import cleanup_project_storage
+
+# Keep project-owned background-job artifacts bounded without touching
+# platform-managed .cache, dependency directories, user assets, or Gist data.
+try:
+    _storage_cleanup_report = cleanup_project_storage()
+    if (
+        _storage_cleanup_report.get("deleted_jobs")
+        or _storage_cleanup_report.get("deleted_upload_chunks")
+        or _storage_cleanup_report.get("deleted_log_files")
+        or _storage_cleanup_report.get("cap_exceeded_by_active_jobs")
+    ):
+        _logger.info("Project storage cleanup: %s", _storage_cleanup_report)
+except Exception as _storage_cleanup_error:
+    _logger.warning("Project storage cleanup skipped: %s", _storage_cleanup_error)
 
 def _bc_track(stage, duration, meta=None):
     try:
