@@ -1327,9 +1327,7 @@ ODDS_API_COUNTER_PATH = os.path.join(CACHE_DIR, "odds_api_counter.json")
 BDL_COUNTER_PATH = os.path.join(CACHE_DIR, "bdl_counter.json")
 ROLLING_DEFENSE_CACHE_HOURS = 12
 
-# GitHub Gist persistence
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
-GITHUB_GIST_ID = st.secrets.get("GITHUB_GIST_ID", "")
+# GitHub Gist persistence (GITHUB_TOKEN, GITHUB_GIST_ID already imported from config.py above)
 GIST_API = "https://api.github.com/gists"
 
 # ── Startup credential check ────────────────────────────────────────────────
