@@ -838,7 +838,7 @@ with tabs[1]:
         """)
 
         # ── MATCHUPS ────────────────────────────────────────
-        games_list = st.session_state.games or []
+        games_list = st.session_state.get("games") or []
         if games_list:
             st.markdown('''<div style="display:flex;align-items:center;gap:0.75rem;margin:1rem 0 0.8rem;"><div style="flex:1;height:1px;background:var(--bc-bg2);"></div><span style="color:var(--bc-dim);font-size:1.0rem;text-transform:uppercase;letter-spacing:0.08em;">Today's Matchups</span><div style="flex:1;height:1px;background:var(--bc-bg2);"></div></div>''', unsafe_allow_html=True)
             games_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:0.5rem;">'
@@ -2915,7 +2915,7 @@ with tabs[3]:
     # Use game_analysis (has FavoriteTeam/FavoriteML/TotalEdge/recommendations)
     # Fall back to raw games if game_analysis not loaded yet
     _game_analysis_full = st.session_state.get("game_analysis", [])
-    _raw_games = st.session_state.games or []
+    _raw_games = st.session_state.get("games") or []
     _sport2 = st.session_state.get("last_sport", SPORTS[0]) or "NBA"
     # Only use game_analysis if it matches current sport — prevents stale cross-sport data
     _ga_sport = _game_analysis_full[0].get("Sport", _game_analysis_full[0].get("sport","")) if _game_analysis_full else ""
