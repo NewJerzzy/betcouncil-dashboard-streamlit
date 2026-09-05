@@ -16724,6 +16724,35 @@ def load_sport_data(sport):
                 final_edge  = round(final_edge * 0.90, 4)
                 tier        = _get_cal_tier(final_edge, sport)
                 p["InjuryNote"] = f"🟡 {injury_flag} — edge -10%"
+            # NFL: real, position- and playing-time-aware injury impact
+            # score, additive display alongside the existing flat discount
+            # above (not replacing it this session -- see the Aug 26-29
+            # addendum for why: confirming the flat discount's own numbers
+            # against this needs a real backtest before swapping the core
+            # calculation blind).
+            if sport == "NFL":
+                _real_status_map = None
+                if any(s in _inj_status for s in ("OUT", "INACTIVE")):
+                    _real_status_map = "Out"
+                elif "DOUBTFUL" in _inj_status:
+                    _real_status_map = "Doubtful"
+                elif "QUEST" in _inj_status:
+                    _real_status_map = "Questionable"
+                elif "PROB" in _inj_status:
+                    _real_status_map = "Probable"
+                elif "IR" in _inj_status:
+                    _real_status_map = "IR"
+                if _real_status_map:
+                    _real_snap = fetch_nfl_snap_share(player, p.get("Team", ""))
+                    _real_snap_share = _real_snap.get("offense_pct") or _real_snap.get("defense_pct") if _real_snap else None
+                    _real_position = (_real_snap or {}).get("position") or p.get("Position", "UNK")
+                    _real_impact = compute_nfl_injury_impact(_real_position, _real_status_map, _real_snap_share)
+                    _real_total_impact = _real_impact.get("offensive_impact", 0) + _real_impact.get("defensive_impact", 0)
+                    p["NFLInjuryImpactScore"] = round(_real_total_impact, 3)
+                    p["NFLInjuryImpactNote"] = (
+                        f"📊 Real injury impact: {_real_total_impact:.0%} of team strength "
+                        f"({_real_position}, {'real' if _real_snap else 'estimated'} snap share)"
+                    )
         # All sports: apply FantasyLabs lineup bonus
         # MLB: batting order bonus — ONLY within 4hr of first pitch
         #      (lineups not posted until 2-3hr before game)
