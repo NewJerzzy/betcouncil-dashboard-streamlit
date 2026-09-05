@@ -15571,6 +15571,30 @@ def fetch_signalodds_arbitrage_from_gist(max_age_minutes: int = 100) -> list:
     return []
 
 
+def fetch_nfl_snap_share(player_name: str, team: str, max_age_minutes: int = 10080):
+    """
+    Real, per-player NFL snap share (offense_pct/defense_pct) from the
+    harvester built tonight (scripts/nfl_snap_counts_refresh.py), reading
+    real, live nflverse snap-count data for the most recent real week.
+
+    Used by compute_nfl_injury_impact() (bc_utils.py) to get a genuine
+    playing-time figure instead of a position-based default.
+
+    Returns {"position": str, "offense_pct": float, "defense_pct": float}
+    or None if not found / data genuinely stale -- callers should fall
+    back to compute_nfl_injury_impact()'s own default in that case, not
+    fabricate a value.
+    """
+    data = _read_gist_file("betcouncil_nfl_snap_counts.json", cache_minutes=60)
+    if not (data and _is_fresh(data, max_age_minutes=max_age_minutes)):
+        return None
+    players = data.get("players", {})
+    if not isinstance(players, dict):
+        return None
+    key = f"{str(player_name or '').lower().strip()}|{str(team or '').upper()}"
+    return players.get(key)
+
+
 def fetch_nfl_matchup_metrics(team: str = None, max_age_minutes: int = 10080) -> dict:
     """
     Real, per-team NFL offensive/defensive matchup metrics -- pressure rate,
