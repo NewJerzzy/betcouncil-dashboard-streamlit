@@ -2242,6 +2242,14 @@ def detect_season_regime(sport="NBA"):
             regime = "Late Season"
             desc   = "Late season — rest signal strengthens"
             adj    = {"rest": 0.02}
+        elif month in (1, 2, 12):
+            # Real hardening fix: previously relied on the final else
+            # fallthrough happening to be correct for these months (true
+            # for NBA's real calendar, but the same silent, unlabeled
+            # pattern that caused the confirmed NHL bug). Made explicit.
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
         else:
             regime = "Mid Season"
             desc   = "Full weights active"
@@ -2263,6 +2271,13 @@ def detect_season_regime(sport="NBA"):
             regime = "Late Season"
             desc   = "Late season — rest signal strengthens"
             adj    = {"rest": 0.02}
+        elif month in (6, 7):
+            # Real hardening fix: previously relied on the else fallthrough
+            # happening to be correct for these months, same structural
+            # weakness as the confirmed NHL bug. Made explicit.
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
         else:
             regime = "Mid Season"
             desc   = "Full weights active"
@@ -2284,6 +2299,13 @@ def detect_season_regime(sport="NBA"):
             regime = "Off-season"
             desc   = "MLB off-season — current-season signals are stale"
             adj    = {"base": -0.06}
+        elif month in (5, 6, 7, 8):
+            # Real hardening fix: previously relied on the else fallthrough
+            # happening to be correct for these months, same structural
+            # weakness as the confirmed NHL bug. Made explicit.
+            regime = "Mid Season"
+            desc   = "Full weights active"
+            adj    = {}
         else:
             regime = "Mid Season"
             desc   = "Full weights active"
