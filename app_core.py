@@ -1458,8 +1458,14 @@ def render_signal_chart(prop, sport="NBA"):
     avg_reliability = avg_reliability / firing if firing > 0 else 0
     net_delta = sum(signals.values())
 
-    delta_color = "#22c55e" if net_delta > 0 else "#e04040"
-    direction = "OVER" if net_delta > 0 else "UNDER"
+    delta_color = "#22c55e" if net_delta >= 0 else "#e04040"
+    # Real, confirmed fix: signals here are already side-scoped (positive =
+    # supports the prop's own real Side, not a universal OVER=positive
+    # convention) -- confirmed by tracing compute_multi_signal_edge and
+    # SignalBase's real source. Direction reflects the prop's actual side
+    # when signals support it; only genuinely diverges (flips to show the
+    # opposite) when the net signal sum actually opposes the chosen side.
+    direction = _real_side if net_delta >= 0 else ("UNDER" if _real_side == "OVER" else "OVER")
     max_val = max(abs(v) for v in signals.values()) if signals else 0.01
     if max_val == 0:
         max_val = 0.01
@@ -1504,10 +1510,14 @@ def render_signal_chart(prop, sport="NBA"):
         desc = plain_desc.get(key, "")
         reliability = SIGNAL_RELIABILITY.get(key, 0.5)
         bar_pct = min(100, int(abs(val) / max_val * 100))
-        bar_color = "#22c55e" if val > 0 else "#e04040"
-        direction_word = "Favors OVER" if val > 0 else "Favors UNDER"
-        _row_side = "OVER" if val > 0 else "UNDER"
-        _row_conflicts = _row_side != _real_side
+        bar_color = "#22c55e" if val >= 0 else "#e04040"
+        # Real, confirmed fix: val here is already side-scoped (positive =
+        # supports the prop's real side), same root cause as the tier-
+        # conflict and verdict-direction fixes above. A genuine conflict is
+        # this specific signal actually opposing the chosen side (val < 0),
+        # not a separately re-derived over/under label.
+        direction_word = f"Favors {_real_side}" if val >= 0 else f"Favors {'UNDER' if _real_side == 'OVER' else 'OVER'}"
+        _row_conflicts = val < 0
         if _row_conflicts:
             direction_word += " ⚠️ (conflicts with actual pick)"
         strength = strength_label(val)
@@ -16858,10 +16868,21 @@ def load_sport_data(sport):
 
         # Real, direct fix for a confirmed gap: get_tier has no awareness of
         # signal conflicts, so a pick could show SOVEREIGN/ELITE even while
-        # its own signals genuinely disagree with the final side. Computes
-        # the same signal-based direction already used in render_signal_chart,
-        # and downgrades tier on a genuine conflict, matching the same real,
-        # established pattern used above for injury suppression.
+        # its own signals genuinely disagree with the final side. Matches
+        # the same real, established pattern used above for injury
+        # suppression.
+        #
+        # IMPORTANT, confirmed via direct trace of compute_multi_signal_edge:
+        # best_signals is already side-scoped (positive = supports whichever
+        # side, best_side, was actually chosen -- e.g. under_signals values
+        # are normally positive when they genuinely support UNDER, not
+        # negative). An earlier version of this check wrongly assumed a
+        # universal positive=OVER/negative=UNDER convention regardless of
+        # which side won, causing it to falsely flag a conflict on nearly
+        # every legitimate UNDER pick. The real, correct check: a genuine
+        # conflict is the signals net-opposing the side that was actually
+        # chosen (a negative sum), not a mismatch against a separately
+        # re-derived over/under label.
         _tc_net = (best_signals.get("base", 0) + best_signals.get("defense", 0) +
                    best_signals.get("location", 0) + best_signals.get("usage", 0) +
                    best_signals.get("rest", 0) + best_signals.get("pace", 0) + blowout_adj)
@@ -16869,10 +16890,8 @@ def load_sport_data(sport):
                           best_signals.get("location", 0), best_signals.get("usage", 0),
                           best_signals.get("rest", 0), best_signals.get("pace", 0), blowout_adj)
                           if abs(v) > 0.001)
-        if _tc_firing > 0:
-            _tc_direction = "OVER" if _tc_net > 0 else "UNDER"
-            if _tc_direction != str(best_side).upper() and tier not in ("PASS",):
-                tier = "PASS"
+        if _tc_firing > 0 and _tc_net < 0 and tier not in ("PASS",):
+            tier = "PASS"
 
         enriched.append({
             "Player": player, "Prop": stat_raw, "Line": line, "Side": best_side, "Avg": avg,
