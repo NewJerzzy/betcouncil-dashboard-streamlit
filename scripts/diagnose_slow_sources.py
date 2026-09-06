@@ -19,6 +19,13 @@ import contextlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
+import bc_utils
+
+_real_nhl_regime_check = None
+try:
+    _real_nhl_regime_check = bc_utils.detect_season_regime("NHL")
+except Exception as e:
+    _real_nhl_regime_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
 _real_game_ids = {}
 _espn_line_movement_debug = None
@@ -588,6 +595,7 @@ output = {
     "evsharps_tds_sample": _evsharps_tds_sample,
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
+    "real_nhl_regime_check": _real_nhl_regime_check,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
