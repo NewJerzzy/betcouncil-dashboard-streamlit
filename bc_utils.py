@@ -2293,6 +2293,22 @@ def detect_season_regime(sport="NBA"):
             regime = "Off-season"
             desc   = "No NHL games — current-season signals are stale"
             adj    = {"base": -0.06}
+        elif month == 9:
+            # Real fix: September was previously missing entirely, falling
+            # through to "Mid Season" (no suppression) even though the real
+            # NHL season doesn't start until Sept 29 (preseason Sept 19) --
+            # confirmed the direct cause of stale, phantom NHL games showing
+            # as SOVEREIGN/ELITE picks. Verify with a live ESPN check rather
+            # than a blind assumption, since September is a genuine
+            # transition month (off-season most of it, preseason late).
+            if _espn_has_games_in_window("NHL", days=7):
+                regime = "Preseason"
+                desc   = "NHL preseason — exhibition games, signals unreliable"
+                adj    = {"base": -0.08}
+            else:
+                regime = "Off-season"
+                desc   = "NHL season has not started — no games in next 7 days, signals suppressed"
+                adj    = {"base": -0.06}
         elif month in (10, 11):
             regime = "Early Season"
             desc   = "Early NHL — small sample, base stats less reliable"
