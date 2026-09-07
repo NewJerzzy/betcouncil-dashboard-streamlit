@@ -1,0 +1,221 @@
+nfl
+scheduled
+New England Patriots
+AT
+Seattle Seahawks
+0.5
+-0.5
+Recommendation
+SEA -3.5
+
+9/9/2026, 5:15:00 PM
+
+Recommendation: SEA -3.5
+
+Bookmaker Lines / Odds
+
+Spread
+
+BOVADA • home -0.5 • +105
+BOVADA • away 0.5 • -135
+DRAFT_KINGS • home -0.5 • +110
+DRAFT_KINGS • away 0.5 • -130
+BOVADA • home -0.5 • +100
+BOVADA • away 0.5 • -130
+nfl
+scheduled
+San Francisco 49ers
+AT
+Los Angeles Rams
++120
+-155
+Recommendation
+LAR ML
+
+9/10/2026, 5:35:00 PM
+
+Recommendation: LAR ML
+
+Bookmaker Lines / Odds
+
+Moneyline
+
+BOVADA • away 0 • +120
+BOVADA • home 0 • -155
+Odds H/D/A: -155 / — / 120
+
+nfl
+scheduled
+Tampa Bay Buccaneers
+AT
+Cincinnati Bengals
+2.5
+-2.5
+Recommendation
+CIN ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: CIN ML
+
+Bookmaker Lines / Odds
+
+Total
+
+BET_PARX • over 26.5 • -108
+BET_PARX • under 26.5 • -115
+BOVADA • over 25.5 • -110
+BOVADA • under 25.5 • -110
+DRAFT_KINGS • over 24.5 • -118
+DRAFT_KINGS • under 24.5 • -102
+Spread
+
+BET_PARX • away 2.5 • +100
+BET_PARX • home -2.5 • -123
+BOVADA • away 3 • -105
+BOVADA • home -3 • -115
+DRAFT_KINGS • away 3.5 • -122
+DRAFT_KINGS • home -3.5 • +102
+Moneyline
+
+BET_PARX • away 0 • +145
+BET_PARX • home 0 • -182
+BOVADA • away 0 • +160
+BOVADA • home 0 • -185
+DRAFT_KINGS • away 0 • +164
+DRAFT_KINGS • home 0 • -198
+Odds H/D/A: -182 / — / 145
+
+nfl
+scheduled
+New York Jets
+AT
+Tennessee Titans
+0.5
+-0.5
+Recommendation
+NYJ ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: NYJ ML
+
+Bookmaker Lines / Odds
+
+Moneyline
+
+BOVADA • away 0 • -110
+BOVADA • home 0 • -120
+DRAFT_KINGS • away 0 • -110
+DRAFT_KINGS • home 0 • -110
+BET_PARX • away 0 • -102
+BET_PARX • home 0 • -122
+BOVADA • away 0 • +100
+BOVADA • home 0 • -120
+DRAFT_KINGS • away 0 • -102
+DRAFT_KINGS • home 0 • -118
+Spread
+
+BET_PARX • away 1.5 • -137
+BET_PARX • home -1.5 • +110
+BOVADA • away 0.5 • -125
+BOVADA • home -0.5 • +105
+DRAFT_KINGS • away 0.5 • -122
+DRAFT_KINGS • home -0.5 • +102
+Odds H/D/A: -120 / — / -110
+
+nfl
+scheduled
+Atlanta Falcons
+AT
+Pittsburgh Steelers
+—
+—
+Recommendation
+OVER 42.5
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: OVER 42.5
+
+No public market posted for this event
+
+nfl
+scheduled
+Baltimore Ravens
+AT
+Indianapolis Colts
+—
+—
+Recommendation
+IND +3.5
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: IND +3.5
+
+No public market posted for this event
+
+nfl
+scheduled
+Buffalo Bills
+AT
+Houston Texans
+—
+—
+Recommendation
+BUF ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: BUF ML
+
+No public market posted for this event
+
+nfl
+scheduled
+Chicago Bears
+AT
+Carolina Panthers
+—
+—
+Recommendation
+CHI ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: CHI ML
+
+No public market posted for this event
+
+nfl
+scheduled
+New Orleans Saints
+AT
+Detroit Lions
+—
+—
+Recommendation
+NO ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: NO ML
+
+No public market posted for this event
+
+nfl
+scheduled
+Cleveland Browns
+AT
+Jacksonville Jaguars
+—
+—
+Recommendation
+JAX ML
+
+9/13/2026, 10:00:00 AM
+
+Recommendation: JAX ML
+
+No public market posted for this event
