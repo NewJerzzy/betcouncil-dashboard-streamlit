@@ -1481,6 +1481,13 @@ def render_signal_chart(prop, sport="NBA"):
         "blowout": "Blowout Risk",
         "weather": "Weather Conditions",
     }
+    # Real, distinct icon per signal type, so each row is scannable at a
+    # glance rather than reading every label -- same idea as SportsCommand's
+    # thematic emoji per bullet.
+    signal_icons = {
+        "base": "📊", "defense": "🛡️", "location": "🏠", "rest": "😴",
+        "pace": "⚡", "usage": "📈", "blowout": "💥", "weather": "🌤️",
+    }
 
     # Plain English explanations shown on hover/below
     plain_desc = {
@@ -1506,7 +1513,7 @@ def render_signal_chart(prop, sport="NBA"):
     for key, val in signals.items():
         if abs(val) < 0.0001:
             continue
-        label = plain_labels.get(key, key.title())
+        label = f"{signal_icons.get(key, '•')} {plain_labels.get(key, key.title())}"
         desc = plain_desc.get(key, "")
         reliability = SIGNAL_RELIABILITY.get(key, 0.5)
         bar_pct = min(100, int(abs(val) / max_val * 100))
@@ -1664,8 +1671,24 @@ def render_signal_chart(prop, sport="NBA"):
           <div style="font-size:18px;font-weight:500;color:{_pr_color}">{_pr_fair:g} <span style="font-size:12px;color:#6a7a8a">({_pr_edge:+.1f})</span></div>
         </div>'''
 
+    # Real, new category tag (inspired by SportsCommand's "Favorites"/"Edge"
+    # style tags) -- derived from the already-computed regime_label, giving
+    # an at-a-glance signal type before reading the rest of the card.
+    _category_tag_map = {
+        "CONFIRM OVER": ("📈", "Model Edge"),
+        "CONFIRM UNDER": ("📈", "Model Edge"),
+        "REPRICE": ("💰", "Line Value"),
+        "SHARP FADE": ("🦈", "Sharp Signal"),
+        "NEUTRAL": ("⚖️", "Neutral"),
+    }
+    _cat_icon, _cat_label = _category_tag_map.get(regime_label, ("📊", "Standard"))
+
     html = f"""
 <div style="background:var(--bc-bg-card);border:1px solid var(--bc-border);border-radius:10px;padding:16px;margin:6px 0;">
+
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+    <span style="background:{regime_color}22;border:1px solid {regime_color}55;color:{regime_color};font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;">{_cat_icon} {_cat_label}</span>
+  </div>
 
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #1a2a3a;">
     <div style="flex:1;min-width:0;">
@@ -1688,6 +1711,7 @@ def render_signal_chart(prop, sport="NBA"):
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Line move</div>
           <div style="font-size:14px;font-weight:500;color:{line_move_color}">{line_move_display}</div>
         </div>
+
         <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
           <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
@@ -1695,10 +1719,13 @@ def render_signal_chart(prop, sport="NBA"):
         </div>{eva_html}{pricer_html}
       </div>
     </div>
-    <div style="flex-shrink:0;text-align:center;background:{conv_color}18;border:1px solid {conv_color}55;border-radius:10px;padding:10px 18px;min-width:84px;">
+    <div style="flex-shrink:0;text-align:center;background:{conv_color}18;border:1px solid {conv_color}55;border-radius:10px;padding:10px 18px;min-width:110px;">
       <div style="font-size:28px;font-weight:800;color:{conv_color};line-height:1;">{conviction_score}</div>
       <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase;margin-top:4px;">Conviction</div>
       <div style="font-size:9px;color:{conv_color};margin-top:2px;white-space:nowrap;">{conv_label}</div>
+      <div style="background:#0a1628;border-radius:4px;height:5px;margin-top:8px;overflow:hidden;">
+        <div style="background:{conv_color};height:100%;width:{conviction_score}%;border-radius:4px;"></div>
+      </div>
     </div>
   </div>
 
