@@ -2,7 +2,7 @@ name: Warm OddsWrap Cache
 
 on:
   schedule:
-    - cron: "*/45 * * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch: {}
 
 jobs:
