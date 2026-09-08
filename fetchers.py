@@ -8823,7 +8823,7 @@ def fetch_oddswrap_props(sport):
     cache_path = os.path.join(CACHE_DIR, f"oddswrap_props_{sport}.pkl")
     if os.path.exists(cache_path):
         age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
-        if age_hours < 1:
+        if age_hours < 1.5:
             return _safe_load_pkl(cache_path)
     # Real fix (2026-08-20): local pkl cache is confirmed ephemeral on
     # Streamlit Cloud -- wiped on every redeploy/worker restart -- so
@@ -8831,14 +8831,20 @@ def fetch_oddswrap_props(sport):
     # single board load instead of the intended once-per-hour. The
     # Gist genuinely persists across redeploys, so check it as a
     # second layer before falling back to the real slow fetch.
-    _gist_cached = _read_gist_file(f"betcouncil_oddswrap_cache_{sport}.json", cache_minutes=60)
+    # Real, further extended (2026-09-08): confirmed via actual run
+    # history that the 45-min cache warmer cron is genuinely, often
+    # delayed by several hours (a known, documented GitHub Actions
+    # "best effort" scheduling limitation, not a bug in this repo) --
+    # widened from 1h to 1.5h so occasional warmer delays don't push
+    # the cache past staleness and force the slow path live.
+    _gist_cached = _read_gist_file(f"betcouncil_oddswrap_cache_{sport}.json", cache_minutes=90)
     if _gist_cached and isinstance(_gist_cached, dict):
         _cached_data = _gist_cached.get("data")
         _cached_at = _gist_cached.get("captured_at", "")
         if _cached_data and _cached_at:
             try:
                 _age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(_cached_at)).total_seconds() / 3600
-                if _age_h < 1:
+                if _age_h < 1.5:
                     try:
                         with open(cache_path, "wb") as f:
                             pickle.dump(_cached_data, f)
@@ -8858,17 +8864,32 @@ def fetch_oddswrap_props(sport):
                 return _book_props
             try:
                 cats = client.get_prop_categories(sport_key, book=book)
-                for cat in cats[:10]:
+
+                def _fetch_one_category(cat):
+                    _cat_props = []
                     if time.time() > _deadline:
-                        break
+                        return _cat_props
                     try:
                         props = client.get_props(sport_key, category_id=cat.category_id, subcategory_id=cat.subcategory_id, book=book)
                         for prop in props:
                             if not prop.player or prop.line is None:
                                 continue
-                            _book_props.append({"Player": prop.player, "Prop": prop.market, "Line": float(prop.line), "Side": "OVER", "OverOdds": prop.over_odds, "UnderOdds": prop.under_odds, "Book": prop.book, "Sport": sport, "source": f"oddswrap_{prop.book}"})
+                            _cat_props.append({"Player": prop.player, "Prop": prop.market, "Line": float(prop.line), "Side": "OVER", "OverOdds": prop.over_odds, "UnderOdds": prop.under_odds, "Book": prop.book, "Sport": sport, "source": f"oddswrap_{prop.book}"})
                     except (ValueError, TypeError):
-                        continue
+                        pass
+                    return _cat_props
+
+                # Real, structural fix: these up to 10 real category calls
+                # per book previously ran sequentially even though the 6
+                # books themselves already ran in parallel -- this was the
+                # real, remaining compounding-latency bottleneck. Now runs
+                # concurrently, bounded by the slowest single category call
+                # rather than the sum of up to 10 chained ones.
+                from concurrent.futures import ThreadPoolExecutor as _CatPool
+                with _CatPool(max_workers=min(10, len(cats[:10]) or 1)) as _cat_pool:
+                    _cat_results = list(_cat_pool.map(_fetch_one_category, cats[:10]))
+                for _cat_props in _cat_results:
+                    _book_props.extend(_cat_props)
             except (ValueError, TypeError):
                 pass
             return _book_props
