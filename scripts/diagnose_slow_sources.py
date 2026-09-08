@@ -21,6 +21,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fetchers
 import bc_utils
 
+_real_props_zero_investigation = {}
+try:
+    import requests as _req_pz
+    # SharpAPI props -- direct, real request, capturing exact status
+    try:
+        r1 = _req_pz.get(
+            f"https://api.sharpapi.io/api/v1/odds",
+            params={"league": "mlb", "market_type": "player_props"},
+            headers={"X-API-Key": fetchers.SHARPAPI_KEY_2, "Accept": "application/json"},
+            timeout=12,
+        )
+        _real_props_zero_investigation["sharpapi_props_direct"] = {
+            "status": r1.status_code, "real_data_len": len(r1.json().get("data", [])) if r1.status_code == 200 else None,
+            "body_preview": r1.text[:200] if r1.status_code != 200 else None,
+        }
+    except Exception as e:
+        _real_props_zero_investigation["sharpapi_props_direct"] = {"error": str(e)[:200]}
+
+    # Odds API budget check -- confirm real, current remaining budget
+    try:
+        allowed, reason = fetchers.api_budget_check("ODDS_API")
+        _real_props_zero_investigation["odds_api_budget_check"] = {"allowed": allowed, "reason": reason}
+    except Exception as e:
+        _real_props_zero_investigation["odds_api_budget_check"] = {"error": str(e)[:200]}
+
+    # OddsPAPI key presence + direct real check
+    _real_props_zero_investigation["oddspapi_key_present"] = bool(fetchers.ODDSPAPI_KEY)
+except Exception as e:
+    _real_props_zero_investigation = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _real_nhl_regime_check = None
 try:
     _real_nhl_regime_check = bc_utils.detect_season_regime("NHL")
@@ -596,6 +626,7 @@ output = {
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
     "real_nhl_regime_check": _real_nhl_regime_check,
+    "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
     "sharpapi_leagues_reference": _leagues_result,
