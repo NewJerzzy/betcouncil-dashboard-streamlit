@@ -24,6 +24,7 @@ jobs:
           SHARPAPI_KEY_2 = "${{ secrets.SHARPAPI_KEY_2 }}"
           PARLAY_API_KEY = "${{ secrets.PARLAY_API_KEY }}"
           EV_JWT = "${{ secrets.EV_JWT }}"
+          ODDS_API_KEY = "${{ secrets.ODDS_API_KEY }}"
           EOF
       - name: Run real diagnostic
         env:
