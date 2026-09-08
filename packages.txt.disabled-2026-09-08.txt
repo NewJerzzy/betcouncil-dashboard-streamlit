@@ -1,0 +1,24 @@
+tesseract-ocr
+
+# ── DISABLED 2026-09-08 ──────────────────────────────────────────────────
+# Streamlit Cloud's apt-get step is failing on every deploy, including a
+# brand-new app on a fresh build environment (confirmed -- not specific to
+# this repo, not fixable via packages.txt or requirements.txt):
+#
+#   E: Release file for http://deb.debian.org/debian-security/dists/
+#   bullseye-security/InRelease is expired (invalid since Xh XXmin)
+#
+# This is a real, known, recurring Streamlit Community Cloud platform issue
+# (Debian rotates security-repo codenames periodically; the platform's base
+# image sometimes lags behind). Confirmed via streamlitstatus.com that no
+# incident is currently logged for this, so there's no ETA.
+#
+# tesseract-ocr was only used as a fallback OCR path for the Slip Analyzer
+# (pytesseract, app_core.py ~line 11605) for when OCR_SPACE_API_KEY isn't
+# set -- OCR.space is the primary, already-working path and is unaffected
+# by this.
+#
+# TO RESTORE once the platform issue is confirmed resolved: copy the one
+# real line above ("tesseract-ocr") into a file literally named
+# packages.txt at the repo root, then delete this file. That's the whole
+# fix -- nothing else changed.
