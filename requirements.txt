@@ -6,6 +6,12 @@ numpy
 curl_cffi
 git+https://github.com/sjhouston23/oddswrap.git
 scipy
+# Real, confirmed fix: pinned before sportsdataverse to prevent it pulling
+# in a recent xgboost (3.x) that bundles a ~252MB Nvidia GPU library
+# (nvidia-nccl-cu13) even for CPU-only use, likely exceeding the real
+# platform build-size limit. Verified via a full, real dry-run install:
+# this pin resolves the whole tree cleanly with zero GPU packages.
+xgboost==1.7.6
 lightgbm
 pytesseract
 Pillow
