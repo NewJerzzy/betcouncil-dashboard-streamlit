@@ -48,6 +48,26 @@ try:
 
     # OddsPAPI key presence + direct real check
     _real_props_zero_investigation["oddspapi_key_present"] = bool(fetchers.ODDSPAPI_KEY)
+
+    # Real, targeted trace of exactly where fetch_odds_api_props returns
+    # empty for MLB, since the budget check alone doesn't explain it.
+    try:
+        sport_key = fetchers.ODDS_API_SPORT_MAP.get("MLB")
+        events_url = f"{fetchers.ODDS_API_BASE}/sports/{sport_key}/events?apiKey={fetchers.ODDS_API_KEY}&dateFormat=iso"
+        events_resp = _req_pz.get(events_url, headers=fetchers.HEADERS, timeout=15)
+        events = events_resp.json() if events_resp.status_code == 200 else []
+        from datetime import date as _date_cls, timedelta as _td_cls
+        today_str = _date_cls.today().strftime("%Y-%m-%d")
+        today_events = [e for e in events if e.get("commence_time","").startswith(today_str)] if isinstance(events, list) else []
+        markets = fetchers.ODDS_API_PROP_MARKETS.get("MLB", [])
+        _real_props_zero_investigation["odds_api_props_trace"] = {
+            "events_status": events_resp.status_code,
+            "real_total_events_all_dates": len(events) if isinstance(events, list) else "not-a-list",
+            "real_events_matching_today": len(today_events),
+            "real_markets_configured_for_mlb": markets,
+        }
+    except Exception as e:
+        _real_props_zero_investigation["odds_api_props_trace"] = {"error": str(e)[:250]}
 except Exception as e:
     _real_props_zero_investigation = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
