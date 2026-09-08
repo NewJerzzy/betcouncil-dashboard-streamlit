@@ -68,6 +68,20 @@ try:
         }
     except Exception as e:
         _real_props_zero_investigation["odds_api_props_trace"] = {"error": str(e)[:250]}
+
+    # Real, direct test of ODDS_API_KEY_GAMES specifically -- separate,
+    # distinct key from the confirmed-broken props key.
+    try:
+        sport_key_g = fetchers.ODDS_API_SPORT_MAP.get("MLB")
+        games_url = f"{fetchers.ODDS_API_BASE}/sports/{sport_key_g}/odds?apiKey={fetchers.ODDS_API_KEY_GAMES}&regions=us,us2&markets=h2h,spreads,totals&oddsFormat=american&bookmakers={fetchers.ODDS_API_BOOKS_GAMES}"
+        games_resp = _req_pz.get(games_url, timeout=15)
+        _real_props_zero_investigation["odds_api_key_games_test"] = {
+            "status": games_resp.status_code,
+            "real_item_count": len(games_resp.json()) if games_resp.status_code == 200 else None,
+            "body_preview": games_resp.text[:200] if games_resp.status_code != 200 else None,
+        }
+    except Exception as e:
+        _real_props_zero_investigation["odds_api_key_games_test"] = {"error": str(e)[:250]}
 except Exception as e:
     _real_props_zero_investigation = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
