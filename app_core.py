@@ -14218,8 +14218,10 @@ def load_sport_data(sport):
         _bp_data, _bp_src = baseballpress2_raw
         if _bp_data: st.session_state["baseballpress_lineups"] = _bp_data
     if sport in ("NFL","MLB") and weather2_raw:
-        _wx_data, _ = weather2_raw
-        if _wx_data: st.session_state["weather_data"] = _wx_data
+        _wx_data, _wx_source, _wx_captured_at = weather2_raw
+        if _wx_data:
+            st.session_state["weather_data"] = _wx_data
+            st.session_state["weather_data_captured_at"] = _wx_captured_at
     _harvester_results = _fetch_harvester_data_cached(sport, tuple(h[0] for h in _harvester_sources))
     for _fn_name, _ss_key, _src_key in _harvester_sources:
         _result = _harvester_results.get(_fn_name)
