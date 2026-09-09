@@ -25,6 +25,7 @@ jobs:
           PARLAY_API_KEY = "${{ secrets.PARLAY_API_KEY }}"
           EV_JWT = "${{ secrets.EV_JWT }}"
           ODDS_API_KEY = "${{ secrets.ODDS_API_KEY }}"
+          OCR_SPACE_API_KEY = "${{ secrets.OCR_SPACE_API_KEY }}"
           EOF
       - name: Run real diagnostic
         env:
