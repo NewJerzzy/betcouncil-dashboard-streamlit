@@ -11574,6 +11574,33 @@ def parse_bet_screenshot_ocr(image_bytes):
         pass
     media_type = f"image/{fmt}"
 
+    # Real, confirmed fix: OCR.space's free API tier has a real, documented
+    # 1MB per-image limit -- a modern phone screenshot commonly exceeds
+    # this as a full-resolution PNG, causing OCR.space to silently reject
+    # it (no ParsedResults, no exception raised by this code -- just an
+    # empty "raw" that looked identical to every other failure mode).
+    # Compress before sending, well under the real limit, with a safety
+    # margin. Falls back to the original bytes if compression itself
+    # fails, so this can never make a working case worse.
+    _MAX_OCR_BYTES = 900_000
+    if len(image_bytes) > _MAX_OCR_BYTES and _PIL is not None:
+        try:
+            _compress_img = _PIL.open(io.BytesIO(image_bytes)).convert("RGB")
+            _quality = 85
+            while True:
+                _out_buf = io.BytesIO()
+                _compress_img.save(_out_buf, format="JPEG", quality=_quality)
+                _compressed = _out_buf.getvalue()
+                if len(_compressed) <= _MAX_OCR_BYTES or _quality <= 40:
+                    image_bytes = _compressed
+                    fmt = "jpeg"
+                    media_type = "image/jpeg"
+                    break
+                _quality -= 10
+        except Exception:
+            pass  # real, safe fallback: send the original bytes unchanged
+
+
     try:
         # Claude Vision disabled — no API credits. Jump straight to OCR.space.
         raise Exception("Claude Vision disabled")
