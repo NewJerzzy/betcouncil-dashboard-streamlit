@@ -19,6 +19,32 @@ import contextlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
+
+_real_ocrspace_test = None
+try:
+    import requests as _req_ocr
+    import io as _io_ocr
+    from PIL import Image as _PIL_ocr, ImageDraw as _ImageDraw_ocr
+    _img_ocr = _PIL_ocr.new('RGB', (300, 100), color='white')
+    _d_ocr = _ImageDraw_ocr.Draw(_img_ocr)
+    _d_ocr.text((10, 10), 'TEST BET SLIP TEXT', fill='black')
+    _buf_ocr = _io_ocr.BytesIO()
+    _img_ocr.save(_buf_ocr, format='PNG')
+    _buf_ocr.seek(0)
+    _ocr_key_real = os.environ.get("OCR_SPACE_API_KEY", "")
+    _r_ocr = _req_ocr.post(
+        "https://api.ocr.space/parse/image",
+        data={"apikey": _ocr_key_real, "language": "eng", "scale": "true"},
+        files={"filename": ("slip.png", _buf_ocr.read(), "image/png")},
+        timeout=15,
+    )
+    _real_ocrspace_test = {
+        "status": _r_ocr.status_code,
+        "key_present": bool(_ocr_key_real),
+        "response_preview": _r_ocr.text[:400],
+    }
+except Exception as e:
+    _real_ocrspace_test = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 import bc_utils
 
 _real_props_zero_investigation = {}
@@ -660,6 +686,7 @@ output = {
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
     "real_nhl_regime_check": _real_nhl_regime_check,
+    "real_ocrspace_test": _real_ocrspace_test,
     "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
