@@ -5775,7 +5775,7 @@ def lookup_board_edge(player: str, prop: str, sport: str, date_str: str, _snapsh
     """Backfill edge/tier/prob/signals for a manually-logged bet.
 
     Checks TWO sources, live board first:
-    (1) st.session_state.board_data -- the full, uncapped live board for
+    (1) st.session_state.get("board_data", []) -- the full, uncapped live board for
         whatever sport is currently loaded. This is the primary path for
         OCR/manual/paste entries logged same-day, which is the dominant
         real-world workflow (bet placed externally, screenshotted, then
@@ -5877,7 +5877,7 @@ def _show_team_exposure_warning(team: str, sport: str):
 
 def _lock_board_prop(prop: dict, sport: str, source: str) -> bool:
     """
-    Shared "lock this prop" action -- appends to st.session_state.locks,
+    Shared "lock this prop" action -- appends to st.session_state.get("locks", []),
     captures Pinnacle CLV at lock time, persists to disk + Gist, and shows
     the team-exposure warning. Same behavior as the Full Board / Portfolio
     Builder / EV Optimizer lock buttons, just factored out so new lock
@@ -5907,8 +5907,8 @@ def _lock_board_prop(prop: dict, sport: str, source: str) -> bool:
         record_pinnacle_line(st.session_state["locks"][-1], st.session_state.get("board", []))
     except Exception:
         pass
-    save_json_data(LOCKS_PATH, st.session_state.locks)
-    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+    save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+    save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
     _show_team_exposure_warning(prop.get("Team", ""), sport)
     return True
 
@@ -11530,7 +11530,7 @@ score_pick_standalone._board_index_cache = {}
 # _parse_pp_ocr_inline — moved to slip_parser.py
 def _normalize_ocr_sport(raw_sport: str) -> str:
     """Map an OCR-extracted sport token to the exact casing used in the
-    real SPORTS list and st.session_state.board_data's "Sport" field.
+    real SPORTS list and st.session_state.get("board_data", [])'s "Sport" field.
 
     Root cause this fixes: the OCR parser below was blindly .upper()-ing
     every extracted sport token, producing e.g. "SOCCER". That matches
@@ -18059,7 +18059,7 @@ if "persistence_loaded" not in st.session_state:
         save_json_data(HISTORY_PATH, _clean_history)
     st.session_state.locks = (gist_locks if gist_locks is not None else load_json_data(LOCKS_PATH, []))
     st.session_state.bankroll = (gist_bankroll if gist_bankroll is not None else load_json_data(BANKROLL_PATH, DEFAULT_BANKROLL))
-    st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+    st.session_state["_bankroll_last_saved"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
     st.session_state["day_start_br"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
     # Comprehensive Elo update, decoupled from locks/button gate (was: only
     # ran when "Check Results via ESPN" was clicked AND locks existed —
@@ -18235,10 +18235,10 @@ with st.sidebar:
     # Gist/local storage were bet settlement and the Reset Bankroll button.
     # A manual edit here (no bet settled since) was never saved, so any full
     # page reload / new session reverted it to the last-settled value.
-    if st.session_state.bankroll != st.session_state.get("_bankroll_last_saved"):
-        save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-        save_to_gist("bankroll", st.session_state.bankroll)
-        st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+    if st.session_state.get("bankroll", DEFAULT_BANKROLL) != st.session_state.get("_bankroll_last_saved"):
+        save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
+        save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
+        st.session_state["_bankroll_last_saved"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
 
     # Deposit / Withdraw — separate from the manual number box above.
     # Editing the Bankroll box directly changes the number but NOT
@@ -18252,11 +18252,11 @@ with st.sidebar:
         _dw_amount = st.number_input("Amount ($)", min_value=0.0, step=10.0, key="_dw_amount")
         _dw_col1, _dw_col2 = st.columns(2)
         if _dw_col1.button("➕ Deposit", key="_dw_deposit_btn", use_container_width=True) and _dw_amount > 0:
-            st.session_state.bankroll += _dw_amount
-            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.bankroll) + _dw_amount
-            save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-            save_to_gist("bankroll", st.session_state.bankroll)
-            st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+            st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) + _dw_amount
+            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.get("bankroll", DEFAULT_BANKROLL)) + _dw_amount
+            save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
+            save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
+            st.session_state["_bankroll_last_saved"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
             _txn_log = load_from_gist("bankroll_transactions", None)
             if not isinstance(_txn_log, list):
                 _txn_log = []
@@ -18266,11 +18266,11 @@ with st.sidebar:
             st.success(f"Deposited ${_dw_amount:,.2f} — bankroll and day-start baseline both updated.")
             st.rerun()
         if _dw_col2.button("➖ Withdraw", key="_dw_withdraw_btn", use_container_width=True) and _dw_amount > 0:
-            st.session_state.bankroll -= _dw_amount
-            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.bankroll) - _dw_amount
-            save_json_data(BANKROLL_PATH, st.session_state.bankroll)
-            save_to_gist("bankroll", st.session_state.bankroll)
-            st.session_state["_bankroll_last_saved"] = st.session_state.bankroll
+            st.session_state["bankroll"] = st.session_state.get("bankroll", DEFAULT_BANKROLL) - _dw_amount
+            st.session_state["day_start_br"] = st.session_state.get("day_start_br", st.session_state.get("bankroll", DEFAULT_BANKROLL)) - _dw_amount
+            save_json_data(BANKROLL_PATH, st.session_state.get("bankroll", DEFAULT_BANKROLL))
+            save_to_gist("bankroll", st.session_state.get("bankroll", DEFAULT_BANKROLL))
+            st.session_state["_bankroll_last_saved"] = st.session_state.get("bankroll", DEFAULT_BANKROLL)
             _txn_log = load_from_gist("bankroll_transactions", None)
             if not isinstance(_txn_log, list):
                 _txn_log = []
@@ -18822,7 +18822,7 @@ st.markdown(f"""
     <div class="metric-box"><div class="metric-label" title="Your standard bet size for this session, sized as a fraction of your real bankroll.">Unit</div><div class="metric-value teal-text">${active_unit():.2f}</div></div>
     <div class="metric-box"><div class="metric-label" title="The minimum projected edge a prop needs to appear on your board at all.">Min Edge</div><div class="metric-value gold-text">{st.session_state.get("min_edge", MIN_EDGE_DEFAULT)*100:.0f}%</div></div>
     <div class="metric-box"><div class="metric-label" title="What fraction of the full, mathematically-optimal Kelly bet size the model actually uses -- kept low on purpose to reduce variance.">Kelly</div><div class="metric-value gold-text">{KELLY_FRACTION}</div></div>
-    <div class="metric-box"><div class="metric-label">Props Loaded</div><div class="metric-value teal-text">{len(st.session_state.board_data)}</div></div>
+    <div class="metric-box"><div class="metric-label">Props Loaded</div><div class="metric-value teal-text">{len(st.session_state.get("board_data", []))}</div></div>
     <div class="metric-box{_staleness_pulse_class}"><div class="metric-label" title="How old the underlying odds and lines are since they were last refreshed.">Edge Freshness</div><div class="metric-value" style="font-size:14px;">{staleness_label_bar}</div></div>
   </div>
 </div>""", unsafe_allow_html=True)
