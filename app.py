@@ -45,7 +45,7 @@ if "app_core" in _sys_reload_guard.modules:
     # module's top-level code ONCE per process and reuses the cached
     # module on every subsequent import -- so without this reload, only
     # the very first user session on a given server worker ever got
-    # st.session_state.board_data (and everything else in that init block)
+    # st.session_state.get("board_data", []) (and everything else in that init block)
     # actually set; any second session hitting the same already-running
     # worker crashed with AttributeError on session_state.board_data,
     # confirmed as a real production error the day of the split.
@@ -138,7 +138,7 @@ tabs = st.tabs(["🎯 Pick For You", "📋 Summary", "🔮 Predictions", "🏟�
 # ── FLOATING QUICK SLIP (persistent across every tab) ─────────────────────
 # Sportsbooks keep the bet slip visible and stable no matter where the user
 # navigates. Streamlit has no native floating overlay, so this renders a
-# fixed-position widget every rerun, reading the same st.session_state.locks
+# fixed-position widget every rerun, reading the same st.session_state.get("locks", [])
 # store the rest of the app already writes to (game-line locks, board locks,
 # Log Bet entries) — nothing new to maintain, just a persistent view of it.
 _qs_all_locks   = st.session_state.get("locks", []) or []
@@ -2690,8 +2690,8 @@ with tabs[4]:
                                     record_pinnacle_line(st.session_state["locks"][-1], _board)
                                 except Exception:
                                     pass
-                                save_json_data(LOCKS_PATH, st.session_state.locks)
-                                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                                save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                                save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                                 st.success(f"Locked {_lr['_player']} {_lr['_prop']}")
                                 st.rerun()
                             else:
@@ -2746,8 +2746,8 @@ with tabs[4]:
                                 record_pinnacle_line(st.session_state["locks"][-1], _board)
                             except Exception:
                                 pass
-                            save_json_data(LOCKS_PATH, st.session_state.locks)
-                            save_to_gist("locks", st.session_state.locks)
+                            save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                            save_to_gist("locks", st.session_state.get("locks", []))
                             st.success(f"Locked {_lr2['_player']} {_lr2['_prop']}")
                             st.rerun()
                         else:
@@ -2847,8 +2847,8 @@ with tabs[4]:
                             record_pinnacle_line(st.session_state["locks"][-1], _board)
                         except Exception:
                             pass
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                 st.success(f"Locked {len(_pb_sel)} portfolio bets")
                 # One summary per team, not one warning per lock -- a
                 # multi-bet lock-all action would otherwise stack up to
@@ -2886,8 +2886,8 @@ with tabs[4]:
                                 record_pinnacle_line(st.session_state["locks"][-1], _board)
                             except Exception:
                                 pass
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                 st.success(f"Locked {len([p for p in _board if p.get('Tier') in ('SOVEREIGN','ELITE')])} plays")
                 _bulk_teams = sorted(set(p.get("Team","") for p in _board if p.get("Tier") in ("SOVEREIGN","ELITE") and p.get("Team")))
                 for _bulk_team in _bulk_teams:
@@ -4074,8 +4074,8 @@ with tabs[3]:
                             record_pinnacle_game_line(_new_game_lock, st.session_state.get("pinnacle_game_lines", []))
                         except Exception:
                             pass
-                        save_json_data(LOCKS_PATH, st.session_state.locks)
-                        if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                        save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                        if not save_to_gist("locks", st.session_state.get("locks", [])):  # persists across restarts
                             st.warning("Locked locally, but the sync didn't go through — try again in a moment if it doesn't stick.")
                         st.rerun()
 
@@ -4969,7 +4969,7 @@ with tabs[10]:
                 f'</div>', unsafe_allow_html=True
             )
 
-    if st.session_state.locks:
+    if st.session_state.get("locks", []):
         # Group locks by timestamp (same minute = same slip)
         from collections import defaultdict
         slips = defaultdict(list)
@@ -5074,8 +5074,8 @@ with tabs[10]:
                     for lock in slip_locks:
                         if lock in st.session_state["locks"]:
                             st.session_state["locks"].remove(lock)
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                    save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                    if not save_to_gist("locks", st.session_state.get("locks", [])):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
             with btn_col3:
@@ -5095,8 +5095,8 @@ with tabs[10]:
                     for lock in slip_locks:
                         if lock in st.session_state["locks"]:
                             st.session_state["locks"].remove(lock)
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                    save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                    if not save_to_gist("locks", st.session_state.get("locks", [])):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
             with btn_col4:
@@ -5104,8 +5104,8 @@ with tabs[10]:
                     for lock in slip_locks:
                         if lock in st.session_state["locks"]:
                             st.session_state["locks"].remove(lock)
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    if not save_to_gist("locks", st.session_state.locks):  # persists across restarts
+                    save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                    if not save_to_gist("locks", st.session_state.get("locks", [])):  # persists across restarts
                         st.warning("Saved locally, but the sync to your saved history didn't go through — it may reappear later. Try again in a moment.")
                     st.rerun()
 
@@ -5116,7 +5116,7 @@ with tabs[10]:
     # ── CHECK RESULTS BUTTON ───────────────────────────
     st.markdown("---")
     if st.button("🔍 Check Results via ESPN", key="check_results_espn", use_container_width=True):
-        if not st.session_state.locks:
+        if not st.session_state.get("locks", []):
             st.info("No active locks to check.")
         else:
             resolved = 0
@@ -5343,8 +5343,8 @@ with tabs[10]:
                         skipped.extend([f"{l.get('player','')} (scoreboard/box-score error: {str(e)[:40]})" for l in locks])
 
             if resolved > 0:
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                 st.success(f"✅ Auto-resolved {resolved} prop pick(s) via ESPN box scores")
 
             # BDL fallback for any NBA picks ESPN missed
@@ -5406,8 +5406,8 @@ with tabs[10]:
                         except (ValueError, TypeError, ZeroDivisionError):
                             continue
                     if bdl_resolved > 0:
-                        save_json_data(LOCKS_PATH, st.session_state.locks)
-                        save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                        save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                        save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                         resolved += bdl_resolved
 
             # Also resolve game line locks
@@ -5694,8 +5694,8 @@ with tabs[10]:
                 if resolved > 0:
                     st.rerun()
             else:
-                save_json_data(LOCKS_PATH, st.session_state.locks)
-                save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                 st.success(f"✅ Auto-resolved {game_resolved} game pick(s) via ESPN scoreboard")
                 st.rerun()
 
@@ -8222,8 +8222,8 @@ with tabs[7]:
                             "signal_values": {}, "source": "board_paste",
                             "smart_signal": row.get("smart_signal", False),
                         })
-                        save_json_data(LOCKS_PATH, st.session_state.locks)
-                        if not save_to_gist("locks", st.session_state.locks):
+                        save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                        if not save_to_gist("locks", st.session_state.get("locks", [])):
                             st.warning("Locked locally, but the sync didn't go through — try again in a moment if it doesn't stick.")
                         st.rerun()
             st.caption(
@@ -8481,8 +8481,8 @@ with tabs[7]:
                                 pass
                             locked += 1
                 if locked:
-                    save_json_data(LOCKS_PATH, st.session_state.locks)
-                    save_to_gist("locks", st.session_state.locks)  # persists across restarts
+                    save_json_data(LOCKS_PATH, st.session_state.get("locks", []))
+                    save_to_gist("locks", st.session_state.get("locks", []))  # persists across restarts
                     st.success(f"✅ Locked {locked} picks")
                     _slip_teams = sorted(set(
                         next((b for b in board if normalize_name(b.get("Player","")) == normalize_name(r["player"])), {}).get("Team","")
@@ -9365,7 +9365,7 @@ with tabs[9]:
     # ── UNIFIED RECENT ACTIVITY ────────────────────────────────────────
     # Every entry point (⚡ quick-track dialog on prop cards, Quick Single
     # Bet below, Bulk Entry, Screenshot/Text OCR) writes through the same
-    # log_manual_bet() → st.session_state.history. This panel surfaces
+    # log_manual_bet() → st.session_state.get("history", []). This panel surfaces
     # that shared feed so all logging paths read as one connected system
     # instead of separate, disconnected tools.
     _recent_logs = [h for h in st.session_state.get("history", []) if h.get("manual_entry")]
