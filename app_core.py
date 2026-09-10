@@ -1711,7 +1711,6 @@ def render_signal_chart(prop, sport="NBA"):
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Line move</div>
           <div style="font-size:14px;font-weight:500;color:{line_move_color}">{line_move_display}</div>
         </div>
-
         <div style="background:#0a1628;border-radius:8px;padding:7px 14px;text-align:center;">
           <div style="font-size:9px;color:var(--bc-dim);text-transform:uppercase">Market regime</div>
           <div style="font-size:18px;font-weight:700;color:{regime_color}">{regime_label}</div>
