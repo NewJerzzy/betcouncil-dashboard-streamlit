@@ -2450,7 +2450,7 @@ def format_rlm_display(rlm_data):
 
 
 
-def track_closing_line_beat(bet_record, current_line):
+def compute_closing_line_beat_simple(bet_record, current_line):
     """
     Track whether model projection beat the closing line.
     
