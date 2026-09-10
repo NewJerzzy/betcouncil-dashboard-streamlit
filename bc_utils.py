@@ -2264,9 +2264,21 @@ def detect_season_regime(sport="NBA"):
             desc   = "First month — small sample, base stats less reliable"
             adj    = {"base": -0.04, "defense": -0.03}
         elif month in (9, 10):
-            regime = "Playoffs"
-            desc   = "Playoffs — defense weight increases, pace less predictive"
-            adj    = {"defense": 0.04, "pace": -0.02}
+            # Real, confirmed fix: previously assumed September always
+            # means playoffs, but the real 2026 season has playoffs
+            # starting Sept 27 due to a real FIBA World Cup break
+            # (Sept 4-16) -- meaning early-to-mid September can genuinely
+            # have zero real games, not playoffs. Verify with a live
+            # ESPN schedule check, same proven pattern as NHL's own
+            # September transition, rather than trusting the month alone.
+            if _espn_has_games_in_window("WNBA", days=3):
+                regime = "Playoffs"
+                desc   = "Playoffs — defense weight increases, pace less predictive"
+                adj    = {"defense": 0.04, "pace": -0.02}
+            else:
+                regime = "Off-season"
+                desc   = "No WNBA games in the next 3 days — likely a scheduled break (e.g. FIBA World Cup), signals suppressed"
+                adj    = {"base": -0.06}
         elif month in (8,):
             regime = "Late Season"
             desc   = "Late season — rest signal strengthens"
