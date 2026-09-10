@@ -111,6 +111,12 @@ try:
 except Exception as e:
     _real_props_zero_investigation = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
+_real_wnba_regime_check = None
+try:
+    _real_wnba_regime_check = bc_utils.detect_season_regime("WNBA")
+except Exception as e:
+    _real_wnba_regime_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _real_nhl_regime_check = None
 try:
     _real_nhl_regime_check = bc_utils.detect_season_regime("NHL")
@@ -686,6 +692,7 @@ output = {
     "evsharps_new_candidates_check": _evsharps_new_candidates_check,
     "evsharps_stats_and_live_check": _evsharps_stats_and_live_check,
     "real_nhl_regime_check": _real_nhl_regime_check,
+    "real_wnba_regime_check": _real_wnba_regime_check,
     "real_ocrspace_test": _real_ocrspace_test,
     "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
