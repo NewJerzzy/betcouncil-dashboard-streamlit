@@ -13524,6 +13524,32 @@ with tabs[2]:
             else:
                 st.caption("No real data yet — check back closer to game day.")
 
+        with st.expander(f"🔀 Polymarket vs. Sportsbook Divergence ({sport})", expanded=False):
+            st.caption(
+                "Compares Polymarket's real market price against real, devigged "
+                "sportsbook consensus (ESPN). A large gap may mean Polymarket is "
+                "mispriced relative to the real sportsbook line. **The 5% minimum-edge "
+                "threshold below is an unvalidated starting default, not a proven "
+                "number** — this needs real, tracked outcomes over time before "
+                "trusting it. Display-only, not wired into any board or edge math."
+            )
+            _poly_div_items = compute_polymarket_sportsbook_divergence(sport)
+            if _poly_div_items:
+                _poly_div_rows = []
+                for _d in sorted(_poly_div_items, key=lambda x: abs(x.get("edge", 0)), reverse=True):
+                    _poly_div_rows.append({
+                        "Market": _d.get("question", ""),
+                        "Team": _d.get("matched_team", ""),
+                        "Polymarket": f"{_d.get('polymarket_prob', 0):.1%}",
+                        "Sportsbook (devigged)": f"{_d.get('sportsbook_prob_devigged', 0):.1%}",
+                        "Edge": f"{_d.get('edge', 0):+.1%}",
+                        "Signal": _d.get("direction", ""),
+                    })
+                st.dataframe(pd.DataFrame(_poly_div_rows), use_container_width=True, hide_index=True, height=350)
+                st.caption(f"{len(_poly_div_items)} real market(s) showing a 5%+ gap right now.")
+            else:
+                st.caption("No real divergence found right now, or no matching Polymarket/sportsbook data available for this sport.")
+
     _pred_gl_view = st.radio(
         "View", ["By Game (consensus)", "By Source"], horizontal=True, key="pred_gl_view",
         help="By Game groups every source's pick together per matchup, so you can see at a glance whether sources agree. By Source groups each source's own picks together, one card per source."
