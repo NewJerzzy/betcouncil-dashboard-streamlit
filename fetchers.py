@@ -12450,6 +12450,105 @@ def fetch_polymarket_markets(sport: str) -> list:
         return []
 
 
+def compute_polymarket_sportsbook_divergence(sport: str, min_edge: float = 0.05) -> list:
+    """
+    Real, new comparison: Polymarket's implied probability vs. real,
+    devigged sportsbook consensus (ESPN, free, no key needed) -- fills the
+    confirmed gap identified tonight (BetCouncil's existing Polymarket
+    integration pulls raw market data only, with no comparison against
+    real sportsbook odds).
+
+    Deliberately built from BetCouncil's own already-confirmed-working
+    sources rather than borrowed from an external repo whose own claimed
+    "100% win rate" was based on just 6 trades -- not a credible sample.
+    This function only computes and returns the raw divergence; no
+    real-world validation of min_edge=0.05 has been done yet. Treat this
+    threshold as a starting default, not a proven number, until it's been
+    tracked against real, resolved outcomes for a real, honest sample size.
+
+    Returns a list of {question, sport, side, team, polymarket_prob,
+    sportsbook_prob_devigged, edge, polymarket_volume} -- display-only,
+    does not feed into any existing edge/tier calculation.
+    """
+    try:
+        from bc_utils import devig_odds, devig_multiplicative
+    except ImportError:
+        return []
+    try:
+        poly_markets = fetch_polymarket_markets(sport)
+        if not poly_markets:
+            return []
+        espn_games, _, home_teams, away_teams = fetch_game_lines(sport)
+        if not espn_games:
+            return []
+
+        _abbrev_map = _TEAM_ABBREV_TO_FRAGMENT_BY_SPORT.get(sport, {})
+
+        results = []
+        for game in espn_games:
+            matchup = game.get("Matchup", "")
+            home_ml, away_ml = game.get("Home ML"), game.get("Away ML")
+            if home_ml in (None, "N/A") or away_ml in (None, "N/A"):
+                continue
+            home_abbrev = home_teams.get(matchup, "")
+            away_abbrev = away_teams.get(matchup, "")
+            home_fragment = _abbrev_map.get(home_abbrev, "")
+            away_fragment = _abbrev_map.get(away_abbrev, "")
+            if not home_fragment or not away_fragment:
+                continue
+
+            try:
+                home_raw_imp = devig_odds(home_ml)
+                away_raw_imp = devig_odds(away_ml)
+                if home_raw_imp is None or away_raw_imp is None:
+                    continue
+                home_devigged, away_devigged = devig_multiplicative(home_raw_imp, away_raw_imp)
+            except (TypeError, ValueError):
+                continue
+
+            for mkt in poly_markets:
+                question = mkt.get("question", "")
+                if not question:
+                    continue
+                # Real, careful matching: the real fragment (e.g. "Tampa
+                # Bay") must appear in the real Polymarket question text.
+                # This is a real, direct substring match, not fuzzy --
+                # deliberately conservative to avoid a wrong match rather
+                # than force a match and risk comparing the wrong teams.
+                if home_fragment in question:
+                    matched_team, matched_side = home_fragment, "home"
+                    sportsbook_prob = home_devigged
+                elif away_fragment in question:
+                    matched_team, matched_side = away_fragment, "away"
+                    sportsbook_prob = away_devigged
+                else:
+                    continue
+
+                poly_prob = mkt.get("implied_prob")
+                if poly_prob is None:
+                    continue
+                edge = sportsbook_prob - poly_prob
+                if abs(edge) < min_edge:
+                    continue
+
+                results.append({
+                    "question": question,
+                    "sport": sport,
+                    "matched_team": matched_team,
+                    "side": matched_side,
+                    "polymarket_prob": round(poly_prob, 4),
+                    "sportsbook_prob_devigged": round(sportsbook_prob, 4),
+                    "edge": round(edge, 4),
+                    "direction": "BUY on Polymarket" if edge > 0 else "SELL on Polymarket",
+                    "polymarket_volume": mkt.get("volume", 0),
+                    "source": "polymarket_sportsbook_divergence",
+                })
+        return results
+    except Exception as e:
+        print(f"[WARN] compute_polymarket_sportsbook_divergence: {e}")
+        return []
+
+
 def fetch_covers_consensus(sport: str) -> dict:
     """
     Fetch Covers.com public consensus betting data.
