@@ -10,3 +10,4 @@
 - [Pirates Picks board structure](pirates-picks-board-structure.md) — authorized board capture returns pre-rendered cards with tiers, convergence, rolling results, context reads, and multi-book links; formulas/providers remain hidden
 - [BallparkPal source status](ballparkpal-source-status.md) — MLB projections and park factors API; no odds/weather/history and current beta license is personal/non-commercial
 - [DoinkSports access decision](doinksports-source-status.md) — do not automate the undocumented service without Doink's written programmatic-use permission.
+- [PickFinder integration scope](pickfinder-integration-scope.md) — owner-authorized, but avoid a duplicate live feed; use only missing enrichments or middle inputs.
