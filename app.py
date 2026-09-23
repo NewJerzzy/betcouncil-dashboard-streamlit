@@ -13495,6 +13495,40 @@ with tabs[2]:
             else:
                 st.caption("No real data yet — check back closer to game day.")
 
+        with st.expander("🏈 NFL Props (real, EVSharps)", expanded=False):
+            st.caption(
+                "Real, structured NFL player props (e.g. longest rush, receiving "
+                "yards) with real book odds and opponent matchup context. "
+                "Display-only, not wired into edge/tier math."
+            )
+            _nfl_props_raw = fetch_ev_nfl_props()
+            _nfl_props_items = (_nfl_props_raw or {}).get("data", [])
+            if _nfl_props_items:
+                _nfl_props_rows = []
+                for _p in _nfl_props_items:
+                    _book_odds = _p.get("bookOdds", {}) or {}
+                    _best_book, _best_price = None, None
+                    for _bk, _pr in _book_odds.items():
+                        try:
+                            _pr_num = float(str(_pr).split("/")[0])
+                        except (TypeError, ValueError):
+                            continue
+                        if _best_price is None or _pr_num < _best_price:
+                            _best_book, _best_price = _bk, _pr_num
+                    _nfl_props_rows.append({
+                        "Player": str(_p.get("player", "")).title(),
+                        "Pos": _p.get("pos", ""),
+                        "Game": str(_p.get("game", "")).upper(),
+                        "Prop": str(_p.get("prop", "")).replace("_", " ").title(),
+                        "Line": _p.get("line", "—"),
+                        "Best Price": f"{_best_book}: {_best_price:+.0f}" if _best_book else "—",
+                        "# Books": len(_book_odds),
+                    })
+                st.dataframe(pd.DataFrame(_nfl_props_rows), use_container_width=True, hide_index=True, height=400)
+                st.caption(f"{len(_nfl_props_items)} real props.")
+            else:
+                st.caption("No real data yet — check back closer to game day.")
+
         with st.expander("🏈 NFL Backfield/Receiver Usage (real, EVSharps)", expanded=False):
             st.caption(
                 "Real snap share, red-zone share, and target share, with the prior "
