@@ -20,6 +20,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_real_evsharps_nfl_props_check = None
+try:
+    import requests as _req_nfl
+    _r_nfl = _req_nfl.get(
+        "https://api-production-3a3b.up.railway.app/api/nfl",
+        headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/"},
+        timeout=15,
+    )
+    _nfl_json = _r_nfl.json() if _r_nfl.status_code == 200 else None
+    _nfl_data = (_nfl_json or {}).get("data") if isinstance(_nfl_json, dict) else _nfl_json
+    _real_evsharps_nfl_props_check = {
+        "status": _r_nfl.status_code,
+        "real_item_count": len(_nfl_data) if isinstance(_nfl_data, list) else None,
+        "top_level_keys": list(_nfl_json.keys()) if isinstance(_nfl_json, dict) else None,
+        "sample_item": _nfl_data[0] if isinstance(_nfl_data, list) and _nfl_data else None,
+    }
+except Exception as e:
+    _real_evsharps_nfl_props_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _real_ocrspace_test = None
 try:
     import requests as _req_ocr
@@ -694,6 +713,7 @@ output = {
     "real_nhl_regime_check": _real_nhl_regime_check,
     "real_wnba_regime_check": _real_wnba_regime_check,
     "real_ocrspace_test": _real_ocrspace_test,
+    "real_evsharps_nfl_props_check": _real_evsharps_nfl_props_check,
     "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
