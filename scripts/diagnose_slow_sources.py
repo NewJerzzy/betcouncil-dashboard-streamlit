@@ -20,6 +20,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_real_main_recap_nfl_check = None
+try:
+    import requests as _req_mr
+    _r_mr = _req_mr.get(
+        "https://api-production-3a3b.up.railway.app/api/main_recap",
+        params={"sport": "nfl"},
+        headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/"},
+        timeout=15,
+    )
+    _mr_json = _r_mr.json() if _r_mr.status_code == 200 else None
+    _mr_data = (_mr_json or {}).get("data") if isinstance(_mr_json, dict) else _mr_json
+    _real_main_recap_nfl_check = {
+        "status": _r_mr.status_code,
+        "real_item_count": len(_mr_data) if isinstance(_mr_data, list) else None,
+        "sample_item": _mr_data[0] if isinstance(_mr_data, list) and _mr_data else None,
+    }
+except Exception as e:
+    _real_main_recap_nfl_check = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _real_evsharps_nfl_props_check = None
 try:
     import requests as _req_nfl
@@ -720,6 +739,7 @@ output = {
     "real_wnba_regime_check": _real_wnba_regime_check,
     "real_ocrspace_test": _real_ocrspace_test,
     "real_evsharps_nfl_props_check": _real_evsharps_nfl_props_check,
+    "real_main_recap_nfl_check": _real_main_recap_nfl_check,
     "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
