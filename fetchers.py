@@ -1607,6 +1607,36 @@ def fetch_ev_api_wnba():
         return {}
 
 
+def fetch_ev_nfl_props():
+    """
+    Fetch the EVSharps /api/nfl endpoint -- confirmed genuinely live
+    2026-09-23 (40 real items) now that the real NFL season is underway;
+    confirmed empty ([]) earlier this same session before the season
+    started. Real, structured NFL player props across multiple market
+    types (e.g. longest_rush -- a real, different market than the
+    already-integrated /api/tds anytime/first-TD props), real book odds
+    across multiple books, real defensive matchup context (opponent rank,
+    season/last-3-game splits, home/away).
+
+    Returns {"updated": ..., "games": [...], "props": [...], "data": [...],
+    "times": [...]} or {} on error.
+    """
+    url = "https://api-production-3a3b.up.railway.app/api/nfl"
+    try:
+        r = _http.get(url, timeout=15, headers={
+            "origin":  "https://www.evsharps.com",
+            "referer": "https://www.evsharps.com/",
+            "accept-encoding": "gzip, deflate",
+        })
+        if r.status_code == 200:
+            return r.json()
+        return {}
+    except requests.exceptions.Timeout:
+        return {}
+    except Exception:
+        return {}
+
+
 def fetch_ev_nfl_tds():
     """
     Fetch the EVSharps /api/tds endpoint — NFL first-touchdown-scorer props.
