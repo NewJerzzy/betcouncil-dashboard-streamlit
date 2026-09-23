@@ -525,6 +525,12 @@ TARGETS = [
     ("EVSharps NFL TDs", "fetch_ev_nfl_tds", (), False),
     ("ParlayAPI Props NFL", "fetch_parlayapi_props", ("NFL",), False),
     ("EVSharps NFL Preseason", "fetch_ev_nfl_preseason", (), False),
+    ("EVSharps NFL Props (new)", "fetch_ev_nfl_props", (), False),
+    ("EVSharps NFL Backfields (recheck)", "fetch_ev_nfl_backfields", (), False),
+    ("Odds API Props NFL", "fetch_odds_api_props", ("NFL",), False),
+    ("OddsPAPI Props NFL", "fetch_oddspapi_props", ("NFL",), False),
+    ("SharpAPI Props NFL", "fetch_sharpapi_props", ("NFL",), False),
+    ("Odds API Game Lines NFL", "fetch_odds_api_game_lines", ("NFL",), True),
     ("Kalshi Markets", "fetch_kalshi_markets", ("MLB",), False),
 
     ("ParlayAPI Props", "fetch_parlayapi_props", ("MLB",), False),
