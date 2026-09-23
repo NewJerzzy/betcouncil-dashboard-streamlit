@@ -20,6 +20,45 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fetchers
 
+_real_evsharps_nfl_full_sweep = {}
+try:
+    import requests as _req_sw
+    _ev_base_sw = "https://api-production-3a3b.up.railway.app/api/"
+    _sw_endpoints = {
+        "live":       ("live", {"sport": "nfl"}),
+        "main":       ("main", {"sport": "nfl"}),
+        "feed":       ("feed", {}),
+        "charts":     ("charts", {"sport": "nfl"}),
+        "movement":   ("movement", {"sport": "nfl"}),
+        "trends":     ("trends", {"sport": "nfl"}),
+        "cup":        ("cup", {"sport": "nfl"}),
+        "pts":        ("pts", {"sport": "nfl"}),
+        "ev":         ("ev", {"sport": "nfl"}),
+        "preview":    ("preview", {"sport": "nfl"}),
+    }
+    for _label, (_ep, _params) in _sw_endpoints.items():
+        try:
+            _r_sw = _req_sw.get(
+                _ev_base_sw + _ep, params=_params,
+                headers={"origin": "https://www.evsharps.com", "referer": "https://www.evsharps.com/"},
+                timeout=15,
+            )
+            _sw_json = _r_sw.json() if _r_sw.status_code == 200 else None
+            _sw_data = (_sw_json or {}).get("data") if isinstance(_sw_json, dict) else _sw_json
+            _real_evsharps_nfl_full_sweep[_label] = {
+                "status": _r_sw.status_code,
+                "real_item_count": len(_sw_data) if isinstance(_sw_data, list) else None,
+                "top_level_keys": list(_sw_json.keys()) if isinstance(_sw_json, dict) else None,
+                "sample_player_or_title": (
+                    (_sw_data[0].get("player") or _sw_data[0].get("title") or _sw_data[0].get("player_name"))
+                    if isinstance(_sw_data, list) and _sw_data and isinstance(_sw_data[0], dict) else None
+                ),
+            }
+        except Exception as _ee_sw:
+            _real_evsharps_nfl_full_sweep[_label] = {"error": str(_ee_sw)[:200]}
+except Exception as e:
+    _real_evsharps_nfl_full_sweep = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
 _real_main_recap_nfl_check = None
 try:
     import requests as _req_mr
@@ -740,6 +779,7 @@ output = {
     "real_ocrspace_test": _real_ocrspace_test,
     "real_evsharps_nfl_props_check": _real_evsharps_nfl_props_check,
     "real_main_recap_nfl_check": _real_main_recap_nfl_check,
+    "real_evsharps_nfl_full_sweep": _real_evsharps_nfl_full_sweep,
     "real_props_zero_investigation": _real_props_zero_investigation,
     "parlayapi_usage_check": _parlayapi_usage_check,
     "nflverse_check": _nflverse_check,
