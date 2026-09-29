@@ -13558,7 +13558,8 @@ with tabs[2]:
             else:
                 st.caption("No real data yet — check back closer to game day.")
 
-        with st.expander(f"🔀 Polymarket vs. Sportsbook Divergence ({sport})", expanded=False):
+        if _pred_sport_filter != "All":
+          with st.expander(f"🔀 Polymarket vs. Sportsbook Divergence ({_pred_sport_filter})", expanded=False):
             st.caption(
                 "Compares Polymarket's real market price against real, devigged "
                 "sportsbook consensus (ESPN). A large gap may mean Polymarket is "
@@ -13567,7 +13568,7 @@ with tabs[2]:
                 "number** — this needs real, tracked outcomes over time before "
                 "trusting it. Display-only, not wired into any board or edge math."
             )
-            _poly_div_items = compute_polymarket_sportsbook_divergence(sport)
+            _poly_div_items = compute_polymarket_sportsbook_divergence(_pred_sport_filter)
             if _poly_div_items:
                 _poly_div_rows = []
                 for _d in sorted(_poly_div_items, key=lambda x: abs(x.get("edge", 0)), reverse=True):
