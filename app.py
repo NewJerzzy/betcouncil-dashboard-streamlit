@@ -7906,6 +7906,53 @@ with tabs[7]:
                 return sport
         return "MLB"
 
+    def _parse_card_block_slip(text: str) -> list:
+        """Parses multi-line pick cards (matchup / 'Player <Stat>' /
+        '<Name> Over|Under <line>' / odds / pct / 'NFLSunday at 1:25 PM').
+        Duplicate picks across repeated slips are collapsed."""
+        lines = [l.strip() for l in text.replace("\r", "").split("\n")]
+        lines = [l for l in lines if l]
+        pick_re = re.compile(r"^([A-Za-z][A-Za-z\s\.'\-]+?)\s+(Over|Under|More|Less)\s+(\d+(?:\.\d+)?)(?:\s+(.+))?$", re.IGNORECASE)
+        league_re = re.compile(r"^(NFL|NHL|NBA|WNBA|MLB|NCAAF|NCAAB|CFB|CBB|SOCCER|TENNIS|UFC|MMA|GOLF)(?=Today|Tomorrow|Mon|Tue|Wed|Thu|Fri|Sat|Sun|\s|$)", re.IGNORECASE)
+        out, seen = [], set()
+        for i, ln in enumerate(lines):
+            m = pick_re.match(ln)
+            if not m:
+                continue
+            player = m.group(1).strip()
+            side = "OVER" if m.group(2).upper() in ("OVER", "MORE") else "UNDER"
+            try:
+                line_val = float(m.group(3))
+            except ValueError:
+                continue
+            stat = (m.group(4) or "").strip()
+            if not stat and i > 0:
+                prev = lines[i - 1]
+                if not re.search(r"\bvs\.?\b|@", prev, re.IGNORECASE):
+                    stat = prev
+            stat = re.sub(r"^Player\s+", "", stat, flags=re.IGNORECASE).strip()
+            if not stat:
+                continue
+            sport = None
+            for nxt in lines[i + 1:i + 5]:
+                lm = league_re.match(nxt)
+                if lm:
+                    sport = lm.group(1).upper()
+                    break
+                if pick_re.match(nxt):
+                    break
+            if sport in ("CFB", "NCAAF"):
+                sport = "NCAAF"
+            if not sport:
+                sport = _guess_sport_from_stat(stat)
+            key = (player.lower(), stat.lower(), line_val, side)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"player": player, "stat": stat, "line": line_val,
+                        "side": side, "sport": sport})
+        return out
+
     # Manual entry in slip analyzer kept minimal - screenshot/text only
     with st.expander("📋 Paste slip text or screenshot", expanded=False):
         paste_text = st.text_area(
@@ -7916,8 +7963,8 @@ with tabs[7]:
         )
         if st.button("📥 Parse Slip", key="parse_slip_btn"):
             if paste_text.strip():
-                parsed_picks = []
-                for line in paste_text.strip().split("\n"):
+                parsed_picks = _parse_card_block_slip(paste_text)
+                for line in ([] if parsed_picks else paste_text.strip().split("\n")):
                     line = line.strip()
                     if not line:
                         continue
