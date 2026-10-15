@@ -14290,7 +14290,6 @@ def load_sport_data(sport):
             (fetch_fanduel_direct,    "FanDuel",    "📡"),
             (fetch_draftkings_direct, "DraftKings", "📡"),
             (fetch_betmgm_direct,     "BetMGM",     "📡"),
-            (fetch_caesars_direct,    "Caesars",     "📡"),
             (fetch_betrivers_direct,  "BetRivers",  "📡"),
             (fetch_superbook_direct,  "Superbook",  "📡"),
         ]:

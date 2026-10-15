@@ -12261,9 +12261,9 @@ def fetch_caesars_props(sport: str) -> list:
         primary = fetch_parlayapi_retail_props("caesars", sport)
     except Exception:
         primary = []
-    if primary:
-        return primary
-    return _fetch_caesars_props_direct(sport)
+    # Token-based americanwagering.com fallback retired (needed a hand-refreshed
+    # login token); ParlayAPI is the only Caesars props path now.
+    return primary or []
 
 
 def _fetch_caesars_props_direct(sport: str) -> list:
