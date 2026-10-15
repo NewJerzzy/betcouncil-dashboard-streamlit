@@ -88,10 +88,14 @@ def render_sharptrack_tab():
     plays = live.get("plays", []) or []
     clusters = live.get("clusters", []) or []
     wallets = wallet_reg.get("wallets", []) or []
+    try:
+        _lookback_hours = int(round(float(live.get("lookback_hours") or 2)))
+    except (TypeError, ValueError):
+        _lookback_hours = 2
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Sharp wallets tracked", wallet_reg.get("wallet_count", len(wallets)))
-    c2.metric("Live plays (2h window)", len(plays))
+    c2.metric(f"Live plays ({_lookback_hours}h window)", len(plays))
     c3.metric("Clusters flagged", len(clusters))
     c4.metric("Last refresh", _age_label(live.get("updated", "")))
 
@@ -115,7 +119,7 @@ def render_sharptrack_tab():
             with st.expander("What am I looking at?"):
                 st.markdown(
                     "Each card shows one bet a tracked sharp trader just placed on "
-                    "Polymarket, in the last 2 hours.\n\n"
+                    f"Polymarket, in the last {_lookback_hours} hours.\n\n"
                     "**Walking through an example card:**\n\n"
                     "> Exact Score: England 2 - 3 Argentina — No (BUY) — $8,390 @ 0.979\n\n"
                     "- **\"Exact Score: England 2-3 Argentina\"** is the specific bet available — "
@@ -141,9 +145,25 @@ def render_sharptrack_tab():
                     "trying to buy or sell that outcome."
                 )
 
-            sports_seen = sorted({p.get("sport", "") for p in plays if p.get("sport")})
-            sel_sport = st.selectbox("Filter by sport", ["All"] + sports_seen, key="st_sport_filter")
+            # Always list every tracked sport (with a play count) so a sport
+            # with no sharp action right now reads as "0", not as missing.
+            _tracked = live.get("sports_tracked") or [
+                "NFL", "NBA", "WNBA", "MLB", "NHL", "TENNIS", "SOCCER", "ESPORTS"]
+            _counts = {}
+            for p in plays:
+                if p.get("sport"):
+                    _counts[p["sport"]] = _counts.get(p["sport"], 0) + 1
+            _all_sports = list(_tracked) + sorted(s for s in _counts if s not in _tracked)
+            _labels = {f"{s} ({_counts.get(s, 0)})": s for s in _all_sports}
+            sel_label = st.selectbox(
+                "Filter by sport", [f"All ({len(plays)})"] + list(_labels),
+                key="st_sport_filter")
+            sel_sport = _labels.get(sel_label, "All")
             filtered = [p for p in plays if sel_sport == "All" or p.get("sport") == sel_sport]
+            if sel_sport != "All" and not filtered:
+                st.info(f"No sharp-wallet plays on {sel_sport} in the last "
+                        f"{_lookback_hours} hours. Sharp money on game markets tends "
+                        "to arrive closer to game time.")
 
             for p in filtered[:40]:
                 tier = _score_tier(p.get("play_score", 0))

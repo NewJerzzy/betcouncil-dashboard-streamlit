@@ -71,8 +71,14 @@ SPORT_TAG_IDS = {
     # rather than risk pulling the unfiltered/generic sports bucket again.
 }
 
-LOOKBACK_SECONDS = 2 * 60 * 60          # only trades from the last 2 hours
-MAX_TRACKED_MARKETS = 60                # cap the batched /trades call
+LOOKBACK_SECONDS = 6 * 60 * 60          # only trades from the last 6 hours
+# Per-sport quota (was a single global top-60 by volume, which let whichever
+# sports happened to have the busiest markets crowd every other sport out).
+MAX_MARKETS_PER_SPORT = 10
+MAX_TRACKED_MARKETS = MAX_MARKETS_PER_SPORT * 8
+# Polymarket keeps finished games flagged active/closed=false for days.
+# Event endDate is roughly start time, so anything older than this is over.
+STALE_EVENT_SECONDS = 6 * 60 * 60
 MAX_ORDER_BOOK_LOOKUPS = 20             # cap CLOB book calls per run
 CLUSTER_MIN_WALLETS = 2
 MIN_WALLET_SCORE_TO_TRACK = 35          # floor for "sharp" classification
@@ -172,8 +178,11 @@ def fetch_active_sports_markets():
     """Returns list of (conditionId, market_meta) for the highest-volume
     open markets across the configured sport tag IDs."""
     seen_ids = set()
-    markets = []
+    dedup = set()
+    out = []
+    stale_cutoff = time.time() - STALE_EVENT_SECONDS
     for sport, tag_ids in SPORT_TAG_IDS.items():
+        sport_markets = []
         for tag_id in tag_ids:
             if tag_id in seen_ids:
                 continue
@@ -184,54 +193,74 @@ def fetch_active_sports_markets():
                 "closed": "false",
                 "order": "volume24hr",
                 "ascending": "false",
-                "limit": 15,
+                "limit": 25,
             })
             if not isinstance(events, list) or not events:
                 continue
+            kept_events = 0
             for ev in events:
+                if _parse_iso_ts(ev.get("endDate")) < stale_cutoff:
+                    continue  # game already over -- dead slot
+                kept_events += 1
                 for m in ev.get("markets", []) or []:
                     cid = m.get("conditionId")
-                    if not cid:
+                    if not cid or m.get("closed"):
                         continue
-                    markets.append({
+                    sport_markets.append({
                         "sport": sport,
                         "conditionId": cid,
                         "question": m.get("question", ""),
                         "eventSlug": ev.get("slug", ""),
-                        "volume24hr": m.get("volume24hr", 0) or 0,
+                        "volume24hr": float(m.get("volume24hr", 0) or 0),
                         "clobTokenIds": m.get("clobTokenIds", ""),
                         "outcomes": m.get("outcomes", ""),
                     })
-            log(f"  events tag_id={tag_id} ({sport}): {len(events)} events")
-    markets.sort(key=lambda x: -x["volume24hr"])
-    # de-dupe by conditionId, keep highest volume first
-    dedup, out = set(), []
-    for m in markets:
-        if m["conditionId"] in dedup:
-            continue
-        dedup.add(m["conditionId"])
-        out.append(m)
-        if len(out) >= MAX_TRACKED_MARKETS:
-            break
-    return out
+            log(f"  events tag_id={tag_id} ({sport}): {len(events)} events, {kept_events} not finished")
+        sport_markets.sort(key=lambda x: -x["volume24hr"])
+        taken = 0
+        for m in sport_markets:
+            if m["conditionId"] in dedup:
+                continue
+            dedup.add(m["conditionId"])
+            out.append(m)
+            taken += 1
+            if taken >= MAX_MARKETS_PER_SPORT:
+                break
+    return out[:MAX_TRACKED_MARKETS]
+
+
+def _parse_iso_ts(value):
+    """ISO-8601 string -> epoch seconds. Missing/unparseable -> +inf so the
+    event is kept (never drop a market just because the date is absent)."""
+    if not value:
+        return float("inf")
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return float("inf")
 
 
 # ── Step 3: trades on those markets, filtered to sharp wallets ─────────
-def fetch_trades_for_markets(condition_ids: list):
-    if not condition_ids:
+def fetch_trades_for_markets(markets: list):
+    """Pulls trades one sport at a time. The old version mixed every sport
+    into 20-market chunks capped at 500 trades each, so the busiest sport in
+    a chunk used up the whole 500 and quieter sports got zero trades back."""
+    if not markets:
         return []
+    by_sport = defaultdict(list)
+    for m in markets:
+        by_sport[m["sport"]].append(m["conditionId"])
     all_trades = []
-    # data-api /trades accepts a comma-separated `market` list
-    chunk_size = 20
-    for i in range(0, len(condition_ids), chunk_size):
-        chunk = condition_ids[i:i + chunk_size]
+    for sport, cids in by_sport.items():
         data = _http_get_json(f"{DATA_API}/trades", {
-            "market": ",".join(chunk),
+            "market": ",".join(cids),
             "limit": 500,
             "takerOnly": "true",
         })
-        if isinstance(data, list):
+        n = len(data) if isinstance(data, list) else 0
+        if n:
             all_trades.extend(data)
+        log(f"  trades {sport}: {n} pulled across {len(cids)} markets")
     return all_trades
 
 
@@ -477,7 +506,7 @@ def run():
     log(f"  tracking {len(markets)} markets across configured sports")
 
     log("Fetching trades for tracked markets...")
-    trades = fetch_trades_for_markets([m["conditionId"] for m in markets])
+    trades = fetch_trades_for_markets(markets)
     log(f"  {len(trades)} trades pulled")
 
     plays, clusters = build_plays(trades, wallet_score_map, market_meta_by_id)
@@ -498,6 +527,7 @@ def run():
         "captured_at": now_iso, "updated": now_iso,
         "lookback_hours": LOOKBACK_SECONDS / 3600,
         "markets_tracked": len(markets),
+        "sports_tracked": list(SPORT_TAG_IDS.keys()),
         "plays": plays[:150],
         "clusters": clusters[:50],
     }
