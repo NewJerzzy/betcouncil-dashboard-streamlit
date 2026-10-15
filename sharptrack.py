@@ -79,7 +79,7 @@ def _save_my_plays(plays):
 def render_sharptrack_tab():
     st.markdown("## 🦈 SharpTrack — Polymarket Sharp Wallet Tracker")
     st.caption(
-        "Tracks the highest-quality wallets on Polymarket's SPORTS/ESPORTS leaderboards "
+        "Tracks the highest-quality wallets on Polymarket's SPORTS leaderboard "
         "and surfaces their live plays, scored 1-100. Research tool, not a pick service — "
         "do your own homework before following a play."
     )
@@ -148,7 +148,7 @@ def render_sharptrack_tab():
             # Always list every tracked sport (with a play count) so a sport
             # with no sharp action right now reads as "0", not as missing.
             _tracked = live.get("sports_tracked") or [
-                "NFL", "NBA", "WNBA", "MLB", "NHL", "TENNIS", "SOCCER", "ESPORTS"]
+                "NFL", "NBA", "WNBA", "MLB", "NHL", "TENNIS", "SOCCER", "UFC"]
             _counts = {}
             for p in plays:
                 if p.get("sport"):

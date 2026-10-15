@@ -4,7 +4,7 @@ sharptrack_harvester.py — SharpTrack (Polymarket sharp-wallet tracker)
 Runs every 15 min via .github/workflows/sharptrack_refresh.yml.
 
 Pipeline:
-  1. Pull Polymarket's SPORTS + ESPORTS leaderboard (data-api.polymarket.com
+  1. Pull Polymarket's SPORTS leaderboard (data-api.polymarket.com
      /v1/leaderboard) across WEEK / MONTH / ALL time periods, orderBy=PNL.
      Merge + rank-score every wallet seen -> "sharp wallet registry".
   2. Pull live/upcoming sports events from gamma-api.polymarket.com/events
@@ -65,17 +65,17 @@ SPORT_TAG_IDS = {
     "NHL":    [899],
     "TENNIS": [864],
     "SOCCER": [100350],
-    "ESPORTS": [64],   # parent esports tag (covers CS2/Valorant/LoL/Dota2/etc.)
-    # MMA/UFC has no dedicated numeric tag_id in Polymarket's sports metadata
-    # (only generic "1"/"100639") as of this harvester's last check — omitted
-    # rather than risk pulling the unfiltered/generic sports bucket again.
+    # UFC: tag id 279 (gamma-api /tags/slug/ufc), verified 2026-10-15 to return
+    # real UFC Fight Night events via ?tag_id=279.
+    "UFC":    [279],
+    # Esports removed 2026-10-15 per Abraham -- not a sport the model covers.
 }
 
 LOOKBACK_SECONDS = 6 * 60 * 60          # only trades from the last 6 hours
 # Per-sport quota (was a single global top-60 by volume, which let whichever
 # sports happened to have the busiest markets crowd every other sport out).
 MAX_MARKETS_PER_SPORT = 10
-MAX_TRACKED_MARKETS = MAX_MARKETS_PER_SPORT * 8
+MAX_TRACKED_MARKETS = MAX_MARKETS_PER_SPORT * 10
 # Polymarket keeps finished games flagged active/closed=false for days.
 # Event endDate is roughly start time, so anything older than this is over.
 STALE_EVENT_SECONDS = 6 * 60 * 60
@@ -110,7 +110,7 @@ def fetch_leaderboards():
     """Merge SPORTS + ESPORTS leaderboards across WEEK/MONTH/ALL into a
     per-wallet weighted rank score. Returns dict[address] -> raw record."""
     wallets = {}
-    for category in ("SPORTS", "ESPORTS"):
+    for category in ("SPORTS",):  # ESPORTS dropped 2026-10-15
         for period, weight in LEADERBOARD_PERIOD_WEIGHTS.items():
             data = _http_get_json(f"{DATA_API}/v1/leaderboard", {
                 "category": category,
@@ -488,7 +488,7 @@ def push_merged_to_gist(wallets_payload: dict, live_payload: dict) -> bool:
 
 
 def run():
-    log("Fetching Polymarket SPORTS/ESPORTS leaderboards...")
+    log("Fetching Polymarket SPORTS leaderboards...")
     raw_wallets = fetch_leaderboards()
     scored_wallets = score_wallets(raw_wallets)
     sharp_wallets = [w for w in scored_wallets if w["score"] >= MIN_WALLET_SCORE_TO_TRACK]
