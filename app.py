@@ -6004,6 +6004,14 @@ with tabs[13]:
             st.markdown("---")
             # ── Per-book CLV breakdown ─────────────────────────────────────────
             _clv_by_book = {}
+            _clv_top = [
+                {"source": (_h.get("source") or _h.get("book") or ""),
+                 "clv": _h["clv_capture"]["clv_vs_novig"]}
+                for _h in (st.session_state.get("history", []) or [])
+                if isinstance(_h.get("clv_capture"), dict)
+                and _h["clv_capture"].get("clv_resolved")
+                and _h["clv_capture"].get("clv_vs_novig") is not None
+            ]
             for _cr in _clv_top:
                 _bk = _cr.get("source", "") or "Unknown"
                 if not _bk:
@@ -8485,14 +8493,12 @@ with tabs[7]:
                 f'<div style="font-size:8px;color:var(--bc-dim);text-transform:uppercase">2-pick EV</div>'
                 f'<div style="font-size:17px;font-weight:700;color:#22c55e">{r["ev_2"]}</div></div>'
                 f'</div>'
-                f'<div style="font-size:14px;color:{"#e8a020" if not r.get("board_matched") else "#6a7a8a"}>'  
+                f'<div style="font-size:14px;color:{"#e8a020" if not r.get("board_matched") else "#6a7a8a"}">'
                 f'{"⚠️ NO BOARD DATA — load the board for real scores | " if not r.get("board_matched") else "📡 "}'  
                 f'{r["data_source"]} | Confidence: {r["confidence"]}'
                 f'{" | " + r["sharp_flag"] if r["sharp_flag"] else ""}'
                 f'{" | " + r["dk_note"] if r["dk_note"] else ""}</div>'
                 f'{_fp_html}'
-                f'{_better_html}'
-                f'{_note_html}'
                 f'</div>',
                 unsafe_allow_html=True
             )
