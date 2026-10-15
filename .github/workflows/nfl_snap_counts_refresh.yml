@@ -1,6 +1,8 @@
-name: NFL Snap Counts Refresh (test)
+name: NFL Snap Counts Refresh
 
 on:
+  schedule:
+    - cron: '17 9 * * 2,3'
   workflow_dispatch: {}
 
 jobs:

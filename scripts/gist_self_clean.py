@@ -73,6 +73,24 @@ def get_full_repo_source() -> str:
     return combined
 
 
+_PREFIX_CACHE = {}
+
+
+def _dynamic_prefixes(source: str) -> set:
+    """Static prefixes of every f"betcouncil_...{x}..." / f"...{data_type}"
+    style filename template found in the source (min length guards against
+    over-broad matches)."""
+    key = id(source)
+    if key in _PREFIX_CACHE:
+        return _PREFIX_CACHE[key]
+    prefixes = set()
+    for m in re.finditer(r"""f["'](betcouncil_[A-Za-z0-9_\-]*?)\{""", source):
+        if len(m.group(1)) >= 14:
+            prefixes.add(m.group(1))
+    _PREFIX_CACHE[key] = prefixes
+    return prefixes
+
+
 def is_referenced(fname: str, source: str) -> bool:
     """Real, corrected check: for the standard betcouncil_X.json pattern,
     check whether X itself (the real data_type argument passed to
@@ -83,6 +101,12 @@ def is_referenced(fname: str, source: str) -> bool:
         data_type = fname[len("betcouncil_"):-len(".json")]
     else:
         data_type = fname.replace(".json", "")
+    # f-string-built filenames (e.g. f"betcouncil_actionnetwork_{sport}.json")
+    # never contain the full data_type as a literal, so match on the static
+    # prefix before the first {placeholder}.
+    for pref in _dynamic_prefixes(source):
+        if fname.startswith(pref):
+            return True
     quoted_variants = [f'"{data_type}"', f"'{data_type}'", f'"betcouncil_{data_type}', f"'betcouncil_{data_type}"]
     return any(v in source for v in quoted_variants)
 
@@ -142,6 +166,10 @@ def main():
                 still_pending.append((fname, days_orphaned))
 
     # Real deletion pass -- only files that cleared the full grace period.
+    MAX_DELETE_PER_RUN = 15
+    if len(deleted) > MAX_DELETE_PER_RUN:
+        print(f"Safety cap: {len(deleted)} eligible, deleting only {MAX_DELETE_PER_RUN}")
+        deleted = deleted[:MAX_DELETE_PER_RUN]
     if deleted:
         delete_payload = {f: None for f in deleted}
         requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=HEADERS,
