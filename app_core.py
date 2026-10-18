@@ -7572,6 +7572,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     _logger.debug("Silent except at line 6035")
                     pass
+                if sport == "NFL":
+                    # NFL lines are the most efficient US market: regress the model's
+                    # gap to the market by half and cap at 12%, so a single
+                    # rating-based opinion can't read as a 20% "lock".
+                    spread_edge_pct = max(-0.12, min(0.12, spread_edge_pct * 0.5))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
@@ -8116,6 +8121,8 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 except Exception:
                     _logger.debug("Silent except at line 6456")
                     pass
+                if sport == "NFL":
+                    total_edge_pct = max(-0.12, min(0.12, total_edge_pct * 0.5))
                 if abs(total_edge_pct) >= 0.02:
                     side = "OVER" if total_edge > 0 else "UNDER"
                     tier = _get_cal_game_tier(abs(total_edge_pct), sport)
@@ -8144,6 +8151,11 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 _nfl_sp_m = re.search(r"[-+]?\d+(?:\.\d+)?", str(spread_str))
                 if _nfl_sp_m and abs(float(_nfl_sp_m.group(0))) >= 4.5 and min(h_ml, a_ml) > -150:
                     raise ValueError("NFL moneyline looks like a placeholder price; skipping ML edge")
+                _nfl_mlc = _gl_consensus.get("moneyline", {}) if isinstance(_gl_consensus, dict) else {}
+                if _nfl_mlc.get("pinnacle_home_prob") is None and _nfl_mlc.get("home_consensus_prob") is None:
+                    # No multi-book price to anchor on; a single ESPN price is not
+                    # trustworthy enough for an NFL moneyline edge.
+                    raise ValueError("NFL moneyline has no multi-book anchor; skipping ML edge")
             # Prefer multi-book consensus / Pinnacle-anchored implied probability
             # over a single-line devig — same role Pinnacle no-vig plays for props.
             _ml_consensus = _gl_consensus.get("moneyline", {}) if isinstance(_gl_consensus, dict) else {}
