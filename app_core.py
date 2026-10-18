@@ -8281,6 +8281,10 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     a_fair = round(1.0 - h_fair, 4)
                 h_ml_edge = h_fair - h_implied
                 a_ml_edge = a_fair - a_implied
+                if sport == "NFL":
+                    # Same market-efficiency regression as NFL spreads/totals.
+                    h_ml_edge = max(-0.12, min(0.12, h_ml_edge * 0.5))
+                    a_ml_edge = max(-0.12, min(0.12, a_ml_edge * 0.5))
                 best_ml_edge = max(h_ml_edge, a_ml_edge)
                 if best_ml_edge >= 0.02:
                     if h_ml_edge > a_ml_edge:
