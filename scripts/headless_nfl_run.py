@@ -33,7 +33,7 @@ try:
         keys = ("player","prop","line","side","tier","edge","prob","Team","team","opponent","book","odds","avg","NFLInjuryImpactNote","Matchup","game")
         return {k: p.get(k) for k in keys if k in p}
     ranked = sorted(board or [], key=lambda p: abs(p.get("edge", 0) or 0), reverse=True)
-    out["top_props"] = [slim(p) for p in ranked[:40]]
+    out["top_props"] = [{k: v for k, v in p.items() if isinstance(v, (str, int, float, bool, type(None)))} for p in ranked[:40]]
     try:
         ga = ac.analyze_all_games(games, "NFL", home_teams, away_teams)
         out["game_lines"] = ga if isinstance(ga, list) else str(type(ga))
