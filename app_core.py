@@ -7336,9 +7336,15 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     # inflated edge that just pins at the ±20% ceiling on
                     # nearly every matchup with any real rating gap.
                     power_diff = power_diff / 10.0
+                if sport == "NFL":
+                    # NFL ratings are Super Bowl-odds derived (~0.6 game points
+                    # per rating point, no home edge built in). Raw rating gaps
+                    # of 5-15 were compared straight against point spreads and
+                    # pinned nearly every game at the +/-20% cap.
+                    power_diff = power_diff * 0.6 + 2.0
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
-                spread_edge_pct = spread_edge / 10.0
+                spread_edge_pct = spread_edge / (30.0 if sport == "NFL" else 10.0)
                 # NBA/WNBA spread compression: these sports share NFL's tier
                 # thresholds (SOVEREIGN 0.12/ELITE 0.08/APPROVED 0.04/LEAN 0.02)
                 # but NFL gets further downstream compression (divisional -15%,
