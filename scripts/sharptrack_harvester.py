@@ -81,6 +81,7 @@ MAX_TRACKED_MARKETS = MAX_MARKETS_PER_SPORT * 10
 STALE_EVENT_SECONDS = 6 * 60 * 60
 MAX_ORDER_BOOK_LOOKUPS = 20             # cap CLOB book calls per run
 CLUSTER_MIN_WALLETS = 2
+MAX_MARKETS_PER_WALLET = 40             # more than this in the window = market maker
 MIN_WALLET_SCORE_TO_TRACK = 35          # floor for "sharp" classification
 LEADERBOARD_PERIOD_WEIGHTS = {"WEEK": 1.0, "MONTH": 0.6, "ALL": 0.4}
 
@@ -330,6 +331,22 @@ def build_plays(trades: list, wallet_score_map: dict, market_meta_by_id: dict):
             "timestamp": ts,
             "transactionHash": t.get("transactionHash", ""),
         })
+
+    # Drop market makers / hedgers: wallets that trade opposite outcomes of the
+    # same market in 2+ markets, or touch an extreme number of markets. Their
+    # trades are spread capture, not opinions. Also keep only BUY trades (a
+    # SELL is closing a position, not a pick).
+    _mk = defaultdict(lambda: defaultdict(set))
+    for p in plays:
+        _mk[p["wallet"]][p["conditionId"]].add(p["outcomeIndex"])
+    _makers = set()
+    for w, mk in _mk.items():
+        both = sum(1 for oi in mk.values() if len(oi) >= 2)
+        if both >= 2 or len(mk) > MAX_MARKETS_PER_WALLET:
+            _makers.add(w)
+    if _makers:
+        log(f"  dropped {len(_makers)} market-maker/hedger wallets")
+    plays = [p for p in plays if p["wallet"] not in _makers and str(p["side"]).upper() != "SELL"]
 
     # cluster by (conditionId, outcomeIndex): flag when >=2 distinct sharp
     # wallets took the same side within the lookback window
