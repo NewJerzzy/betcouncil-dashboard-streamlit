@@ -8128,6 +8128,16 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         if home_ml and away_ml and home_ml != "N/A" and away_ml != "N/A":
             h_ml = float(str(home_ml).replace("+",""))
             a_ml = float(str(away_ml).replace("+",""))
+            # NFL guard: the ESPN/fallback moneyline feed often returns
+            # placeholder prices (about -110/-110 or -108/-112) even for a
+            # 7-12 point favorite, whose real moneyline is -250 or longer.
+            # That made every NFL moneyline look like a 25-40% edge. If the
+            # spread says a clear favorite but the best price is near
+            # pick-em, the moneyline is unusable, so skip the ML edge.
+            if sport == "NFL":
+                _nfl_sp_m = re.search(r"[-+]?\d+(?:\.\d+)?", str(spread_str))
+                if _nfl_sp_m and abs(float(_nfl_sp_m.group(0))) >= 4.5 and min(h_ml, a_ml) > -150:
+                    raise ValueError("NFL moneyline looks like a placeholder price; skipping ML edge")
             # Prefer multi-book consensus / Pinnacle-anchored implied probability
             # over a single-line devig — same role Pinnacle no-vig plays for props.
             _ml_consensus = _gl_consensus.get("moneyline", {}) if isinstance(_gl_consensus, dict) else {}
@@ -8167,7 +8177,12 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                 # has ever priced a single MLB game at 99%+. Recalibrated to 20, verified
                 # against all 9 real captured cases (now range 27-67%, matching realistic
                 # real MLB moneylines). NBA/NFL/WNBA use 100-112 scale, NHL same scale.
-                _ml_divisor = {"NBA": 4, "NFL": 4, "WNBA": 4, "MLB": 20, "NHL": 7}.get(sport, 7)
+                # NFL recalibrated 4 -> 12 (Oct 2026): NFL ratings here are Super Bowl-odds
+                # derived, roughly 0.6 game points per rating point. A divisor of 4 made
+                # a 5-point rating gap a 78% favorite and pinned most games at the 92%
+                # cap, producing fake 25-40% moneyline edges. 12 is about a 13.5-point
+                # NFL game-margin standard deviation.
+                _ml_divisor = {"NBA": 4, "NFL": 12, "WNBA": 4, "MLB": 20, "NHL": 7}.get(sport, 7)
                 h_fair = 1 / (1 + math.exp(-power_diff / _ml_divisor))
                 # Real safety floor/ceiling, second layer of protection: no single game
                 # should ever be priced outside this range regardless of what the sigmoid
