@@ -4,7 +4,7 @@ import json, os, sys, traceback
 from datetime import datetime, timezone
 import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-NAMES = ["walker", "seahawks", "giants", "chiefs", "dart", "kenneth"]
+NAMES = ["juwan johnson", "higbee", "steelers", "buccaneers", "pittsburgh", "tampa", "bills", "raiders", "buffalo", "las vegas"]
 out = {"started": datetime.now(timezone.utc).isoformat(), "errors": [], "hits": {}, "board": []}
 def finish():
     txt = json.dumps(out, indent=1, default=str)
