@@ -1,0 +1,44 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "nBnnC_W2fr86fLm_0Dr6P"
+uri = "file://generated-artifacts/oddsassist-espn-audit.html"
+type = "html"
+title = "OddsAssist — ESPN-checked expert record"
+description = "146 completed picks reconciled with ESPN finals, including original prices, units, and evidence links."
+logical_id = "48020ee7-2761-476c-b3e0-baa63a1d21b7"
+content_hash = "sha256:ad592808b98f2fc6cfde9bb032ac53a6ed1384f6f3064174c969d94e6da7df8b"
+size = 45294
+mtime_ms = 1793551466756
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2e8e33dc-341d-4e7f-952c-58c3a2fa0606/48020ee7-2761-476c-b3e0-baa63a1d21b7/fe976787-128f-4c39-b50d-d84b930a99e0"
+storage_version_token = "1793552203394392"
+content_type = "text/html"
+
+[[outputs]]
+id = "5yHhnYlilBnQRPhJS5kM0"
+uri = "file://generated-artifacts/bettinginsider-live-and-expert-audit.html"
+type = "html"
+title = "The Betting Insider — live feed and expert audit"
+description = "Verified live endpoints, 270 ESPN-graded football picks, and the narrow expert-admission decision."
+logical_id = "d1f17138-6ace-48b7-93e5-2db4fc07c819"
+content_hash = "sha256:29369fa137a2ee5b9b4dcdf13c490319e51b5a40bd83c1cca908d12d39a9b535"
+size = 87774
+mtime_ms = 1793552067116
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2e8e33dc-341d-4e7f-952c-58c3a2fa0606/d1f17138-6ace-48b7-93e5-2db4fc07c819/d1a4aa5c-1b3e-4518-9434-b3e088b34f0c"
+storage_version_token = "1793552204067259"
+content_type = "text/html"
+
+[[outputs]]
+id = "iD1ibG5ei3eecYyk5gqiD"
+uri = "file://generated-artifacts/bettinginsider-other-experts-audit.html"
+type = "html"
+title = "All remaining Betting Insider experts — ESPN audit"
+description = "859 records reviewed, per-expert add-or-skip decisions, verified profitable scopes, and pick-by-pick ESPN evidence."
+logical_id = "693199d0-25d5-43db-bfde-de515b332689"
+content_hash = "sha256:a4c6668b93ffa54f3d728c77a08f04cc2ffcf14364d9ca86daeb1d311c32bfce"
+size = 261859
+mtime_ms = 1793552911288
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2e8e33dc-341d-4e7f-952c-58c3a2fa0606/693199d0-25d5-43db-bfde-de515b332689/62ff35cd-244c-4d29-b1b7-4d5f701d425e"
+storage_version_token = "1793552978854901"
+content_type = "text/html"
