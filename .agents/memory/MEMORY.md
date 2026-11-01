@@ -11,3 +11,4 @@
 - [BallparkPal source status](ballparkpal-source-status.md) — MLB projections and park factors API; no odds/weather/history and current beta license is personal/non-commercial
 - [DoinkSports access decision](doinksports-source-status.md) — do not automate the undocumented service without Doink's written programmatic-use permission.
 - [PickFinder integration scope](pickfinder-integration-scope.md) — owner-authorized, but avoid a duplicate live feed; use only missing enrichments or middle inputs.
+- [OddsAssist feed scope](oddsassist-feed-scope.md) — public expert-pick page data is accessible; test narrow attribution first, not another full odds feed.
