@@ -9,6 +9,12 @@ The user describes this site as theirs and explicitly needs live data and expert
 
 **How to apply:** Retrieve current selections from the live website routes and independently check previous picks before admitting an expert. Keep original selections and prices separate from current market references. Do not treat source labels, social counts, promotional profit claims, or a positive win rate alone as verified evidence.
 
+Review every listed expert, including their main prop markets, before making the final admission decision. Do not stop after verifying one expert and label the others unqualified simply because their review is unfinished.
+
+**Why:** The user explicitly repeated the request to check the other experts "in the same manner" after only one was initially admitted.
+
+**How to apply:** Make an add-or-skip decision for each expert and distinguish profitable reviewed sport/market scopes from losing, too-small, ambiguous, or unverified ones. A positive overall result does not justify admitting that expert's losing sport or prop subset. Do not ask the user to manage a trial.
+
 External API findings verified 2026-11-01:
 
 - `/api/picks/list?mode=all` on the website returns pending selections, including futures; it is not the whole historical ledger.

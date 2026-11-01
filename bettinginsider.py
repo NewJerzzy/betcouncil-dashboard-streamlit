@@ -1,7 +1,7 @@
-"""Current, approved football expert picks with matched live market references.
+"""Current expert picks restricted to independently audited sport/market scopes.
 
 Uses the site's public website API, NOT the historical-only developer /v1 API.
-No login, full odds-board import, signal scoring, props, futures, or scheduler.
+No login, full odds-board import, signal scoring, futures, or scheduler.
 """
 
 import math
@@ -13,9 +13,41 @@ import requests
 
 BASE = "https://www.thebettinginsider.com"
 SOURCE = "The Betting Insider — Goodelleaks"
+EXPERTS = {
+    "analyst_goodelleaks": ("Goodelleaks", ("NFL", "NCAAF"), ("moneyline", "spread", "total", "team_total", "team_total_over", "team_total_under")),
+    "bf44041c-3090-481d-b584-5843256033b4": ("Invisible Insider", ("NFL", "NCAAF"), ("moneyline", "spread", "total")),
+    "1f3ae3b4-893b-410c-8a1e-addd978e6d80": ("Insider Mike", ("MLB",), ("prop",)),
+}
 PICKS_URL = BASE + "/api/picks/list?mode=all"
-_PERIOD = re.compile(r"\b(?:[12]H|Q[1-4]|[12](?:st|nd)\s+half|first\s+half|second\s+half)\b", re.I)
+_PERIOD = re.compile(
+    r"\b(?:[12]H|Q[1-4]|[1-4]Q|[12](?:st|nd)\s+half|first\s+half|second\s+half"
+    r"|(?:1st|first)\s+(?:quarter|inning)|F[15]|first\s+5)\b", re.I,
+)
 _TOTAL = re.compile(r"\b(over|under|o|u)\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def _mlb_prop_market(title):
+    """Only market families represented in Mike's verified pregame sample."""
+    t = title.lower()
+    if re.search(r"\b(?:parlay|sgp|ml)\b", t):
+        return None
+    if "total bases" in t:
+        return "batter_total_bases"
+    if re.search(r"hits\s*\+\s*runs\s*\+\s*rbis|h/r/rbi|hrrbi", t):
+        return "batter_hits_runs_rbis"
+    if re.search(r"\bouts\b", t):
+        return "pitcher_outs"
+    if "strikeout" in t or re.search(r"\bks\b", t):
+        return None if "batter" in t else "pitching_strikeouts"
+    if "earned run" in t or re.search(r"\ber\b", t):
+        return "pitcher_earned_runs"
+    if "hits allowed" in t:
+        return "pitcher_hits_allowed"
+    if "walk" in t:
+        return "pitching_walks" if "pitcher" in t else "batting_walks"
+    if re.search(r"\bhits\b", t):
+        return "batter_hits"
+    return None
 
 
 def _time(value):
@@ -41,22 +73,28 @@ def _get_json(url):
     return data
 
 
-def normalize_pending_picks(data):
+def normalize_pending_picks(data, errors=None):
     if not isinstance(data.get("picks"), list):
         raise ValueError("The Betting Insider picks schema changed")
     output, seen = [], set()
     for p in data["picks"]:
-        if p.get("bettor_id") != "analyst_goodelleaks":
+        expert = EXPERTS.get(p.get("bettor_id"))
+        if not expert:
             continue
         if p.get("result") != "pending" or not p.get("is_active") or p.get("is_future"):
             continue
-        sport = {"NFL": "NFL", "CFB": "NCAAF", "NCAAF": "NCAAF"}.get(str(p.get("sport")).upper())
+        sport = {"NFL": "NFL", "CFB": "NCAAF", "NCAAF": "NCAAF", "MLB": "MLB"}.get(str(p.get("sport")).upper())
         market = str(p.get("bet_type", "")).lower()
         title = str(p.get("bet_title", "")).strip()
-        if not sport or market not in ("moneyline", "spread", "total", "team_total", "team_total_over", "team_total_under"):
+        if sport not in expert[1] or market not in expert[2]:
             continue
         # The source sometimes labels half-game totals simply "total".
         if _PERIOD.search(title):
+            continue
+        if expert[0] == "Invisible Insider" and re.search(r"\b(?:tt|team\s+total)\b", title, re.I):
+            continue
+        prop_market = _mlb_prop_market(title) if market == "prop" else None
+        if market == "prop" and not prop_market:
             continue
         try:
             start, posted = _time(p["game_time"]), _time(p.get("posted_at") or p["created_at"])
@@ -73,19 +111,25 @@ def normalize_pending_picks(data):
                 raise ValueError("Missing original spread")
             if ("total" in market) and not _TOTAL.search(title):
                 raise ValueError("Missing original total")
+            if market == "prop" and not (_TOTAL.search(title) or re.search(r"\b\d+\+\s", title)):
+                raise ValueError("Missing original player-prop threshold")
             identity = str(p["id"])
             if identity in seen:
                 continue
             seen.add(identity)
             output.append({
-                "id": identity, "source": SOURCE, "sport": sport,
+                "id": identity, "source": "The Betting Insider — " + expert[0], "sport": sport,
                 "away": teams[0].strip(), "home": teams[1].strip(),
                 "event_key": p["game_id"], "start_time": start.isoformat(),
                 "published_at": posted.isoformat(), "selection": title,
                 "market": market, "american_odds": odds,
                 "expert_units": units, "published_book": str(p.get("sportsbook") or "book not supplied"),
+                "prop_market": prop_market,
             })
         except (KeyError, TypeError, ValueError) as exc:
+            if errors is not None:
+                errors.append("The Betting Insider — " + expert[0] + ": malformed approved pending pick")
+                continue
             raise ValueError("The Betting Insider has a malformed approved pending pick") from exc
     return output
 
@@ -99,11 +143,12 @@ def _current(picks, now):
 
 def fetch_public_snapshot():
     now = datetime.now(timezone.utc)
-    picks = _current(normalize_pending_picks(_get_json(PICKS_URL)), now)
+    pick_errors = []
+    picks = _current(normalize_pending_picks(_get_json(PICKS_URL), errors=pick_errors), now)
     wanted = {p["event_key"] for p in picks}
     markets, errors = {}, []
     for sport in sorted({p["sport"] for p in picks}):
-        query = "nfl" if sport == "NFL" else "ncaaf"
+        query = {"NFL": "nfl", "NCAAF": "ncaaf", "MLB": "mlb"}[sport]
         try:
             data = _get_json(BASE + "/api/games/upcoming?sport=" + query)
             if not isinstance(data.get("games"), list):
@@ -120,6 +165,7 @@ def fetch_public_snapshot():
             errors.append(f"{sport}: {type(exc).__name__}")
     return {
         "picks": picks, "markets": markets, "market_errors": errors,
+        "pick_errors": pick_errors,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -129,6 +175,8 @@ def _norm(value):
 
 
 def market_reference(pick, game):
+    if pick["market"] == "prop":
+        return "Current player-prop quote not supplied by the game-line feed"
     if not game or abs((_time(game["kickoff"]) - _time(pick["start_time"])).total_seconds()) > 300:
         return "Current market unavailable"
     market = pick["market"]

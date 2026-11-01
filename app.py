@@ -13466,6 +13466,8 @@ with tabs[2]:
                 "other prediction sources remain available."
             )
 
+    if _pred_sport_match("NFL") or _pred_sport_match("NCAAF") or _pred_sport_match("MLB"):
+        from html import escape as _tbi_escape
         from bettinginsider import (
             fetch_public_snapshot as _tbi_fetch, prediction_items as _tbi_items,
         )
@@ -13482,11 +13484,20 @@ with tabs[2]:
             for _tbi_pick in _tbi_current:
                 _pred_gl_items.append({
                     "sport": _tbi_pick["sport"],
-                    "away": _oa_escape(_tbi_pick["away"]),
-                    "home": _oa_escape(_tbi_pick["home"]),
+                    "away": _tbi_escape(_tbi_pick["away"]),
+                    "home": _tbi_escape(_tbi_pick["home"]),
                     "source": _tbi_pick["source"],
-                    "text": _oa_escape(_tbi_pick["text"]),
+                    "text": _tbi_escape(_tbi_pick["text"]),
                 })
+            st.caption(
+                "Verified Betting Insider scopes: Goodelleaks football; Invisible Insider "
+                "full-game football; Insider Mike MLB props only. Other scopes excluded."
+            )
+            if _tbi_snapshot.get("pick_errors"):
+                st.warning(
+                    f"The Betting Insider: {len(_tbi_snapshot['pick_errors'])} malformed "
+                    "approved pick(s) withheld; valid picks remain available."
+                )
             if _tbi_snapshot["market_errors"]:
                 st.caption("The Betting Insider: current market references unavailable; published picks retained.")
             if not _tbi_current:
@@ -13539,6 +13550,8 @@ with tabs[2]:
         "GameLinePicks": "gamelinepicks.com",
         "OddsAssist — Rob O'Connor": "pro.oddsassist.com",
         "The Betting Insider — Goodelleaks": "thebettinginsider.com",
+        "The Betting Insider — Invisible Insider": "thebettinginsider.com",
+        "The Betting Insider — Insider Mike": "thebettinginsider.com",
     }
     _pred_source_desc = {
         "BetQL": "Betting analytics site — model-driven player prop projections.",
@@ -13557,6 +13570,18 @@ with tabs[2]:
             "ESPN audit Sep–Oct 2026: 61–49–4, +10.33 published units after correcting "
             "Buffalo -7 from win to push. Historical prices are provider-reported. "
             "Current market references are consensus, not executable sportsbook quotes."
+        ),
+        "The Betting Insider — Invisible Insider": (
+            "Full-game NFL/NCAAF spread, total and moneyline selections only. "
+            "ESPN-checked pregame Sep–Oct 2026: 72–57, +10.42 published units. "
+            "Props, partial-game bets, unnamed team totals and parlays excluded. "
+            "Historical prices/timestamps are provider-reported; no model/stake boost."
+        ),
+        "The Betting Insider — Insider Mike": (
+            "Reviewed MLB prop families only. ESPN-checked pregame Sep–Oct 2026: "
+            "70–55, +21.75 published units, including a corrected hit-prop grade. "
+            "NFL/CFB props, futures, other sports and unverified markets excluded. "
+            "No current prop quote is inferred from game lines; no model/stake boost."
         ),
         "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
         "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",

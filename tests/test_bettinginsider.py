@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from bettinginsider import (
-    SOURCE, fetch_public_snapshot, market_reference,
+    SOURCE, EXPERTS, fetch_public_snapshot, market_reference,
     normalize_pending_picks, prediction_items,
 )
 
@@ -34,6 +34,72 @@ def game():
 
 
 class BettingInsiderTests(unittest.TestCase):
+    def test_mlb_ui_path_does_not_fetch_football_only_source(self):
+        from pathlib import Path
+        import streamlit as st
+        from streamlit.testing.v1 import AppTest
+        source = Path("app.py").read_text()
+        start = source.index("    # Reviewed experts, not another full odds/EV feed")
+        end = source.index("    # ── GROUP game-line items by matchup", start)
+        block = "\n".join(line[4:] for line in source[start:end].splitlines())
+        script = (
+            "import streamlit as st\n_pred_gl_items=[]\n"
+            "_pred_sport_match=lambda sport: sport=='MLB'\n"
+            + block + "\nst.session_state['observed']=_pred_gl_items\n"
+        )
+        item = {"sport": "MLB", "away": "Nationals", "home": "Padres",
+                "source": "The Betting Insider — Insider Mike", "text": "C. Cavalli 6+ Ks (+110)"}
+        st.cache_data.clear()
+        with (
+            patch("oddsassist.fetch_public_picks", side_effect=AssertionError("must not fetch NFL in MLB view")) as odds,
+            patch("bettinginsider.fetch_public_snapshot", return_value={"market_errors": []}),
+            patch("bettinginsider.prediction_items", return_value=[item]),
+        ):
+            app = AppTest.from_string(script).run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.warning), 0)
+        self.assertEqual(app.session_state["observed"], [item])
+        odds.assert_not_called()
+
+    def test_experts_are_admitted_by_verified_scope_not_globally(self):
+        def expert_pick(name, **changes):
+            identity = next(k for k, v in EXPERTS.items() if v[0] == name)
+            return {**sample_pick(), "id": name, "bettor_id": identity, "bettor_name": name, **changes}
+        invisible = expert_pick("Invisible Insider")
+        mike = expert_pick(
+            "Insider Mike", sport="MLB", bet_type="prop",
+            bet_title="C. Cavalli 6+ Ks", game_id="MLB-20261101-WSH-SD",
+            game_title="Nationals @ Padres",
+        )
+        accepted = normalize_pending_picks({"picks": [sample_pick(), invisible, mike]})
+        self.assertEqual(len(accepted), 3)
+        self.assertEqual(accepted[-1]["prop_market"], "pitching_strikeouts")
+        denied = [
+            expert_pick("Insider Mike", bet_type="prop", bet_title="R. Dowdle Rush Yards Over 25.5"),
+            expert_pick("Insider Mike", sport="NBA", bet_type="prop", bet_title="Player Over 20.5 Points"),
+            expert_pick("Invisible Insider", bet_type="prop", bet_title="T. Higgins O70.5 Rec Yds"),
+            expert_pick("Invisible Insider", bet_type="total", bet_title="Under 24.5 · TT Under"),
+            expert_pick("Invisible Insider", bet_type="total", bet_title="1st quarter Under 10.5"),
+            expert_pick("Michael Wong") if any(v[0] == "Michael Wong" for v in EXPERTS.values())
+            else {**sample_pick(), "bettor_id": "analyst_michael_wong"},
+            {**mike, "bet_title": "C. Cavalli First inning Ks Over 0.5"},
+            {**mike, "bet_title": "C. Cavalli Ks Over 5.5 + Padres ML"},
+            {**mike, "bet_title": "Player Home Runs Over 0.5"},
+        ]
+        self.assertEqual(normalize_pending_picks({"picks": denied}), [])
+
+    def test_malformed_expert_pick_does_not_hide_other_experts(self):
+        errors = []
+        bad = {**sample_pick(), "id": "bad", "odds": "invalid"}
+        picks = normalize_pending_picks({"picks": [bad, sample_pick()]}, errors=errors)
+        self.assertEqual(len(picks), 1)
+        self.assertEqual(len(errors), 1)
+
+    def test_player_prop_keeps_original_line_without_using_game_spread(self):
+        p = {**normalize_pending_picks({"picks": [sample_pick()]})[0], "market": "prop"}
+        self.assertIn("not supplied", market_reference(p, game()))
+        self.assertIn("not supplied", market_reference(p, None))
+
     def test_only_reviewed_expert_and_markets(self):
         picks = []
         for mutation in ("other_expert", "prop", "future", "graded", "inactive", "partial"):
