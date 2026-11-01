@@ -7,7 +7,13 @@ Use OddsAssist only where it supplies missing information; avoid importing anoth
 
 **Why:** The user requested live-data testing but explicitly does not want redundancy or bloat. Public expert picks provide original directional recommendations rather than another calculation of existing sportsbook prices. Distinct branding alone does not establish statistical independence.
 
-**How to apply:** Evaluate expert picks separately before adding scoring weight. Preserve the originally published line, decimal price, units, creation time, event time, result, and source pick ID; never replace the original selection with a different current best line. Provider units are not Lab stake recommendations.
+**How to apply:** Use the existing Predictions section for attributed expert selections, not a new odds board or model/staking boost. Preserve the originally published line, decimal price, units, creation time, event time, result, and source pick ID; never replace the original selection with a different current best line. Provider units are not Lab stake recommendations.
+
+For this integration, the user rejected an observation-only trial: "either we add him or we dont." They asked for an add-or-skip decision using previous picks checked against ESPN scores.
+
+**Why:** The user does not have time to manage a trial and does not want the Lab flooded with additional sources.
+
+**How to apply:** Make the decision using independently reconciled outcomes and a clear incremental use, not the site's advertised record alone. ESPN can confirm final scores; it cannot independently confirm historical quoted prices, mutable publication timestamps, or completeness of a provider's pick history. Do not present those as independently verified.
 
 Public observations verified on 2026-11-01:
 

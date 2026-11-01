@@ -13198,7 +13198,7 @@ with tabs[2]:
 
     _pred_filter_col1, _pred_filter_col2 = st.columns([1, 1])
     with _pred_filter_col1:
-        _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NHL", "WNBA", "SOCCER", "UFC", "TENNIS"], key="pred_sport_filter")
+        _pred_sport_filter = st.selectbox("Sport", ["All", "MLB", "NBA", "NFL", "NCAAF", "NHL", "WNBA", "SOCCER", "UFC", "TENNIS"], key="pred_sport_filter")
     with _pred_filter_col2:
         _pred_min_sources = st.select_slider(
             "Min sources agreeing", options=[1, 2, 3, 4, 5], value=1, key="pred_min_sources",
@@ -13292,7 +13292,8 @@ with tabs[2]:
     }
 
     def _pred_norm_team(s, sport=""):
-        raw = str(s or "").strip()
+        from html import unescape
+        raw = unescape(str(s or "")).strip()
         if 2 <= len(raw) <= 4 and raw.isupper():
             _sport_table = _PRED_FULL_NAMES_BY_SPORT.get(str(sport or "").upper())
             if _sport_table and raw in _sport_table:
@@ -13435,13 +13436,74 @@ with tabs[2]:
     except Exception:
         pass
 
+    # Reviewed experts, not another full odds/EV feed or a model input.
+    if _pred_sport_match("NFL") or _pred_sport_match("NCAAF"):
+        from html import escape as _oa_escape
+        from oddsassist import fetch_public_picks as _oa_fetch, prediction_items as _oa_items
+
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _pred_oddsassist_snapshot():
+            return _oa_fetch()
+
+        try:
+            _oa_current = [
+                p for p in _oa_items(_pred_oddsassist_snapshot())
+                if _pred_sport_match(p["sport"])
+            ]
+            for _oa_pick in _oa_current:
+                _pred_gl_items.append({
+                    "sport": _oa_pick["sport"],
+                    "away": _oa_escape(_oa_pick["away"]),
+                    "home": _oa_escape(_oa_pick["home"]),
+                    "source": _oa_pick["source"],
+                    "text": _oa_escape(_oa_pick["text"]),
+                })
+            if not _oa_current:
+                st.caption("OddsAssist: no pending pregame picks for this sport in the next seven days.")
+        except Exception as _oa_error:
+            st.warning(
+                f"OddsAssist expert picks unavailable ({type(_oa_error).__name__}); "
+                "other prediction sources remain available."
+            )
+
+        from bettinginsider import (
+            fetch_public_snapshot as _tbi_fetch, prediction_items as _tbi_items,
+        )
+
+        @st.cache_data(ttl=300, show_spinner=False)
+        def _pred_tbi_snapshot():
+            return _tbi_fetch()
+
+        try:
+            _tbi_snapshot = _pred_tbi_snapshot()
+            _tbi_current = [
+                p for p in _tbi_items(_tbi_snapshot) if _pred_sport_match(p["sport"])
+            ]
+            for _tbi_pick in _tbi_current:
+                _pred_gl_items.append({
+                    "sport": _tbi_pick["sport"],
+                    "away": _oa_escape(_tbi_pick["away"]),
+                    "home": _oa_escape(_tbi_pick["home"]),
+                    "source": _tbi_pick["source"],
+                    "text": _oa_escape(_tbi_pick["text"]),
+                })
+            if _tbi_snapshot["market_errors"]:
+                st.caption("The Betting Insider: current market references unavailable; published picks retained.")
+            if not _tbi_current:
+                st.caption("The Betting Insider: no approved pregame expert picks for this sport in the next seven days.")
+        except Exception as _tbi_error:
+            st.warning(
+                f"The Betting Insider expert picks unavailable ({type(_tbi_error).__name__}); "
+                "other prediction sources remain available."
+            )
+
     # ── GROUP game-line items by matchup (fuzzy team-name match across
     # sources' differing formats: abbreviations, full names, partials) ──
     _pred_gl_groups = []
     for _item in _pred_gl_items:
         _placed = False
         for _grp in _pred_gl_groups:
-            if _pred_teams_match(_item["away"], _grp["away"], _item.get("sport", "")) and _pred_teams_match(_item["home"], _grp["home"], _item.get("sport", "")):
+            if str(_item["sport"]).upper() == str(_grp["sport"]).upper() and _pred_teams_match(_item["away"], _grp["away"], _item.get("sport", "")) and _pred_teams_match(_item["home"], _grp["home"], _item.get("sport", "")):
                 _grp["items"].append(_item)
                 _placed = True
                 break
@@ -13475,6 +13537,8 @@ with tabs[2]:
         "Signal Odds": "signalodds.com", "BetQL": "betql.co",
         "Pickswise": "pickswise.com", "WiseGuyTeam": "wiseguyteam.com",
         "GameLinePicks": "gamelinepicks.com",
+        "OddsAssist — Rob O'Connor": "pro.oddsassist.com",
+        "The Betting Insider — Goodelleaks": "thebettinginsider.com",
     }
     _pred_source_desc = {
         "BetQL": "Betting analytics site — model-driven player prop projections.",
@@ -13483,6 +13547,17 @@ with tabs[2]:
         "GamblingForecast": "Model-driven prop projections and picks.",
         "GameLinePicks": "Free, no-auth game-line picks site.",
         "Pickswise": "Editorial sports betting picks site.",
+        "OddsAssist — Rob O'Connor": (
+            "One expert; original published selections, not live book quotes or Lab stakes. "
+            "ESPN final-score audit through Oct 31, 2026: NFL 20–15; NCAAF 61–49–1. "
+            "Outcomes verified; historical price availability not independently verified."
+        ),
+        "The Betting Insider — Goodelleaks": (
+            "Approved football game picks only; no props, futures, or model/stake boost. "
+            "ESPN audit Sep–Oct 2026: 61–49–4, +10.33 published units after correcting "
+            "Buffalo -7 from win to push. Historical prices are provider-reported. "
+            "Current market references are consensus, not executable sportsbook quotes."
+        ),
         "Signal Odds": "AI-driven picks plus live cross-book arbitrage detection.",
         "WiseGuyTeam": "Sharp-money report — which side the bigger bets are leaning.",
         "FavoredProps": "Independent multi-book prop comparison — real book count and avg odds.",

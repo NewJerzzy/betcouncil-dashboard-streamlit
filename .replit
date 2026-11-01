@@ -16,6 +16,10 @@ author = "agent"
 task = "workflow.run"
 args = "ESPN Opening Lines Cron"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "BetCouncil Dashboard"
+
 [[workflows.workflow]]
 name = "ESPN Opening Lines Cron"
 author = "agent"
@@ -27,6 +31,22 @@ args = "python scripts/espn_cron_runner.py"
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow]]
+name = "BetCouncil Dashboard"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m streamlit run app.py --server.address 0.0.0.0 --server.port 5000 --server.headless true"
+waitForPort = 5000
+
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 300000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
