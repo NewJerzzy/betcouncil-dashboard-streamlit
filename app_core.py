@@ -7153,9 +7153,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         # "Pittsburgh Pirates -1.5" that crashed float(lock["line"]) in the
         # Check Results resolver and silently aborted that date's entire
         # event-processing pass (bug found 2026-07-12).
-        spread_str = f"{_gl_consensus['spread']['consensus']:+.1f}"
+        _sp_c = float(_gl_consensus['spread']['consensus'])
+        # The consensus is a weighted mean across books, so it can land on
+        # numbers no book posts (e.g. -2.1 from -2 and -2.5). Football and
+        # basketball lines move in half-point steps: snap to the nearest .5.
+        if sport in ("NFL", "NCAAF", "CFB", "NBA", "WNBA", "NCAAB"):
+            _sp_c = round(_sp_c * 2) / 2.0
+        spread_str = f"{_sp_c:+.1f}"
     if _gl_consensus.get("total", {}).get("consensus") is not None:
         total_str = _gl_consensus["total"]["consensus"]
+        if sport in ("NFL", "NCAAF", "CFB", "NBA", "WNBA", "NCAAB"):
+            try:
+                total_str = round(float(total_str) * 2) / 2.0
+            except (TypeError, ValueError):
+                pass
     if _gl_consensus.get("moneyline", {}).get("home_consensus_prob") is not None:
         # Keep the original market home_ml/away_ml for display/EV math below —
         # the consensus probability is exposed separately via _gl_consensus
