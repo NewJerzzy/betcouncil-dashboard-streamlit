@@ -23,5 +23,6 @@ External API findings verified 2026-11-01:
 - Upcoming-game spreads/totals may lack accompanying prices, and `sportsbook=Consensus` is not an executable bookmaker quote. Retrieval time is not a provider quote-update timestamp.
 - The biggest-movers response can put totals into fields named `currentSpread` and `openingSpread`. Do not consume it as a spread-only feed without market-type validation.
 - Some pick titles describe half-game bets even when `bet_type=total`; titles must also be checked. Team totals without an identified team are not independently gradable from the displayed selection.
+- In dated prop history, the source `game_time` can differ materially from ESPN's event kickoff, and `posted_at` can be at or after kickoff. Compare the original publication timestamp to the resolved ESPN event time before treating a selection as pregame; keep missing player/event/stat matches unresolved.
 - `https://api.thebettinginsider.com/v1/openapi.json` is a real public OpenAPI specification. The developer REST API and hosted MCP provide completed-game historical data only, require an API key, and do not include live picks/splits/props. Website membership and developer API access are separate.
 - No matching standalone Postman/Apidog collection or public GitHub implementation was located. The actual OpenAPI specification is the more reliable reference.

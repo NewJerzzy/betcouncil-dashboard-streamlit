@@ -30,15 +30,15 @@ storage_version_token = "1793552204067259"
 content_type = "text/html"
 
 [[outputs]]
-id = "iD1ibG5ei3eecYyk5gqiD"
-uri = "file://generated-artifacts/bettinginsider-other-experts-audit.html"
+id = "yrJMfMD3Y4CrhSNBeNjgN"
+uri = "file://generated-artifacts/bettinginsider-prop-audit.html"
 type = "html"
-title = "All remaining Betting Insider experts — ESPN audit"
-description = "859 records reviewed, per-expert add-or-skip decisions, verified profitable scopes, and pick-by-pick ESPN evidence."
-logical_id = "693199d0-25d5-43db-bfde-de515b332689"
-content_hash = "sha256:a4c6668b93ffa54f3d728c77a08f04cc2ffcf14364d9ca86daeb1d311c32bfce"
-size = 261859
-mtime_ms = 1793552911288
-storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2e8e33dc-341d-4e7f-952c-58c3a2fa0606/693199d0-25d5-43db-bfde-de515b332689/62ff35cd-244c-4d29-b1b7-4d5f701d425e"
-storage_version_token = "1793552978854901"
+title = "Betting Insider Player-Prop Audit"
+description = "Record-by-record review of 516 dated props against ESPN box scores, including losses, unsupported picks, publication-time flags, current pending props, and the add-or-skip decision."
+logical_id = "c60676de-067b-457f-b6ac-5fc39d5223b9"
+content_hash = "sha256:5baab42e245c35a85a8ae6a489f486c46365deba2824f8ee92066e3071da1f82"
+size = 193753
+mtime_ms = 1793553220881
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:2e8e33dc-341d-4e7f-952c-58c3a2fa0606/c60676de-067b-457f-b6ac-5fc39d5223b9/f0e6905f-811d-4434-8799-6d2a44417291"
+storage_version_token = "1793553255960807"
 content_type = "text/html"
