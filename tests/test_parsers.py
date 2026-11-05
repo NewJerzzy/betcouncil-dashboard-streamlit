@@ -9,8 +9,8 @@ trial and error, and PrizePicks' JSON:API nesting needed exact unwrapping.
 Each fixture in tests/fixtures/ is trimmed from a real response captured
 live during this session (not hand-invented), so a parser passing these
 tests means it handles the real shape, not an idealized one. Run with:
-    pip install pytest --break-system-packages
-    pytest tests/test_parsers.py -v
+    uv pip install --target /tmp/betcouncil-test-deps -r requirements-dev.txt
+    PYTHONPATH="/tmp/betcouncil-test-deps${PYTHONPATH:+:$PYTHONPATH}" python -m pytest tests/test_parsers.py -v
 """
 
 import json
