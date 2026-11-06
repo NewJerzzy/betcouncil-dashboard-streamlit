@@ -8706,7 +8706,7 @@ with tabs[8]:
                 _pbr_df = _pbr_pd.DataFrame(_pbr_rows)
                 _pbr_sort = st.selectbox("Sort by", ["⭐", "EV", "Diff"], key="_pbr_sort")
                 _pbr_df = _pbr_df.sort_values(_pbr_sort, ascending=False, key=lambda c: c.str.len() if _pbr_sort == "⭐" else c)
-                st.dataframe(_pbr_df, use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_pbr_df), unsafe_allow_html=True)
                 st.caption(f"{len(_pbr_df)} props · BettingPros")
             else:
                 st.caption("No props meet the current filters.")
@@ -13608,7 +13608,7 @@ with tabs[2]:
                         "Def Pressure Generated%": f"{_m.get('def_pressure_rate_generated', 0):.0%}" if _m.get("def_pressure_rate_generated") is not None else "—",
                         "Real Plays": _m.get("real_off_plays", 0),
                     })
-                st.dataframe(pd.DataFrame(_nfl_mm_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_mm_rows)), unsafe_allow_html=True)
             else:
                 st.caption("No real data yet — the daily harvester hasn't run or completed its first real cycle.")
 
@@ -13643,7 +13643,7 @@ with tabs[2]:
                         "# Books": len(_book_odds),
                         "Opp TD Allowed Rank": _opp_td_rank if _opp_td_rank is not None else "—",
                     })
-                st.dataframe(pd.DataFrame(_nfl_tds_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_tds_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_nfl_tds_items)} real props. Hit-rate history omitted — not yet populated this early in the season.")
             else:
                 st.caption("No real data yet — check back closer to game day.")
@@ -13677,7 +13677,7 @@ with tabs[2]:
                         "Best Price": f"{_best_book}: {_best_price:+.0f}" if _best_book else "—",
                         "# Books": len(_book_odds),
                     })
-                st.dataframe(pd.DataFrame(_nfl_props_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_props_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_nfl_props_items)} real props.")
             else:
                 st.caption("No real data yet — check back closer to game day.")
@@ -13705,7 +13705,7 @@ with tabs[2]:
                         "Target%": _b.get("tgt", "—"),
                         "Prior Target%": _b.get("lastTgt", "—"),
                     })
-                st.dataframe(pd.DataFrame(_nfl_bf_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_bf_rows)), unsafe_allow_html=True)
                 _nfl_bf_week = (_nfl_bf_raw or {}).get("week", "")
                 st.caption(f"{len(_nfl_bf_items)} real players" + (f" — week {_nfl_bf_week}" if _nfl_bf_week else "") + ".")
             else:
@@ -13733,7 +13733,7 @@ with tabs[2]:
                         "Edge": f"{_d.get('edge', 0):+.1%}",
                         "Signal": _d.get("direction", ""),
                     })
-                st.dataframe(pd.DataFrame(_poly_div_rows), use_container_width=True, hide_index=True, height=350)
+                st.markdown(_bc_df_html(pd.DataFrame(_poly_div_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_poly_div_items)} real market(s) showing a 5%+ gap right now.")
             else:
                 st.caption("No real divergence found right now, or no matching Polymarket/sportsbook data available for this sport.")
