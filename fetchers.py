@@ -6826,7 +6826,19 @@ def scrape_prizepicks(sport):
                     if _pp_so_gist and _pp_so_gist.get("exhausted") and _pp_so_gist.get("month") == datetime.now().strftime("%Y-%m"):
                         _pp_so_exhausted = True
                         st.session_state["scrapeops_exhausted"] = True
-                if not _cffi_success and SCRAPEOPS_KEY and not _pp_so_exhausted:
+                # CREDIT-BURN FIX (2026-11): this residential-proxy call ran for every
+                # sport whose Gist entry was missing/stale (off-season sports, 1H/2H/Q
+                # variants, anything >100 min old), up to 6 URLs each, per board load.
+                # PrizePicks answers these with a captcha/HTML page (HTTP 200) that was
+                # never flagged as a failure, so every attempt kept spending credits
+                # for nothing. prizepicks_refresh.yml already supplies the data, so the
+                # paid proxy is now opt-in (st.secrets PP_USE_SCRAPEOPS = "true") and
+                # shuts itself off for the session after the first non-JSON reply.
+                _pp_so_allowed = (
+                    str(st.secrets.get("PP_USE_SCRAPEOPS", "false")).lower() == "true"
+                    and not st.session_state.get("pp_scrapeops_blocked", False)
+                )
+                if not _cffi_success and SCRAPEOPS_KEY and not _pp_so_exhausted and _pp_so_allowed:
                     try:
                         from urllib.parse import quote as _q
                         _so_url = (
@@ -6847,6 +6859,7 @@ def scrape_prizepicks(sport):
                             # Check for captcha response (returns HTML not JSON)
                             content_type = resp.headers.get("content-type", "")
                             if "html" in content_type or resp.text.strip().startswith("<"):
+                                st.session_state["pp_scrapeops_blocked"] = True
                                 continue
                             data = resp.json()
                             if data and data.get("data"):
