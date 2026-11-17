@@ -239,34 +239,116 @@ def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
 
 
+def _name_aliases(values: list[str]) -> set[str]:
+    aliases = set()
+    suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
+    for value in values:
+        normalized = _norm(value)
+        if normalized:
+            aliases.add(normalized)
+        tokens = re.findall(r"[a-z0-9]+", str(value or "").lower())
+        original_tokens = list(tokens)
+        while tokens and tokens[-1] in suffixes:
+            tokens.pop()
+        if len(tokens) >= 2:
+            aliases.add(tokens[0][0] + tokens[-1])
+            aliases.add(tokens[-1])
+            if len(original_tokens) > len(tokens):
+                aliases.add(tokens[0][0] + "".join(original_tokens[1:]))
+                aliases.add("".join(original_tokens[1:]))
+    return aliases
+
+
+def _one_edit_apart(left: str, right: str) -> bool:
+    if abs(len(left) - len(right)) > 1 or left == right:
+        return False
+    i = j = edits = 0
+    while i < len(left) and j < len(right):
+        if left[i] == right[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(left) > len(right):
+            i += 1
+        elif len(right) > len(left):
+            j += 1
+        else:
+            i += 1
+            j += 1
+    edits += (len(left) - i) + (len(right) - j)
+    return edits == 1
+
+
 def _player_candidates(pick: dict, summary: dict) -> list[dict]:
     title = _norm(pick.get("bet_title", ""))
-    exact_initial_matches = {}
-    surname_only_matches = {}
+    matches = {}
     for team in summary.get("boxscore", {}).get("players", []):
         for category in team.get("statistics", []):
             for row in category.get("athletes", []):
                 athlete = row.get("athlete", {})
-                first = _norm(athlete.get("firstName", ""))
-                last = _norm(athlete.get("lastName", ""))
-                short = _norm(athlete.get("shortName", ""))
                 key = athlete.get("id") or _norm(athlete.get("displayName", ""))
-                initial_last = first[:1] + last if first and last else ""
-                accepted = {value for value in (short, initial_last) if value}
+                aliases = _name_aliases([
+                    athlete.get("shortName", ""),
+                    athlete.get("displayName", ""),
+                    athlete.get("fullName", ""),
+                    " ".join((athlete.get("firstName", ""), athlete.get("lastName", ""))),
+                ])
                 info = {
-                        "id": athlete.get("id"), "name": athlete.get("displayName") or athlete.get("fullName"),
-                        "short_name": athlete.get("shortName") or initial_last,
-                        "team": team.get("team", {}).get("displayName"),
-                    }
-                if any(title.startswith(value) for value in accepted):
-                    exact_initial_matches[key] = info
-                if last and title.startswith(last):
-                    surname_only_matches[key] = info
-    if exact_initial_matches:
-        return list(exact_initial_matches.values())
-    # A surname-only title is accepted only when it identifies one player in
-    # the entire ESPN box score; otherwise the record remains ambiguous.
-    return list(surname_only_matches.values()) if len(surname_only_matches) == 1 else []
+                    "id": athlete.get("id"),
+                    "name": athlete.get("displayName") or athlete.get("fullName"),
+                    "short_name": athlete.get("shortName"),
+                    "team": team.get("team", {}).get("displayName"),
+                }
+                exact = [alias for alias in aliases if alias and title.startswith(alias)]
+                if exact:
+                    matches[key] = (max(map(len, exact)), "ESPN name", info)
+
+    if matches:
+        best = max(score for score, _, _ in matches.values())
+        return [
+            {**info, "match_method": method}
+            for score, method, info in matches.values() if score == best
+        ]
+
+    # Permit one-character spelling variants only when they identify one
+    # player in the entire ESPN box score. Do not use surname-only fuzzy matches.
+    fuzzy = {}
+    for team in summary.get("boxscore", {}).get("players", []):
+        for category in team.get("statistics", []):
+            for row in category.get("athletes", []):
+                athlete = row.get("athlete", {})
+                key = athlete.get("id") or _norm(athlete.get("displayName", ""))
+                names = [
+                    athlete.get("shortName", ""),
+                    athlete.get("displayName", ""),
+                    athlete.get("fullName", ""),
+                    " ".join((athlete.get("firstName", ""), athlete.get("lastName", ""))),
+                ]
+                fuzzy_aliases = set()
+                for name in names:
+                    tokens = re.findall(r"[a-z0-9]+", str(name or "").lower())
+                    while tokens and tokens[-1] in {"jr", "sr", "ii", "iii", "iv", "v"}:
+                        tokens.pop()
+                    if len(tokens) >= 2:
+                        fuzzy_aliases.add(tokens[0][0] + tokens[-1])
+                for alias in fuzzy_aliases:
+                    for length in range(max(2, len(alias) - 1), len(alias) + 2):
+                        prefix = title[:length]
+                        if _one_edit_apart(alias, prefix):
+                            fuzzy[key] = {
+                                "id": athlete.get("id"),
+                                "name": athlete.get("displayName") or athlete.get("fullName"),
+                                "short_name": athlete.get("shortName"),
+                                "team": team.get("team", {}).get("displayName"),
+                                "match_method": "unique one-character ESPN name match",
+                            }
+                            break
+                    if key in fuzzy:
+                        break
+    return list(fuzzy.values()) if len(fuzzy) == 1 else []
 
 
 def _categories_for_player(summary: dict, athlete_id: str) -> list[tuple[str, str, dict]]:
@@ -373,21 +455,23 @@ def _line(pick: dict) -> tuple[str | None, float | None, str]:
         or len(selection_markers) > 1
     ):
         return None, None, "multi-leg or parlay selection; not a standalone player prop"
+    if re.search(r"\b1st\s+td\b", title, re.I):
+        return "first_td", None, ""
+    if re.search(r"\blast\s+td\b", title, re.I):
+        return "last_td", None, ""
+    if re.search(r"\b(?:anytime\s+td|td)\s*$", title, re.I):
+        return "yes", None, ""
     match = re.search(r"\b(over|under|o|u)\s*(\d+(?:\.\d+)?)\b", title, re.I)
     if match:
         return ("over" if match.group(1).lower() in ("over", "o") else "under", float(match.group(2)), "")
     match = re.search(
         r"\b(\d+(?:\.\d+)?)\s*(?:\+|plus)\s*"
+        r"(?:(?:passing|rushing|receiving)\s*)?"
         r"(?:ks?|assists?|points?|yards?|receptions?|sbs?|hrs?|hits?|bases?|er)\b",
         title, re.I,
     )
     if match:
         return "at_least", float(match.group(1)), ""
-    if re.search(r"\banytime\s+td\b", title, re.I):
-        if re.search(r"\bno\b", title, re.I):
-            return "no", None, ""
-        if re.search(r"\byes\b", title, re.I):
-            return "yes", None, ""
     return None, None, "unsupported or ambiguous selection/line"
 
 
@@ -446,6 +530,22 @@ def _extract_stat(pick: dict, summary: dict, player_id: str, market: tuple[str, 
         if any(value is None for value in values):
             return None, "missing MLB H/R/RBI"
         return sum(values), "ESPN H + R + RBI"
+    if family == "basketball" and stat == "3PT":
+        raw = _category_raw(categories, "basketball", "3PT")
+        if raw is None:
+            return None, "ESPN box-score label basketball/3PT unavailable"
+        made = _as_number(str(raw).split("-", 1)[0])
+        if made is None:
+            return None, "ESPN 3PT made/attempt value unavailable"
+        return made, "ESPN 3PT made count"
+    if (
+        family == "batting" and stat == "BB"
+        and str(pick.get("sport") or "").upper() == "MLB"
+        and not re.search(r"\b(?:batter|batting)\b", str(pick.get("bet_title") or ""), re.I)
+        and _category_raw(categories, "batting", "BB") is None
+        and _category_raw(categories, "pitching", "BB") is not None
+    ):
+        return _category_value(categories, "pitching", "BB"), "ESPN pitching BB for matched pitcher"
     if family in ("passing", "rushing", "receiving", "defensive", "basketball", "batting", "pitching"):
         category = family
         label = stat
@@ -462,6 +562,45 @@ def _extract_stat(pick: dict, summary: dict, player_id: str, market: tuple[str, 
             return None, f"ESPN box-score label {category}/{label} unavailable"
         return value, f"ESPN {category} {label}"
     return None, "unsupported ESPN stat mapping"
+
+
+def _td_scorers(summary: dict) -> list[str]:
+    scorers = []
+    for play in summary.get("scoringPlays", []):
+        kind = str(play.get("type", {}).get("text") or "")
+        text = str(play.get("text") or "")
+        if "touchdown" not in kind.lower():
+            continue
+        match = re.match(r"^(.+?)\s+\d+\s+yd\b", text, re.I)
+        if match:
+            scorers.append(match.group(1).strip())
+    return scorers
+
+
+def _is_selected_td_position(summary: dict, player: dict, selection: str) -> bool | None:
+    scorers = _td_scorers(summary)
+    if not scorers:
+        return None
+    target = _norm(player.get("name"))
+    target_aliases = _name_aliases([player.get("name", "")])
+    chosen = scorers[0] if selection == "first_td" else scorers[-1]
+    chosen_norm = _norm(chosen)
+    return chosen_norm == target or chosen_norm in target_aliases
+
+
+def _unique_offensive_player(candidates: list[dict], summary: dict) -> dict | None:
+    offensive = []
+    defensive_only = []
+    for candidate in candidates:
+        categories = _categories_for_player(summary, str(candidate.get("id")))
+        names = {name.lower() for name, _, _ in categories if name}
+        if names and names <= {"defensive"}:
+            defensive_only.append(candidate)
+        else:
+            offensive.append(candidate)
+    if len(offensive) == 1 and defensive_only:
+        return {**offensive[0], "match_method": "unique ESPN offensive-stat category match"}
+    return None
 
 
 def _category_raw(categories: list, category: str, label: str) -> str | None:
@@ -509,6 +648,14 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
     reason = event_reason or ""
     if event and not event_reason and summary:
         candidates = _player_candidates(pick, summary)
+        if (
+            len(candidates) > 1
+            and str(pick.get("sport") or "").upper() in ("NFL", "CFB", "NCAAF")
+            and market and market[0] in ("passing", "rushing", "receiving")
+        ):
+            role_match = _unique_offensive_player(candidates, summary)
+            if role_match:
+                candidates = [role_match]
         if len(candidates) == 1:
             player = candidates[0]
             player_id = player.get("id")
@@ -516,7 +663,24 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
                 player_reason = "ESPN player id missing"
             elif not market:
                 player_reason = "unsupported or ambiguous player stat"
+            elif selection in ("first_td", "last_td"):
+                td_position = _is_selected_td_position(summary, player, selection)
+                if td_position is None:
+                    player_reason = "ESPN touchdown scoring-play order unavailable"
+                else:
+                    actual = 1.0 if td_position else 0.0
+                    player_reason = f"ESPN {selection.replace('_', ' ')} scoring play"
+                    evidence = player_reason
             else:
+                categories = _categories_for_player(summary, player_id)
+                if (
+                    str(pick.get("sport") or "").upper() == "MLB"
+                    and market == ("batting", "BB")
+                    and not re.search(r"\b(?:batter|batting)\b", str(pick.get("bet_title") or ""), re.I)
+                    and _category_raw(categories, "batting", "BB") is None
+                    and _category_raw(categories, "pitching", "BB") is not None
+                ):
+                    market = ("pitching", "BB")
                 actual, player_reason = _extract_stat(pick, summary, player_id, market)
                 evidence = player.get("name") or ""
         elif len(candidates) > 1:
@@ -542,6 +706,8 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
             verdict = "win" if actual > 0 else "loss"
         elif selection == "no":
             verdict = "win" if actual == 0 else "loss"
+        elif selection in ("first_td", "last_td"):
+            verdict = "win" if actual > 0 else "loss"
         else:
             verdict = "unresolved"
     else:
@@ -596,6 +762,7 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
         "game_id": pick.get("game_id"), "espn_event_id": event.get("id") if event else None,
         "espn_url": f"https://www.espn.com/{path.split('/')[0]}/game/_/gameId/{event['id']}" if event and path else None,
         "player": (player or {}).get("name"), "selection": pick.get("bet_title"),
+        "player_match_evidence": (player or {}).get("match_method"),
         "line": line, "direction": selection, "stat_type": pick.get("stat_type"),
         "verified_stat": actual, "stat_evidence": player_reason,
         "source_result": pick.get("result"), "independent_result": verdict,
@@ -655,21 +822,106 @@ def _summarize(rows: list[dict]) -> dict:
     }
 
 
+def _pregame_performance(rows: list[dict]) -> dict:
+    pregame = [r for r in rows if r["published_at_or_after_espn_start"] is False]
+    resolved = [r for r in pregame if r["independent_result"] in ("win", "loss", "push")]
+
+    def groups(key_fn):
+        grouped = defaultdict(list)
+        for row in resolved:
+            key = key_fn(row)
+            if key:
+                grouped[key].append(row)
+        return {key: _measure(group) for key, group in sorted(grouped.items())}
+
+    by_expert = groups(lambda row: row["expert"])
+    by_expert_sport = groups(
+        lambda row: f'{row["expert"]} / {str(row["sport"]).upper()}'
+    )
+    by_market = groups(
+        lambda row: " / ".join((
+            row["expert"], str(row["sport"]).upper(),
+            row["market_mapping"] or "unmapped market",
+        ))
+    )
+    coverage_by_expert = {}
+    for expert in sorted({row["expert"] for row in rows}):
+        cohort = [row for row in pregame if row["expert"] == expert]
+        coverage_by_expert[expert] = {
+            "records": len(cohort),
+            "resolved": sum(row["independent_result"] in ("win", "loss", "push") for row in cohort),
+            "unresolved": sum(row["independent_result"] == "unresolved" for row in cohort),
+        }
+
+    missing_stats = defaultdict(list)
+    for row in pregame:
+        if row["independent_result"] != "unresolved":
+            continue
+        reason = row.get("unresolved_reason") or ""
+        if reason.startswith("ESPN box-score label ") or reason.startswith("missing rushing/receiving box-score stat"):
+            missing_stats[(str(row["sport"]).upper(), row.get("market_mapping") or "unmapped market", reason)].append(row)
+    stat_availability = []
+    for (sport, market, reason), affected in sorted(missing_stats.items()):
+        if market == "batting/TB":
+            finding = (
+                "ESPN's event batting table has no total-bases field for these records. "
+                "They remain unresolved; rounded batting totals were not used to infer TB."
+            )
+        elif market == "batting/K":
+            finding = (
+                "The matched ESPN player line is not exposed under the requested batting category. "
+                "A pitching strikeout total is not substituted for a batter-strikeout market."
+            )
+        else:
+            finding = (
+                "The requested ESPN box-score category or label is absent for these event/player rows. "
+                "A missing field is not treated as a zero."
+            )
+        stat_availability.append({
+            "sport": sport,
+            "market": market,
+            "unresolved_rows": len(affected),
+            "espn_field_finding": finding,
+            "unresolved_reason": reason,
+        })
+
+    return {
+        "basis": "only independently resolved picks published before ESPN event start",
+        "eligible_pick_count": len(resolved),
+        "pregame_record_count": len(pregame),
+        "unresolved_pregame_count": len(pregame) - len(resolved),
+        "by_expert": by_expert,
+        "by_expert_sport": by_expert_sport,
+        "by_market": by_market,
+        "coverage_by_expert": coverage_by_expert,
+        "espn_stat_availability": stat_availability,
+        "unresolved_reason_counts": dict(sorted(Counter(
+            row.get("unresolved_reason") or "unspecified"
+            for row in pregame if row["independent_result"] == "unresolved"
+        ).items())),
+    }
+
+
 def _report(result: dict) -> None:
     (OUT / "bettinginsider-prop-audit.json").write_text(json.dumps(result, indent=2))
-    mike_nfl = result["breakdown_by_expert_sport"].get("Insider Mike / NFL", {})
-    mike_mlb = result["breakdown_by_expert_sport"].get("Insider Mike / MLB", {})
-    invisible_nfl = result["breakdown_by_expert_sport"].get("Invisible Insider / NFL", {})
-    wong = result["summary"].get("Michael Wong", {})
+    performance = result["pregame_performance"]
+    mike_nfl = performance["by_expert_sport"].get("Insider Mike / NFL", {})
+    invisible_nfl = performance["by_expert_sport"].get("Invisible Insider / NFL", {})
+    wong = performance["by_expert"].get("Michael Wong", {})
     mike_outs = _measure([
         row for row in result["rows"]
         if row["expert"] == "Insider Mike" and str(row["sport"]).upper() == "MLB"
         and row["market_mapping"] == "pitching/IP:outs"
         and row["published_at_or_after_espn_start"] is False
+        and row["independent_result"] in ("win", "loss", "push")
     ])
     current_mike = sum(pick["bettor_name"] == "Insider Mike" for pick in result["current_pending_props"])
     current_invisible = sum(pick["bettor_name"] == "Invisible Insider" for pick in result["current_pending_props"])
-    mike_mlb_late = mike_mlb.get("records", 0) - mike_mlb.get("pregame", {}).get("records", 0)
+    mike_mlb_late = sum(
+        row["expert"] == "Insider Mike" and str(row["sport"]).upper() == "MLB"
+        and row["published_at_or_after_espn_start"] is True
+        for row in result["rows"]
+    )
     current_mike_nfl = sum(
         pick["bettor_name"] == "Insider Mike" and str(pick.get("sport", "")).upper() == "NFL"
         for pick in result["current_pending_props"]
@@ -678,46 +930,45 @@ def _report(result: dict) -> None:
         f"<p><strong>Admission decision: skip additional prop experts for Predictions.</strong> "
         f"The current slate has {current_mike} pending Mike props ({current_mike_nfl} NFL) and "
         f"{current_invisible} pending Invisible Insider props. Mike's pregame NFL record is "
-        f"{mike_nfl.get('pregame', {}).get('wins', 0)}-{mike_nfl.get('pregame', {}).get('losses', 0)} "
-        f"across {mike_nfl.get('pregame', {}).get('graded', 0)} ESPN-graded picks, with "
-        f"{mike_nfl.get('pregame', {}).get('recorded_stake_roi_pct')}% ROI on source-reported stakes. "
+        f"{mike_nfl.get('wins', 0)}-{mike_nfl.get('losses', 0)} "
+        f"across {mike_nfl.get('graded', 0)} independently resolved picks, with "
+        f"{mike_nfl.get('recorded_stake_roi_pct')}% ROI on source-reported stakes. "
         f"His full MLB cohort has {mike_mlb_late} rows published at/after ESPN kickoff; among "
-        f"timestamped pregame rows, {mike_mlb.get('pregame', {}).get('unresolved', 0)} remain unresolved. "
+        f"timestamped pregame rows, "
+        f"{performance['coverage_by_expert'].get('Insider Mike', {}).get('unresolved', 0)} remain unresolved. "
         f"The strongest isolated slice "
         f"(pitcher outs) is only {mike_outs['wins']}-{mike_outs['losses']} over {mike_outs['graded']} "
         f"graded picks, not a current-slate scope. Invisible Insider's pregame NFL record is "
-        f"{invisible_nfl.get('pregame', {}).get('wins', 0)}-"
-        f"{invisible_nfl.get('pregame', {}).get('losses', 0)} with "
-        f"{invisible_nfl.get('pregame', {}).get('recorded_stake_roi_pct')}% ROI. "
-        f"Michael Wong's total record is {wong.get('wins', 0)}-{wong.get('losses', 0)} with "
-        f"{wong.get('unresolved', 0)} unresolved. No prop expert was added, and no observation-only "
+        f"{invisible_nfl.get('wins', 0)}-{invisible_nfl.get('losses', 0)} with "
+        f"{invisible_nfl.get('recorded_stake_roi_pct')}% ROI. "
+        f"Michael Wong's resolved pregame record is {wong.get('wins', 0)}-{wong.get('losses', 0)} with "
+        f"{performance['coverage_by_expert'].get('Michael Wong', {}).get('unresolved', 0)} unresolved. "
+        f"No prop expert was added, and no observation-only "
         f"trial was created.</p>"
     )
     summary_rows = []
-    for expert, summary in result["summary"].items():
-        pre = summary["pregame"]
+    for expert, summary in performance["by_expert"].items():
         cells = "".join(f"<td>{html.escape(str(value))}</td>" for value in (
-            expert, summary["records"], summary["graded"], summary["wins"], summary["losses"],
-            summary["pushes"], summary["unresolved"], summary["win_rate_ex_pushes_pct"],
-            summary["net_profit_units"], summary["recorded_stake_roi_pct"],
-            pre["graded"], f'{pre["wins"]}-{pre["losses"]}-{pre["pushes"]}',
-            pre["win_rate_ex_pushes_pct"], pre["net_profit_units"],
-            pre["recorded_stake_roi_pct"], pre["one_unit_flat_profit"], pre["one_unit_flat_roi_pct"],
-            summary["late_publications"], summary["source_result_disagreements"],
+            expert, summary["graded"], summary["wins"], summary["losses"],
+            summary["pushes"], summary["win_rate_ex_pushes_pct"],
+            summary["risk_units"], summary["net_profit_units"],
+            summary["recorded_stake_roi_pct"], summary["one_unit_flat_profit"],
+            summary["one_unit_flat_roi_pct"],
         ))
         summary_rows.append(f"<tr>{cells}</tr>")
     detail_rows = []
     for row in result["rows"]:
         cells = [
             row.get("expert"), row.get("sport"), row.get("event"), row.get("player"),
+            row.get("player_match_evidence"),
             row.get("selection"), row.get("original_odds"), row.get("original_stake_units"),
             row.get("published_at"), row.get("event_start_espn"),
             row.get("published_at_or_after_espn_start"), row.get("verified_stat"),
             row.get("source_result"), row.get("independent_result"), row.get("unresolved_reason"),
             f'<a href="{html.escape(row["espn_url"], quote=True)}">ESPN</a>' if row.get("espn_url") else "",
         ]
-        detail_rows.append("<tr>" + "".join(f"<td>{v if i == 14 else html.escape(str(v if v is not None else ''))}</td>" for i, v in enumerate(cells)) + "</tr>")
-    headers = ("Expert", "Sport", "Event", "Matched player", "Original selection and line", "Price", "Stake", "Published UTC", "ESPN start UTC", "Late?", "ESPN stat", "Site result", "ESPN grade", "Unresolved reason", "Box score")
+        detail_rows.append("<tr>" + "".join(f"<td>{v if i == 15 else html.escape(str(v if v is not None else ''))}</td>" for i, v in enumerate(cells)) + "</tr>")
+    headers = ("Expert", "Sport", "Event", "Matched player", "Player match evidence", "Original selection and line", "Price", "Stake", "Published UTC", "ESPN start UTC", "Late?", "ESPN stat", "Site result", "ESPN grade", "Unresolved reason", "Box score")
     header = "".join(f"<th>{html.escape(x)}</th>" for x in headers)
     current_rows = []
     for row in result["current_pending_props"]:
@@ -727,15 +978,38 @@ def _report(result: dict) -> None:
                         "units", "posted_at", "game_time")
         ) + "</tr>")
     sport_rows = []
-    for key, summary in result["breakdown_by_expert_sport"].items():
-        pre = summary["pregame"]
+    for key, summary in performance["by_expert_sport"].items():
         sport_rows.append("<tr>" + "".join(
             f"<td>{html.escape(str(value))}</td>"
             for value in (
-                key, pre["records"], pre["graded"],
-                f'{pre["wins"]}-{pre["losses"]}-{pre["pushes"]}',
-                pre["win_rate_ex_pushes_pct"], pre["net_profit_units"],
-                pre["recorded_stake_roi_pct"], pre["unresolved"],
+                key, summary["graded"], f'{summary["wins"]}-{summary["losses"]}-{summary["pushes"]}',
+                summary["win_rate_ex_pushes_pct"], summary["net_profit_units"],
+                summary["recorded_stake_roi_pct"],
+            )
+        ) + "</tr>")
+    market_rows = []
+    for key, summary in performance["by_market"].items():
+        market_rows.append("<tr>" + "".join(
+            f"<td>{html.escape(str(value))}</td>"
+            for value in (
+                key, summary["graded"], f'{summary["wins"]}-{summary["losses"]}-{summary["pushes"]}',
+                summary["win_rate_ex_pushes_pct"], summary["net_profit_units"],
+                summary["recorded_stake_roi_pct"],
+            )
+        ) + "</tr>")
+    coverage_rows = []
+    for expert, coverage in performance["coverage_by_expert"].items():
+        coverage_rows.append("<tr>" + "".join(
+            f"<td>{html.escape(str(value))}</td>"
+            for value in (expert, coverage["records"], coverage["resolved"], coverage["unresolved"])
+        ) + "</tr>")
+    stat_rows = []
+    for item in performance["espn_stat_availability"]:
+        stat_rows.append("<tr>" + "".join(
+            f"<td>{html.escape(str(value))}</td>"
+            for value in (
+                item["sport"], item["market"], item["unresolved_rows"],
+                item["unresolved_reason"], item["espn_field_finding"],
             )
         ) + "</tr>")
     html_doc = f"""<!doctype html><meta charset="utf-8"><title>Betting Insider Prop Audit</title>
@@ -744,9 +1018,17 @@ def _report(result: dict) -> None:
 <p class="note">Dated website history from {result["window"][0]} through {result["window"][1]}; source /api/picks/list?mode=today&date=YYYY-MM-DD; independent ESPN event and box-score grades. The website's historical /v1 developer API was not used as a live or graded-pick source. Original title, price, stake and publication timestamp are retained. Picks published at or after ESPN's listed kickoff are flagged; unresolved rows are not counted as wins.</p>
 <p class="note">Records audited: {result["record_count"]}; date requests successful: {result["successful_dates"]}/{result["requested_dates"]}; ESPN retrieval errors: {len(result["espn_errors"])}. ESPN event and box-score data are outcome evidence only, not betting-market evidence.</p>
 {decision}
-<table class="summary"><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert", "Rows", "All graded", "W", "L", "P", "Unresolved", "All W-L %", "All net units", "All ROI %", "Pregame graded", "Pregame W-L-P", "Pregame W-L %", "Pregame net units", "Pregame ROI %", "Pregame flat 1u", "Pregame flat ROI %", "Late post", "Result disagreements"))}</tr></thead><tbody>{''.join(summary_rows)}</tbody></table>
-<h2>Pregame outcomes by expert and sport</h2>
-<table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert / sport", "Rows", "Graded", "W-L-P", "W-L %", "Net units", "Stake ROI %", "Unresolved"))}</tr></thead><tbody>{''.join(sport_rows)}</tbody></table>
+<h2>Pregame performance from independently resolved picks only</h2>
+<p class="note">All results below exclude picks published at or after ESPN kickoff, picks with unknown kickoff timing, and any pick that could not be independently graded from ESPN evidence. Unresolved picks remain listed below and are not included in expert or market totals.</p>
+<table class="summary"><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert", "Resolved pregame picks", "W", "L", "P", "Win rate %", "Risk units", "Net units", "Stake ROI %", "Flat 1u profit", "Flat 1u ROI %"))}</tr></thead><tbody>{''.join(summary_rows)}</tbody></table>
+<h3>Expert and sport</h3>
+<table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert / sport", "Resolved picks", "W-L-P", "Win rate %", "Net units", "Stake ROI %"))}</tr></thead><tbody>{''.join(sport_rows)}</tbody></table>
+<h3>Expert, sport, and market</h3>
+<table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert / sport / market", "Resolved picks", "W-L-P", "Win rate %", "Net units", "Stake ROI %"))}</tr></thead><tbody>{''.join(market_rows)}</tbody></table>
+<h2>Pregame audit coverage</h2>
+<table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert", "Pregame records", "Independently resolved", "Unresolved"))}</tr></thead><tbody>{''.join(coverage_rows)}</tbody></table>
+<h2>ESPN box-score fields missing from unresolved records</h2>
+<table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Sport", "Market", "Unresolved rows", "ESPN reason", "Finding"))}</tr></thead><tbody>{''.join(stat_rows)}</tbody></table>
 <h2>Current live pending props</h2>
 <p class="note">Snapshot from /api/picks/list?mode=all. Pending picks are listed for review and are not included in historical performance.</p>
 <div class="details"><table><thead><tr>{''.join(f'<th>{x}</th>' for x in ("Expert", "Sport", "Event", "Published selection", "Original price", "Original stake", "Published UTC", "Source start UTC"))}</tr></thead><tbody>{''.join(current_rows)}</tbody></table></div>
@@ -761,16 +1043,17 @@ def main() -> None:
     current = _current_pending_props()
     (mapping, summaries), errors = _collect_espn(rows)
     audited = [_grade(pick, mapping, summaries) for pick in rows]
-    by_expert = {
-        expert: _summarize([row for row in audited if row["expert"] == expert])
-        for expert in sorted({row["expert"] for row in audited})
-    }
-    by_expert_sport = {
-        f"{expert} / {sport}": _summarize([
-            row for row in audited if row["expert"] == expert and str(row["sport"]).upper() == sport
-        ])
-        for expert in sorted({row["expert"] for row in audited})
-        for sport in sorted({str(row["sport"]).upper() for row in audited if row["expert"] == expert})
+    pregame = [row for row in audited if row["published_at_or_after_espn_start"] is False]
+    pregame_performance = _pregame_performance(audited)
+    pregame_coverage = {
+        "late_by_expert": {
+            expert: sum(row["expert"] == expert and row["published_at_or_after_espn_start"] is True for row in audited)
+            for expert in sorted({row["expert"] for row in audited})
+        },
+        "unknown_kickoff_by_expert": {
+            expert: sum(row["expert"] == expert and row["published_at_or_after_espn_start"] is None for row in audited)
+            for expert in sorted({row["expert"] for row in audited})
+        },
     }
     result = {
         "window": [WINDOW_START.isoformat(), WINDOW_END.isoformat()],
@@ -781,8 +1064,12 @@ def main() -> None:
         "requested_dates": len(request_log),
         "successful_dates": sum("status" in item for item in request_log),
         "source_request_log": request_log,
-        "summary": by_expert,
-        "breakdown_by_expert_sport": by_expert_sport,
+        "performance_basis": pregame_performance["basis"],
+        "summary": pregame_performance["by_expert"],
+        "breakdown_by_expert_sport": pregame_performance["by_expert_sport"],
+        "pregame_performance": pregame_performance,
+        "pregame_coverage": pregame_coverage,
+        "pregame_records": len(pregame),
         "current_pending_props": current,
         "espn_errors": errors,
         "rows": audited,
@@ -791,7 +1078,7 @@ def main() -> None:
     print(json.dumps({
         "record_count": result["record_count"],
         "dates": f'{result["successful_dates"]}/{result["requested_dates"]}',
-        "summary": by_expert,
+        "pregame_performance": pregame_performance,
         "espn_errors": len(errors),
         "reports": ["generated-artifacts/bettinginsider-prop-audit.html",
                     "generated-artifacts/bettinginsider-prop-audit.json"],

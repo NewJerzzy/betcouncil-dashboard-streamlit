@@ -1,6 +1,9 @@
 import unittest
 
-from scripts.audit_bettinginsider_props import _grade, _line, _resolve_event, _summarize
+from scripts.audit_bettinginsider_props import (
+    _extract_stat, _grade, _line, _player_candidates, _pregame_performance,
+    _resolve_event, _summarize,
+)
 
 
 EVENT = {
@@ -136,6 +139,147 @@ class BettingInsiderPropAuditTests(unittest.TestCase):
         self.assertEqual(summary["pregame"]["wins"], 1)
         self.assertEqual(summary["late_publications"], 2)
 
+    def test_line_parser_supports_qualified_plus_yard_props_and_td_markets(self):
+        self.assertEqual(_line(pick(bet_title="F. Brandon 40+ Rushing Yards")), ("at_least", 40.0, ""))
+        self.assertEqual(_line(pick(bet_title="O. Beckham Jr. TD")), ("yes", None, ""))
+        self.assertEqual(_line(pick(bet_title="J. Smith 1st TD")), ("first_td", None, ""))
+        self.assertEqual(_line(pick(bet_title="E. Johnson Last TD")), ("last_td", None, ""))
+        self.assertEqual(_line(pick(bet_title="K. Pitts Anytime TD")), ("yes", None, ""))
+
+    def test_player_matching_uses_full_names_and_suffixes_to_disambiguate(self):
+        summary = {
+            "boxscore": {
+                "players": [{
+                    "team": {"displayName": "Example"},
+                    "statistics": [{
+                        "name": "rushing", "labels": ["YDS"],
+                        "athletes": [
+                            {"athlete": {"id": "bijan", "firstName": "Bijan",
+                                         "lastName": "Robinson", "shortName": "B. Robinson",
+                                         "displayName": "Bijan Robinson"}, "stats": ["25"]},
+                            {"athlete": {"id": "brian", "firstName": "Brian",
+                                         "lastName": "Robinson Jr.", "shortName": "B. Robinson Jr.",
+                                         "displayName": "Brian Robinson Jr."}, "stats": ["62"]},
+                        ],
+                    }],
+                }],
+            },
+        }
+        candidates = _player_candidates(pick(bet_title="B. Robinson Jr. U25.5 Rush Yds"), summary)
+        self.assertEqual([candidate["id"] for candidate in candidates], ["brian"])
+
+    def test_offensive_market_and_espn_categories_resolve_defensive_namesake(self):
+        summary = {
+            "boxscore": {
+                "players": [{
+                    "statistics": [{
+                        "name": "passing", "labels": ["C/ATT", "YDS"],
+                        "athletes": [{
+                            "athlete": {"id": "trevor", "firstName": "Trevor",
+                                        "lastName": "Lawrence", "displayName": "Trevor Lawrence"},
+                            "stats": ["20/30", "280"],
+                        }],
+                    }],
+                }, {
+                    "statistics": [{
+                        "name": "defensive", "labels": ["TOT", "SACKS"],
+                        "athletes": [{
+                            "athlete": {"id": "dexter", "firstName": "Dexter",
+                                        "lastName": "Lawrence II", "displayName": "Dexter Lawrence II"},
+                            "stats": ["4", "1"],
+                        }],
+                    }],
+                }],
+            },
+        }
+        row = grade(
+            pick(sport="NFL", stat_type=None, bet_title="Lawrence O261.5 Pass Yds"),
+            summary=summary,
+        )
+        self.assertEqual(row["player"], "Trevor Lawrence")
+        self.assertEqual(row["player_match_evidence"], "unique ESPN offensive-stat category match")
+        self.assertEqual(row["independent_result"], "win")
+
+    def test_unique_one_character_name_variant_can_match_espn_player(self):
+        summary = {
+            "boxscore": {
+                "players": [{
+                    "team": {"displayName": "Example"},
+                    "statistics": [{
+                        "name": "basketball",
+                        "labels": ["MIN", "PTS", "3PT", "REB", "AST"],
+                        "athletes": [{
+                            "athlete": {"id": "edgecombe", "firstName": "VJ",
+                                        "lastName": "Edgecombe", "shortName": "V. Edgecombe",
+                                        "displayName": "VJ Edgecombe"},
+                            "stats": ["30", "10", "2-5", "3", "4"],
+                        }],
+                    }],
+                }],
+            },
+        }
+        candidates = _player_candidates(pick(bet_title="V. Edgecomb 3+ assists"), summary)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["id"], "edgecombe")
+        self.assertIn("one-character", candidates[0]["match_method"])
+
+    def test_espn_three_point_made_attempt_value_uses_made_count(self):
+        summary = {
+            "boxscore": {
+                "players": [{
+                    "statistics": [{
+                        "name": None, "labels": ["MIN", "PTS", "3PT", "REB", "AST"],
+                        "athletes": [{
+                            "athlete": {"id": "player-3"},
+                            "stats": ["30", "12", "2-5", "4", "3"],
+                        }],
+                    }],
+                }],
+            },
+        }
+        value, evidence = _extract_stat(pick(), summary, "player-3", ("basketball", "3PT"))
+        self.assertEqual(value, 2)
+        self.assertEqual(evidence, "ESPN 3PT made count")
+
+    def test_generic_mlb_walks_use_pitching_box_score_only_for_pitcher_line(self):
+        pitching_summary = {
+            "boxscore": {
+                "players": [{
+                    "statistics": [{
+                        "name": "pitching", "labels": ["IP", "BB", "K"],
+                        "athletes": [{
+                            "athlete": {"id": "player-1", "firstName": "Mason",
+                                        "lastName": "Wilson", "shortName": "M. Wilson",
+                                        "displayName": "Mason Wilson"},
+                            "stats": ["5.0", "2", "6"],
+                        }],
+                    }],
+                }],
+            },
+        }
+        row = grade(
+            pick(sport="MLB", stat_type=None, bet_title="M. Wilson Walks O1.5"),
+            summary=pitching_summary,
+        )
+        self.assertEqual(row["independent_result"], "win")
+        self.assertEqual(row["market_mapping"], "pitching/BB")
+        self.assertEqual(row["verified_stat"], 2)
+
+    def test_first_touchdown_is_graded_from_espn_scoring_play_order(self):
+        summary = {
+            **SUMMARY,
+            "scoringPlays": [{
+                "type": {"text": "Passing Touchdown"},
+                "text": "Mason Wilson 4 Yd pass from Jordan Example (Kick)",
+            }],
+        }
+        row = grade(
+            pick(bet_title="M. Wilson 1st TD"),
+            summary=summary,
+        )
+        self.assertEqual(row["independent_result"], "win")
+        self.assertEqual(row["stat_evidence"], "ESPN first td scoring play")
+
     def test_missing_espn_kickoff_is_not_assumed_to_be_pregame(self):
         event_without_start = {key: value for key, value in EVENT.items() if key != "date"}
         row = grade(pick(), event=event_without_start)
@@ -147,6 +291,21 @@ class BettingInsiderPropAuditTests(unittest.TestCase):
         self.assertEqual(summary["pregame"]["records"], 0)
         self.assertEqual(summary["pregame"]["graded"], 0)
         self.assertEqual(summary["late_publications_unknown"], 1)
+
+    def test_performance_totals_only_use_resolved_timestamped_pregame_picks(self):
+        pregame = grade(pick(id="pregame"))
+        late = grade(pick(id="late", posted_at="2026-09-01T18:01:00Z"))
+        unknown_start = {**EVENT}
+        unknown_start.pop("date")
+        unknown = grade(pick(id="unknown"), event=unknown_start)
+        unresolved = grade(pick(id="unresolved", odds=None))
+
+        performance = _pregame_performance([pregame, late, unknown, unresolved])
+        self.assertEqual(performance["eligible_pick_count"], 1)
+        self.assertEqual(performance["pregame_record_count"], 2)
+        self.assertEqual(performance["unresolved_pregame_count"], 1)
+        self.assertEqual(performance["by_expert"]["Insider Mike"]["graded"], 1)
+        self.assertEqual(sum(x["records"] for x in performance["by_market"].values()), 1)
 
 
 if __name__ == "__main__":
