@@ -12,6 +12,7 @@ import concurrent.futures
 import hashlib
 import html
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -359,8 +360,17 @@ def _stat_type(pick: dict) -> tuple[str, str] | None:
 
 def _line(pick: dict) -> tuple[str | None, float | None, str]:
     title = str(pick.get("bet_title") or "")
-    if re.search(r"\b(?:sgp|parlay)\b", title, re.I) or re.search(
-        r"\+\s*[\w.' -]+\s+(?:ml|moneyline)\b", title, re.I
+    selection_markers = re.findall(
+        r"\b(?:over|under|o|u)\s*\d+(?:\.\d+)?\b"
+        r"|\b\d+(?:\.\d+)?\s*(?:\+|plus)\s*(?:ks?|assists?|points?|yards?|"
+        r"receptions?|sbs?|hrs?|hits?|bases?|er)\b"
+        r"|\b(?:ml|moneyline|spread)\b"
+        r"|\banytime\s+td\b",
+        title, re.I,
+    )
+    if (
+        re.search(r"\b(?:sgp|parlay|\d+\s*[- ]leg)\b", title, re.I)
+        or len(selection_markers) > 1
     ):
         return None, None, "multi-leg or parlay selection; not a standalone player prop"
     match = re.search(r"\b(over|under|o|u)\s*(\d+(?:\.\d+)?)\b", title, re.I)
@@ -541,12 +551,15 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
         elif player_reason and player_reason not in reason:
             reason += "; " + player_reason
 
+    posted, game_start, late = None, None, None
     try:
         posted = datetime.fromisoformat(str(pick.get("posted_at") or pick.get("created_at")).replace("Z", "+00:00"))
         game_start = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00")) if kickoff else None
         if posted.tzinfo is None:
             posted = posted.replace(tzinfo=timezone.utc)
-        late = bool(game_start and posted >= game_start)
+        if game_start and game_start.tzinfo is None:
+            game_start = game_start.replace(tzinfo=timezone.utc)
+        late = posted >= game_start if game_start else None
     except (TypeError, ValueError):
         posted, late = None, None
         reason = (reason + "; " if reason else "") + "invalid publication or kickoff timestamp"
@@ -554,10 +567,13 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
     odds_raw = str(pick.get("odds") or "").strip().replace("−", "-")
     try:
         odds = float(odds_raw.replace("+", ""))
-        if abs(odds) < 100:
+        if not math.isfinite(odds) or abs(odds) < 100:
             raise ValueError
-    except ValueError:
+    except (TypeError, ValueError):
         odds = None
+    if verdict in ("win", "loss", "push") and odds is None:
+        verdict = "unresolved"
+        reason = (reason + "; " if reason else "") + "missing or invalid original price"
     try:
         stake = float(pick.get("units"))
         if stake <= 0:
@@ -569,6 +585,10 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
         profit = 0.0 if verdict == "push" else (
             stake * (odds / 100 if odds > 0 else 100 / abs(odds)) if verdict == "win" else -stake
         )
+    publication_delta = (
+        round((game_start - posted).total_seconds() / 60, 1)
+        if game_start and posted else None
+    )
 
     return {
         "id": pick.get("id"), "expert": pick.get("bettor_name"),
@@ -580,11 +600,11 @@ def _grade(pick: dict, mapping: dict, summaries: dict) -> dict:
         "verified_stat": actual, "stat_evidence": player_reason,
         "source_result": pick.get("result"), "independent_result": verdict,
         "original_odds": odds_raw or None, "original_stake_units": stake,
+        "original_price_valid": odds is not None,
         "computed_profit_units": profit, "published_at": pick.get("posted_at") or pick.get("created_at"),
         "event_start_source": pick.get("game_time"), "event_start_espn": kickoff,
         "published_at_or_after_espn_start": late,
-        "publication_delta_minutes": round((kickoff_dt - posted).total_seconds() / 60, 1)
-        if kickoff and posted and (kickoff_dt := datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))) else None,
+        "publication_delta_minutes": publication_delta,
         "unresolved_reason": reason or ("" if verdict != "unresolved" else player_reason),
         "market_mapping": f"{market[0]}/{market[1]}" if market else None,
     }
@@ -629,7 +649,7 @@ def _summarize(rows: list[dict]) -> dict:
             r["source_result"] in ("win", "loss", "push") and r["independent_result"] in ("win", "loss", "push")
             and r["source_result"] != r["independent_result"] for r in rows
         ),
-        "missing_or_invalid_original_price": sum(not r["original_odds"] for r in rows),
+        "missing_or_invalid_original_price": sum(not r["original_price_valid"] for r in rows),
         "missing_or_invalid_original_stake": sum(r["original_stake_units"] is None for r in rows),
         "graded_rows": len(final),
     }
