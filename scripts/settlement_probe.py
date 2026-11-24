@@ -70,7 +70,10 @@ if OA:
             out["oddsapiio"]["event_used"] = {k: ev.get(k) for k in ("id", "home", "away", "date", "status", "scores")}
             c, b2 = get(f"{base}/bookmakers", params={"apiKey": OA})
             out["oddsapiio"]["bookmakers_list_sample"] = {"status": c, "sample": trunc(b2, 500)}
-            c, b3 = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": "Pinnacle,DraftKings,FanDuel", "markets": "ML,Spread,Totals"})
+            names = [x["name"] for x in (b2 if isinstance(b2, list) else []) if isinstance(x, dict) and x.get("active")]
+            out["oddsapiio"]["book_names_match"] = [n for n in names if any(t in n.lower() for t in ("pinn", "draft", "fanduel", "caesars", "mgm", "bet365"))]
+            pick = [n for n in out["oddsapiio"]["book_names_match"]][:4]
+            c, b3 = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": ",".join(pick), "markets": "ML,Spread,Totals"})
             out["oddsapiio"]["historical_odds"] = {"status": c, "sample": trunc(b3, 1800)}
 txt = json.dumps(out, indent=1, default=str)
 print(txt[:6000])
