@@ -428,6 +428,130 @@ def snapshot_dk_most_bet(today: str, known_players: set) -> list:
     return records
 
 
+def _ms_within(ms, hours=30):
+    try:
+        t = float(ms) / 1000.0
+    except (TypeError, ValueError):
+        return False
+    import time as _t
+    return _t.time() - 3 * 3600 < t < _t.time() + hours * 3600
+
+
+def snapshot_sportsline(today: str) -> list:
+    """SportsLine insider (named-expert) PENDING picks via their native mobile feed.
+    Only spread/total picks are kept (priced near -110, so a flat 52.4% breakeven
+    test is fair); moneyline picks are skipped because favourites inflate hit rate.
+    Counts a complete snapshot only (livePicks must match delivered rows)."""
+    import re
+    url = "https://www.sportsline.com/sportsline-web/service/v1/mobile/insiderPicks"
+    rows, expected = [], None
+    for page in range(20):
+        try:
+            r = requests.get(url, params={"max": 100, "offset": page * 100},
+                             headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"}, timeout=30)
+            d = r.json()
+        except Exception as e:
+            log(f"  sportsline: fetch error — {e}")
+            return []
+        expected = d.get("livePicks")
+        got = d.get("insiderPicks") or []
+        rows += [x for x in got if x.get("resultStatus") == "PENDING"]
+        if len(rows) >= (expected or 0) or len(got) < 100:
+            break
+    if expected is not None and len(rows) != expected:
+        log(f"  sportsline: incomplete snapshot ({len(rows)}/{expected}) — skipped, no partial data")
+        return []
+    records, skipped = [], 0
+    for x in rows:
+        sport = str(x.get("leagueAbbrv", "")).upper()
+        if sport not in SPORTS or not _ms_within(x.get("startDt")):
+            continue
+        home, away = x.get("homeTeamName", ""), x.get("awayTeamName", "")
+        if not (home and away):
+            continue
+        label = str(x.get("pickLabel", ""))
+        author = f"{x.get('firstName','')} {x.get('lastName','')}".strip()
+        base = {"source": "sportsline", "sport": sport, "matchup": f"{away} @ {home}",
+                "home": home, "away": away, "expert": author, "implied_prob": None}
+        m = re.match(r"^\s*(O|U|OVER|UNDER)\b", label, re.I)
+        if x.get("ouTotal") and m:
+            records.append({**base, "market": "TOTAL",
+                            "pick": ("OVER " if m.group(1).upper().startswith("O") else "UNDER ") + str(x["ouTotal"]),
+                            "line": x["ouTotal"]})
+        elif (x.get("psHomeOdds") or x.get("psAwayOdds")) and x.get("pickSide") in (1, 2):
+            hh = x.get("psHomeHandicap", 0) or 0
+            records.append({**base, "market": "SPREAD", "pick": home if x["pickSide"] == 2 else away, "line": hh})
+        else:
+            skipped += 1
+    log(f"  sportsline: {len(records)} spread/total picks kept, {skipped} moneyline/other skipped")
+    return records
+
+
+def snapshot_fantasylabs(today: str) -> list:
+    """FantasyLabs PickLabs expert player-prop picks (native Next.js flight data)."""
+    import re
+    try:
+        r = requests.get("https://terminal.fantasylabs.com/picklabs?site=prizepicks&view=experts",
+                         headers={"Accept": "text/html", "User-Agent": "Mozilla/5.0"}, timeout=60)
+        html = r.text
+        flight = "".join(
+            (c[1] if isinstance(c, list) and c and c[0] == 1 and isinstance(c[1], str) else "")
+            for c in (_safe_json(m) for m in re.findall(r"self\.__next_f\.push\((.*?)\)</script>", html, re.S)))
+        i = flight.index('"experts":')
+        start = flight.index("[", i)
+        depth, instr, esc = 0, False, False
+        end = None
+        for k in range(start, len(flight)):
+            ch = flight[k]
+            if instr:
+                esc = (not esc) if ch == "\\" else False
+                if ch == '"' and not esc:
+                    instr = False
+            elif ch == '"':
+                instr = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = k
+                    break
+        if end is None:
+            log("  fantasylabs: truncated feed — skipped")
+            return []
+        rows = json.loads(flight[start:end + 1])
+    except Exception as e:
+        log(f"  fantasylabs: error — {e}")
+        return []
+    from datetime import datetime as _dt
+    records = []
+    for row in rows:
+        try:
+            mk, pl = row["market"], row["market"]["player"]
+            side = str(row.get("side", "")).upper()
+            sport = str(mk.get("sport", "")).upper()
+            ev = mk.get("eventDate")
+            if side not in ("OVER", "UNDER") or sport not in SPORTS or not isinstance(ev, str):
+                continue
+            t = _dt.fromisoformat(ev.replace("Z", "+00:00")).timestamp()
+            if not _ms_within(t * 1000):
+                continue
+            records.append({"source": "fantasylabs", "sport": sport, "player": pl["playerName"],
+                            "prop_type": mk["stat"], "line": float(mk["value"]), "side": side,
+                            "expert": (row.get("expert") or {}).get("name"), "implied_prob": None})
+        except Exception:
+            continue
+    log(f"  fantasylabs: {len(records)} upcoming expert prop picks")
+    return records
+
+
+def _safe_json(x):
+    try:
+        return json.loads(x)
+    except Exception:
+        return None
+
+
 def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -446,7 +570,9 @@ def main() -> int:
         debug_info["steps"].append(f"dk_most_bet: {len(dk_records)}")
         lt_records = snapshot_lineterminal(today)
         debug_info["steps"].append(f"lineterminal: {len(lt_records)}")
-        props_records = fp_de_records + dk_records + lt_records
+        fl_records = snapshot_fantasylabs(today)
+        debug_info["steps"].append(f"fantasylabs: {len(fl_records)}")
+        props_records = fp_de_records + dk_records + lt_records + fl_records
 
         dimers_records = snapshot_dimers(today)
         debug_info["steps"].append(f"dimers: {len(dimers_records)}")
@@ -456,7 +582,9 @@ def main() -> int:
         debug_info["steps"].append(f"bettingpros: {len(bp_records)}")
         wb_records = snapshot_wagerbird(today)
         debug_info["steps"].append(f"wagerbird: {len(wb_records)}")
-        game_records = dimers_records + covers_records + bp_records + wb_records
+        sl_records = snapshot_sportsline(today)
+        debug_info["steps"].append(f"sportsline: {len(sl_records)}")
+        game_records = dimers_records + covers_records + bp_records + wb_records + sl_records
     except Exception as e:
         import traceback
         debug_info["error"] = f"{e}\n{traceback.format_exc()}"

@@ -61,12 +61,28 @@ def evaluate(pairs):
             "mean_prob": round(mp, 4), "hit_rate": round(hr, 4)}
 
 
+def evaluate_flat(flags):
+    """Sources with no probability claim (named-expert ATS/total/prop picks priced ~-110):
+    PASS only if the 95% Wilson lower bound on hit rate beats the 52.38% breakeven."""
+    n = len(flags)
+    if n < MIN_N:
+        return {"status": "INSUFFICIENT", "n": n, "need": MIN_N}
+    w = sum(flags); p = w / n; z = 1.96
+    lo = (p + z*z/(2*n) - z*((p*(1-p)/n + z*z/(4*n*n)) ** 0.5)) / (1 + z*z/n)
+    return {"status": "PASS" if lo > 0.5238 else "FAIL", "n": n, "hit_rate": round(p, 4),
+            "wilson_lower_95": round(lo, 4), "breakeven": 0.5238}
+
+
 def main():
     token = os.environ["GITHUB_TOKEN"]
     out = {}
     cal = gist_read(token, "betcouncil_third_party_calibration.json") or {}
     for src, st in cal.items():
         pairs = st.get("pairs") or []
+        flags = st.get("actual_hit_flags") or []
+        if not pairs and flags and src in ("sportsline", "fantasylabs", "bettinginsider"):
+            out[f"source:{src}"] = evaluate_flat(flags)
+            continue
         res = evaluate(pairs) if pairs else {"status": "INSUFFICIENT", "n": 0, "need": MIN_N,
                                              "note": "pairs start accumulating from the first grading run after this update"}
         out[f"source:{src}"] = res
