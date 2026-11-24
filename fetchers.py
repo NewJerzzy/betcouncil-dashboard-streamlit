@@ -6764,6 +6764,11 @@ def scrape_prizepicks(sport):
                 # Mimics real Chrome at the TLS layer — may bypass Akamai
                 # without ScrapeOps proxy. Silent fallback if unavailable.
                 _cffi_success = False
+                # Once PrizePicks has rate-limited/blocked this server (429/403), every
+                # further direct attempt in the session fails too and just deepens the
+                # block -- skip straight to the Gist data.
+                if st.session_state.get("pp_direct_blocked", False):
+                    continue
                 try:
                     from curl_cffi import requests as cffi_requests
                     _cffi_headers = {
@@ -6801,6 +6806,8 @@ def scrape_prizepicks(sport):
                         # x-device-info header fix actually changes the
                         # response (was a 403 before; if still 403, the header
                         # fix didn't help and the real blocker is elsewhere).
+                        if _cffi_resp.status_code in (403, 429):
+                            st.session_state["pp_direct_blocked"] = True
                         log_error_to_session("scrape_prizepicks_cffi", f"HTTP {_cffi_resp.status_code} on {url[-40:]}", "warning")
                 except ImportError:
                     log_error_to_session("scrape_prizepicks_cffi", "curl_cffi not installed", "warning")
