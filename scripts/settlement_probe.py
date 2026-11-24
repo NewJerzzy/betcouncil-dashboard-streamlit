@@ -72,8 +72,13 @@ if OA:
             out["oddsapiio"]["bookmakers_list_sample"] = {"status": c, "sample": trunc(b2, 500)}
             names = [x["name"] for x in (b2 if isinstance(b2, list) else []) if isinstance(x, dict) and x.get("active")]
             out["oddsapiio"]["book_names_match"] = [n for n in names if any(t in n.lower() for t in ("pinn", "draft", "fanduel", "caesars", "mgm", "bet365"))]
-            pick = [n for n in out["oddsapiio"]["book_names_match"]][:4]
-            c, b3 = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": ",".join(pick), "markets": "ML,Spread,Totals"})
+            out["oddsapiio"]["pinnacle_like"] = [x for x in (b2 if isinstance(b2, list) else []) if "pinn" in str(x.get("name", "")).lower() or "sharp" in str(x.get("name", "")).lower()]
+            per = {}
+            for bk in ("DraftKings", "FanDuel", "Caesars", "BetMGM", "Pinnacle", "Bovada", "Circa"):
+                cc, bb = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": bk, "markets": "ML,Spread,Totals"})
+                per[bk] = {"status": cc, "sample": trunc(bb, 500)}
+            out["oddsapiio"]["per_book"] = per
+            c, b3 = 200, "see per_book"
             out["oddsapiio"]["historical_odds"] = {"status": c, "sample": trunc(b3, 1800)}
 txt = json.dumps(out, indent=1, default=str)
 print(txt[:6000])
