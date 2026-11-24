@@ -150,10 +150,14 @@ def update_calibration(calibration: dict, graded_props: list, graded_games: list
                 stats["pushes"] += 1
             if isinstance(r.get("implied_prob"), (int, float)) and outcome in ("WIN", "LOSS"):
                 stats["implied_probs"].append(r["implied_prob"])
+                # aligned (prob, hit, date) triples -- the old two lists drift out of
+                # alignment (pushes / missing probs), so the validation gate uses these
+                stats.setdefault("pairs", []).append([r["implied_prob"], 1 if outcome == "WIN" else 0, r.get("date")])
         # keep only the flags/probs needed for a rolling calibration read —
         # cap list growth rather than let it grow unbounded forever
         stats["actual_hit_flags"] = stats["actual_hit_flags"][-2000:]
         stats["implied_probs"] = stats["implied_probs"][-2000:]
+        stats["pairs"] = stats.get("pairs", [])[-3000:]
 
     for source, stats in calibration.items():
         flags = stats.get("actual_hit_flags", [])

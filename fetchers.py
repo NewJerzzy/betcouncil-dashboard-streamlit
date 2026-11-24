@@ -16655,6 +16655,7 @@ def get_dimers_match(matchup: str, sport: str) -> dict:
                 "home_edge": tab.get("HomeH2HEdge"), "away_edge": tab.get("AwayH2HEdge"),
                 "home_win_pct": tab.get("HomeLineWinPct"), "away_win_pct": tab.get("AwayLineWinPct"),
                 "home_odds": tab.get("HomeOdds"), "away_odds": tab.get("AwayOdds"),
+                "home_mp": tab.get("HomeMP"), "away_mp": tab.get("AwayMP"),
                 "home_line": tab.get("HomeLine"), "total_line": tab.get("TotalLine"),
                 "over_win_pct": tab.get("OverWinPct"), "under_win_pct": tab.get("UnderWinPct"),
             }

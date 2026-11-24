@@ -8601,6 +8601,32 @@ def get_live_power_ratings(sport, fallback_ratings):
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def _attach_dimers_crosscheck(analysis, sport):
+    """Independent cross-check of MONEYLINE picks against Dimers' model.
+    Dimers model win prob = market prob + H2H edge (pct pts). Annotation only —
+    never changes edge or tier (a source must pass the validation gate first,
+    see scripts/validation_gate.py)."""
+    try:
+        dm = get_dimers_match(analysis.get("matchup", ""), sport)
+        if not dm:
+            return
+        for rec in analysis.get("recommendations", []):
+            if rec.get("type") != "MONEYLINE":
+                continue
+            pick = str(rec.get("pick", "")).lower()
+            is_home = str(analysis.get("home", "")).lower().split()[-1] in pick
+            edge = dm.get("home_edge") if is_home else dm.get("away_edge")
+            mp = dm.get("home_mp") if is_home else dm.get("away_mp")
+            if not isinstance(edge, (int, float)) or not isinstance(mp, (int, float)):
+                continue
+            rec["dimers_prob"] = round(mp + edge / 100.0, 3)
+            rec["dimers_confirms"] = edge > 0
+            rec["dimers_note"] = (f"Dimers model {rec['dimers_prob']:.0%} vs market {mp:.0%} -- "
+                                  + ("agrees with this side" if edge > 0 else "DISAGREES (sees no value on this side)"))
+    except Exception:
+        pass
+
+
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS, "NFL": NFL_POWER_RATINGS}
@@ -8612,6 +8638,7 @@ def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
         # Append all games — not just those with best_bet
         # Games without edge still needed for coverage audit + display
         all_game_analysis.append(analysis)
+        _attach_dimers_crosscheck(analysis, sport)
     all_game_analysis.sort(key=lambda x: x["best_edge"], reverse=True)
     return all_game_analysis
 
