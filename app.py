@@ -9880,13 +9880,27 @@ with tabs[5]:
         # "OddsAPI=✅/❌" internals, and showing it here made an otherwise-
         # normal night look broken. Booleans below are still needed for the
         # System tab writeup — see that section for where they're read.
+        def _ev_nfl_feed_live(_sp):
+            # The main EV API feed is baseball-oriented and sits empty out of
+            # season; for NFL the real EVSharps data is the separate /api/nfl
+            # feed, so count that as "EV API loaded" (checked once a session).
+            if str(_sp).upper() != "NFL":
+                return False
+            if "_ev_nfl_feed_n" not in st.session_state:
+                try:
+                    _raw = fetch_ev_nfl_props() or {}
+                    st.session_state["_ev_nfl_feed_n"] = len(_raw.get("data") or [])
+                except Exception:
+                    st.session_state["_ev_nfl_feed_n"] = 0
+            return st.session_state["_ev_nfl_feed_n"] > 0
+
         st.session_state["_ls_source_flags"] = {
             "sport": _sport_ls,
             "OddsAPI": bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", [])),
             "OddsPapi": bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", [])),
             "OddsWrap": bool(st.session_state.get("oddswrap_props", [])),
             "AutoScraper": bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", [])),
-            "EV API": bool(st.session_state.get("ev_api_props")),
+            "EV API": bool(st.session_state.get("ev_api_props")) or _ev_nfl_feed_live(_sport_ls),
         }
 
         # Try session_state first (faster, no disk read)
