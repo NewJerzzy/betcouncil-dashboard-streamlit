@@ -74,14 +74,14 @@ if OA:
             out["oddsapiio"]["book_names_match"] = [n for n in names if any(t in n.lower() for t in ("pinn", "draft", "fanduel", "caesars", "mgm", "bet365"))]
             out["oddsapiio"]["pinnacle_like"] = [x for x in (b2 if isinstance(b2, list) else []) if "pinn" in str(x.get("name", "")).lower() or "sharp" in str(x.get("name", "")).lower()]
             per = {}
-            for bk in ("DraftKings", "FanDuel", "Caesars", "BetMGM", "Pinnacle", "Bovada", "Circa"):
+            for bk in ("DraftKings,FanDuel",):
                 cc, bb = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": bk, "markets": "ML,Spread,Totals"})
-                per[bk] = {"status": cc, "sample": trunc(bb, 500)}
+                per[bk] = {"status": cc, "full": bb}
             out["oddsapiio"]["per_book"] = per
             c, b3 = 200, "see per_book"
             out["oddsapiio"]["historical_odds"] = {"status": c, "sample": trunc(b3, 1800)}
 txt = json.dumps(out, indent=1, default=str)
-print(txt[:6000])
+print(txt[:12000])
 r = requests.patch("https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5",
     headers={"Authorization": "Bearer " + os.environ.get("GITHUB_TOKEN", "")},
     json={"files": {"betcouncil_settlement_probe.json": {"content": txt}}}, timeout=30)
