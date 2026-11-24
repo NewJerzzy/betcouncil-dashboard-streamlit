@@ -1195,6 +1195,21 @@ KELLY_BY_TIER = {
 }
 
 # Tier thresholds (props) — sport-specific overrides in get_tier()
+def _board_grading_rows_for_tier(tier):
+    """Graded full-board prop picks (WIN/LOSS only) for one tier, from the
+    daily grading history. Loaded once per session."""
+    try:
+        if "_board_grading_rows" not in st.session_state:
+            _gh = load_from_gist("board_grading_history", None) or {}
+            st.session_state["_board_grading_rows"] = [
+                r for day in _gh.values() if isinstance(day, list) for r in day
+                if r.get("outcome") in ("WIN", "LOSS") and r.get("prob") is not None
+            ]
+        return [r for r in st.session_state["_board_grading_rows"] if r.get("tier") == tier]
+    except Exception:
+        return []
+
+
 def get_real_calibration_correction(tier, min_n=15):
     """
     Real, data-driven calibration correction (2026-08-20). Computes the
@@ -1217,8 +1232,13 @@ def get_real_calibration_correction(tier, min_n=15):
     ]
     _n = len(_hist)
     if _n < min_n:
-        st.session_state[_cache_key] = 0.0
-        return 0.0
+        # Placed-bet history is thin -- fall back to the full graded board
+        # (hundreds of picks per tier, validated by scripts/validation_gate.py).
+        _hist = _board_grading_rows_for_tier(tier)
+        _n = len(_hist)
+        if _n < max(min_n, 30):
+            st.session_state[_cache_key] = 0.0
+            return 0.0
     _actual_wr = sum(1 for h in _hist if h["outcome"] == "WIN") / _n
     _stated_avg = sum(float(h.get("prob", 0) or 0) for h in _hist) / _n
     _gap = _actual_wr - _stated_avg
@@ -13119,7 +13139,7 @@ def store_board_snapshot(board, sport):
                     "side":   p.get("Side", "OVER"),
                     "line":   p.get("Line", 0),
                     "edge":   p.get("Edge", 0),
-                    "prob":   p.get("Prob", 0.5),
+                    "prob":   p.get("RawProb", p.get("Prob", 0.5)),  # pre-correction, so calibration never measures its own fix
                     "tier":   p.get("Tier", ""),
                     "best_bet": bool(p.get("Tier", "") in ("SOVEREIGN", "ELITE")),
                     "signals": {
