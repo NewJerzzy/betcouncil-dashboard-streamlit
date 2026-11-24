@@ -62,12 +62,16 @@ if OA:
     out["oddsapiio"]["nfl_slug"] = slug
     if slug:
         now = datetime.now(timezone.utc)
-        c, b = get(f"{base}/historical/closing-lines", params={
-            "apiKey": OA, "sport": "american-football", "leagues": slug,
-            "from": (now - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z"),
-            "to": now.strftime("%Y-%m-%dT00:00:00Z"),
-            "markets": "ML,Spread,Totals", "bookmakers": "Pinnacle,DraftKings,FanDuel", "limit": 5})
-        out["oddsapiio"]["closing_lines"] = {"status": c, "n": len(b) if isinstance(b, list) else None, "sample": trunc(b, 1500)}
+        c, b = get(f"{base}/historical/events", params={"apiKey": OA, "sport": "american-football", "league": slug,
+            "from": (now - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z"), "to": now.strftime("%Y-%m-%dT00:00:00Z")})
+        out["oddsapiio"]["events"] = {"status": c, "n": len(b) if isinstance(b, list) else None, "sample": trunc(b, 700)}
+        if c == 200 and isinstance(b, list) and b:
+            ev = b[0]
+            out["oddsapiio"]["event_used"] = {k: ev.get(k) for k in ("id", "home", "away", "date", "status", "scores")}
+            c, b2 = get(f"{base}/bookmakers", params={"apiKey": OA})
+            out["oddsapiio"]["bookmakers_list_sample"] = {"status": c, "sample": trunc(b2, 500)}
+            c, b3 = get(f"{base}/historical/odds", params={"apiKey": OA, "eventId": ev["id"], "bookmakers": "Pinnacle,DraftKings,FanDuel", "markets": "ML,Spread,Totals"})
+            out["oddsapiio"]["historical_odds"] = {"status": c, "sample": trunc(b3, 1800)}
 txt = json.dumps(out, indent=1, default=str)
 print(txt[:6000])
 r = requests.patch("https://api.github.com/gists/7e52e1c2c2054847c7c4663a157386c5",
