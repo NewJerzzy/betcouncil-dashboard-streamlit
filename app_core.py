@@ -13163,6 +13163,7 @@ def store_game_board_snapshot(game_analysis, sport):
                     "market": market, "pick": rec.get("pick", ""),
                     "line": line or 0, "edge": rec.get("edge", 0),
                     "tier": rec.get("tier", ""),
+                    "odds": rec.get("odds"),  # ML price at pick time (for CLV)
                 })
             # Alt line isn't in "recommendations" -- it's enriched directly
             # onto the game dict after analyze_all_games() runs.

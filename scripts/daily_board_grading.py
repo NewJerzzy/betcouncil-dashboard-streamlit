@@ -184,12 +184,20 @@ def grade_game_day(target_date: str):
             if outcome is None:
                 outcome = "UNGRADABLE"
 
-            graded_results.append({
+            row = {
                 "date": target_date, "sport": sport, "matchup": matchup,
                 "market": market, "pick": pick, "line": line, "outcome": outcome,
                 "home_score": home_score, "away_score": away_score,
                 "edge": p.get("edge", 0), "tier": p.get("tier", ""), "source": "board_grading",
-            })
+            }
+            if p.get("odds") is not None:
+                row["open_odds"] = p.get("odds")
+            try:
+                from scripts.clv_closing import compute_clv
+                row.update(compute_clv(p, sport, target_date))
+            except Exception as e:
+                log(f"  clv skipped for {matchup}/{market}: {e}")
+            graded_results.append(row)
 
     grading_history = gist_read(token, GAME_GRADING_FILE) or {}
     grading_history[target_date] = graded_results

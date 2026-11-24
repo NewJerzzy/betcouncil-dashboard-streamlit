@@ -35,4 +35,5 @@ jobs:
       - name: Grade yesterday's board
         env:
           GITHUB_TOKEN: ${{ secrets.PICK6_GIST_TOKEN }}
+          ODDS_API_IO_KEY: ${{ secrets.ODDS_API_IO_KEY }}
         run: python scripts/daily_board_grading.py
