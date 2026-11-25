@@ -136,7 +136,7 @@ def update_calibration(calibration: dict, graded_props: list, graded_games: list
         })
         seen = stats.setdefault("seen", {})
         for r in rows:
-            if source in ("sportsline", "pickwatch", "fantasylabs"):
+            if source in ("sportsline", "pickwatch", "fantasylabs", "rithmm"):
                 # same pick is re-captured on adjacent days before its game; count it once
                 k = "|".join(str(r.get(x)) for x in ("expert", "matchup", "player", "market", "prop_type", "pick", "side", "line"))
                 last = seen.get(k)

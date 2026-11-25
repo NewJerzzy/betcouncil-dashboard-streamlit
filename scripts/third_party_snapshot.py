@@ -39,7 +39,7 @@ import json
 import os
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -482,6 +482,23 @@ def snapshot_bettingpros_props(today: str) -> list:
     return records
 
 
+def snapshot_rithmm(today: str):
+    """Rithmm explicit model recommendations (bet_recommended, unlocked, explicit side) collected by
+    scripts/rithmm_collector.py. One provider, attributed to its models -- never independent votes.
+    Ignores data older than 36h so a dead login can't keep re-recording yesterday's picks."""
+    d = gist_read("betcouncil_rithmm.json") or {}
+    try:
+        age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(str(d.get("captured_at")))).total_seconds() / 3600
+    except Exception:
+        age_h = 1e9
+    if age_h > 36 or d.get("status") != "ok":
+        log(f"  rithmm: skipped (status={d.get('status')}, age={age_h:.0f}h)")
+        return [], []
+    games, props = d.get("games") or [], d.get("props") or []
+    log(f"  rithmm: {len(games)} game picks, {len(props)} prop picks")
+    return games, props
+
+
 def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -514,7 +531,10 @@ def main() -> int:
         debug_info["steps"].append(f"sportsline: {len(sl_records)}")
         pw_records = snapshot_pickwatch(today)
         debug_info["steps"].append(f"pickwatch: {len(pw_records)}")
-        game_records = dimers_records + covers_records + bp_records + sl_records + pw_records
+        rm_games, rm_props = snapshot_rithmm(today)
+        debug_info["steps"].append(f"rithmm: {len(rm_games)} games / {len(rm_props)} props")
+        props_records = props_records + rm_props
+        game_records = dimers_records + covers_records + bp_records + sl_records + pw_records + rm_games
     except Exception as e:
         import traceback
         debug_info["error"] = f"{e}\n{traceback.format_exc()}"
