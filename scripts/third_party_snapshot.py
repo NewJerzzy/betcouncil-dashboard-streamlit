@@ -53,8 +53,13 @@ def log(msg: str) -> None:
 
 
 def gist_read(filename: str):
-    resp = requests.get(f"https://api.github.com/gists/{GIST_ID}", timeout=20)
+    # Authenticated: unauthenticated Gist API calls share a 60/h limit and were
+    # silently returning None (-> 0 records) for most sources.
+    _tok = os.environ.get("GITHUB_TOKEN", "")
+    resp = requests.get(f"https://api.github.com/gists/{GIST_ID}", timeout=20,
+                        headers={"Authorization": f"Bearer {_tok}"} if _tok else {})
     if resp.status_code != 200:
+        log(f"  gist_read({filename}): HTTP {resp.status_code}")
         return None
     f = resp.json().get("files", {}).get(filename)
     if not f:
@@ -109,12 +114,14 @@ def snapshot_lineterminal(today: str) -> list:
 
 
 def snapshot_favoredprops(today: str) -> list:
+    # FavoredProps now lives in ONE combined Gist file keyed "<kind>_<SPORT>";
+    # the old per-sport files no longer exist, so this tracker silently
+    # recorded 0 picks until fixed.
     records = []
+    combined = gist_read("betcouncil_favoredprops_combined.json") or {}
     for sport in SPORTS:
         for kind in ("dfs", "sportsbook"):
-            data = gist_read(f"betcouncil_favoredprops_{kind}_{sport}.json")
-            if not data:
-                continue
+            data = combined.get(f"{kind}_{sport}") or {}
             for row in data.get("props", []):
                 bet = str(row.get("bet", "")).upper()
                 side = "OVER" if bet.startswith("O") else ("UNDER" if bet.startswith("U") else None)
