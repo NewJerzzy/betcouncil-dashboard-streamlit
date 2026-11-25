@@ -1384,10 +1384,10 @@ if not GITHUB_GIST_ID:
         icon="🔴",
     )
 elif not GITHUB_TOKEN:
-    st.error(
-        "⚠️ **GITHUB_TOKEN not set** — Gist reads/writes will fail. "
-        "Add GITHUB_TOKEN to Streamlit secrets.",
-        icon="🔴",
+    st.warning(
+        "**GITHUB_TOKEN not set** — data loads read-only from the public Gist. "
+        "Saving (locks, bankroll, snapshots) is off until GITHUB_TOKEN is added to Streamlit secrets.",
+        icon="ℹ️",
     )
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
