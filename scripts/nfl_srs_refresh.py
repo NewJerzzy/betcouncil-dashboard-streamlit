@@ -24,27 +24,33 @@ def season_start(today):
 
 
 def fetch_games(today):
-    a, b = season_start(today).strftime("%Y%m%d"), today.strftime("%Y%m%d")
-    r = requests.get("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
-                     params={"dates": f"{a}-{b}", "limit": 1000, "seasontype": 2},
-                     headers={"User-Agent": "Mozilla/5.0"}, timeout=40)
-    r.raise_for_status()
-    games = []
-    for ev in r.json().get("events", []):
-        comp = (ev.get("competitions") or [{}])[0]
-        if not ev.get("status", {}).get("type", {}).get("completed"):
+    year = season_start(today).year
+    games, seen = [], set()
+    for week in range(1, 19):
+        r = requests.get("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+                         params={"dates": year, "seasontype": 2, "week": week, "limit": 100},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=40)
+        if r.status_code != 200:
+            log(f"week {week}: HTTP {r.status_code}")
             continue
-        cs = comp.get("competitors", [])
-        home = next((c for c in cs if c.get("homeAway") == "home"), None)
-        away = next((c for c in cs if c.get("homeAway") == "away"), None)
-        if not home or not away:
-            continue
-        try:
-            hs, as_ = float(home["score"]), float(away["score"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        games.append((home["team"]["displayName"], home["team"]["abbreviation"],
-                      away["team"]["displayName"], away["team"]["abbreviation"], hs, as_))
+        for ev in r.json().get("events", []):
+            if ev.get("id") in seen:
+                continue
+            comp = (ev.get("competitions") or [{}])[0]
+            if not ev.get("status", {}).get("type", {}).get("completed"):
+                continue
+            cs = comp.get("competitors", [])
+            home = next((c for c in cs if c.get("homeAway") == "home"), None)
+            away = next((c for c in cs if c.get("homeAway") == "away"), None)
+            if not home or not away:
+                continue
+            try:
+                hs, as_ = float(home["score"]), float(away["score"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            seen.add(ev.get("id"))
+            games.append((home["team"]["displayName"], home["team"]["abbreviation"],
+                          away["team"]["displayName"], away["team"]["abbreviation"], hs, as_))
     return games
 
 
