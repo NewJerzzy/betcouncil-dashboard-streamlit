@@ -1053,9 +1053,23 @@ def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
 def fetch_auto_scraped_props(sport="NBA"):
     """Fetch props from GitHub Gist. Fallback when PrizePicks direct fails."""
     try:
-        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        if not GITHUB_GIST_ID:
             log_error_to_session("fetch_auto_scraped_props", "GitHub credentials not configured", "warning")
             return []
+        if not GITHUB_TOKEN:
+            _raw = _gist_raw_read("auto_scraped_props.json")
+            if not _raw:
+                log_error_to_session("fetch_auto_scraped_props", "GITHUB_TOKEN missing and public read failed", "warning")
+                return []
+            gist_content = _raw
+            all_props = gist_content.get("props", [])
+            props = [p for p in all_props if p.get("Sport", "").upper() == sport.upper()]
+            try:
+                import streamlit as _st
+                _st.session_state[f"auto_scraped_props_{sport}"] = props
+            except Exception:
+                pass
+            return props
 
         r = _http.get(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
@@ -15886,12 +15900,34 @@ def _write_gist_cache(filename: str, data) -> bool:
         return False
 
 
+def _gist_raw_read(filename: str):
+    """Token-free READ of a Gist file via its public raw URL. Used when GITHUB_TOKEN is missing
+    or rejected (expired/revoked/blank secret) -- previously every Gist-fed source (PrizePicks,
+    EV feeds, VSiN, expert pickers...) silently returned nothing, leaving only live-fetch sources.
+    Writes still need the token. Minute-level cache-buster avoids the CDN's stale copy."""
+    try:
+        url = (f"https://gist.githubusercontent.com/NewJerzzy/{GITHUB_GIST_ID}/raw/{filename}"
+               f"?cb={int(time.time() // 60)}")
+        req = urllib.request.Request(url, headers={"User-Agent": "BetCouncil/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except Exception as e:
+        print(f"[WARN] _gist_raw_read({filename}): {e}")
+        return None
+
+
 def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
     """Read a file from the BetCouncil Gist. Cached locally."""
     cp = os.path.join(CACHE_DIR, f"gist_{filename.replace('.json','')}.pkl")
     if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < cache_minutes:
         c = _safe_load_pkl(cp)
         if c is not None: return c
+    if not GITHUB_TOKEN:
+        data = _gist_raw_read(filename)
+        if data is not None:
+            _safe_save_pkl(cp, data)
+            return data
+        return {}
     try:
         req = urllib.request.Request(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
@@ -15919,6 +15955,10 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
         return data
     except Exception as e:
         print(f"[WARN] _read_gist_file({filename}): {e}")
+        data = _gist_raw_read(filename)   # token rejected/rate-limited -> public raw fallback
+        if data is not None:
+            _safe_save_pkl(cp, data)
+            return data
         return {}
 
 
