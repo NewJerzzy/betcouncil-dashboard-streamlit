@@ -567,6 +567,104 @@ def _safe_json(x):
         return None
 
 
+PICKWATCH_EXPERTS = [
+    "pete-prisco", "tyler-sullivan", "dave-richard", "jared-dubin", "john-breech", "brad-gagnon",
+    "brent-sobleski", "gary-davenport", "bill-bender", "vinnie-iyer", "chris-simms", "frank-schwab",
+    "gennaro-filice", "jarrett-bell", "sam-farmer",
+]
+_PW_HEADERS = {"Accept": "application/json", "Origin": "https://nflpickwatch.com",
+               "Referer": "https://nflpickwatch.com/",
+               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+
+def snapshot_pickwatch(today: str) -> list:
+    """Pickwatch NFL ATS picks from 15 named analysts (CBS, B/R, NBC, Yahoo...). Needs the
+    Origin/Referer headers -- without them Cloudflare returns 403. The analysts are republished,
+    so this is ONE source ("pickwatch"), never 15 independent votes. Row 'spread' is relative to
+    the picked team (verified live), converted here to the home-relative line the grader expects."""
+    A = "https://api.nflpickwatch.com/v1/general"
+    try:
+        meta = requests.get(f"{A}/metadata", headers=_PW_HEADERS, timeout=30).json()
+        cur = meta["timeframes"]["nfl"]["current"]
+        sn, wk, ph = cur["season_id"], cur["week_id"], cur["week_type_id"]
+        games = requests.get(f"{A}/games/{sn}/{wk}/nfl/{ph}?region_id=1", headers=_PW_HEADERS, timeout=30).json()
+        names = {t["id"]: t["full_name"] for t in meta["teams"]["nfl"]["selectTeams"] if t.get("full_name")}
+    except Exception as e:
+        log(f"  pickwatch: metadata/games error — {e}")
+        return []
+    import time as _tm
+    from datetime import datetime as _dt
+    open_games = {}
+    for g in games:
+        try:
+            ko = _dt.fromisoformat(str(g["kickoff"]).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        if not g.get("kicked_off") and _tm.time() < ko < _tm.time() + 30 * 3600:
+            open_games[g["id"]] = g
+    records = []
+    for ex in PICKWATCH_EXPERTS:
+        try:
+            c = requests.get(f"{A}/profile/picks/nfl/{ex}/{sn}/{wk}", params={"types": '["ats"]', "teams": "[]"},
+                             headers=_PW_HEADERS, timeout=30).json()
+        except Exception:
+            continue
+        per_game = {}
+        for row in c.get("picks", []):
+            g = open_games.get(row.get("game_id"))
+            if (row.get("pick_type") != "ats" or not g or row.get("auto_pick") is not False
+                    or row.get("pick") not in (g["home_team_id"], g["road_team_id"])
+                    or not isinstance(row.get("spread"), (int, float))):
+                continue
+            per_game.setdefault(g["id"], []).append(row)
+        for gid, rws in per_game.items():
+            if len({(r["pick"], r["spread"]) for r in rws}) != 1:
+                continue  # conflicting duplicate picks -> skip, never guess
+            row, g = rws[0], open_games[gid]
+            home, away = names.get(g["home_team_id"]), names.get(g["road_team_id"])
+            if not (home and away):
+                continue
+            pick_home = row["pick"] == g["home_team_id"]
+            records.append({"source": "pickwatch", "sport": "NFL", "matchup": f"{away} @ {home}",
+                            "home": home, "away": away, "market": "SPREAD",
+                            "pick": home if pick_home else away,
+                            "line": row["spread"] if pick_home else -row["spread"],
+                            "expert": ex, "implied_prob": None})
+    log(f"  pickwatch: {len(records)} analyst ATS picks on {len(open_games)} upcoming games")
+    return records
+
+
+# Only labels the grader's stat mapper resolves CORRECTLY (verified); combos / receptions / attempts
+# etc. map to the wrong stat there, so they are deliberately left out rather than mis-graded.
+_BP_SAFE = {
+    "NBA": {156: "Points", 157: "Rebounds", 151: "Assists", 160: "Steals", 152: "Blocks", 162: "3-Pointers Made"},
+    "NFL": {105: "Receiving Yards", 107: "Rushing Yards", 103: "Passing Yards"},
+    "NHL": {318: "Goals", 319: "Points", 320: "Assists", 321: "Shots on Goal"},
+}
+
+
+def snapshot_bettingpros_props(today: str) -> list:
+    """BettingPros recommended-side props (bet_signals probability) from the combined Gist."""
+    combined = gist_read("betcouncil_bettingpros_combined.json") or {}
+    records = []
+    for sport, labels in _BP_SAFE.items():
+        for p in (combined.get(sport) or {}).get("props", []):
+            label = labels.get(p.get("market_id"))
+            proj = p.get("projection") or {}
+            side = str(proj.get("recommended_side") or "").lower()
+            if not label or side not in ("over", "under"):
+                continue
+            leg = p.get(side) or {}
+            name = (p.get("participant") or {}).get("name")
+            if not name or leg.get("line") is None:
+                continue
+            records.append({"source": "bettingpros", "sport": sport, "player": name, "prop_type": label,
+                            "line": leg["line"], "side": side.upper(),
+                            "implied_prob": proj.get("probability")})
+    log(f"  bettingpros props: {len(records)} recommended-side picks")
+    return records
+
+
 def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -581,25 +679,29 @@ def main() -> int:
         debug_info["steps"].append(f"favoredprops+draftedge: {len(fp_de_records)}")
         known_players = {r["player"] for r in fp_de_records if r.get("player")}
 
-        dk_records = snapshot_dk_most_bet(today, known_players)
-        debug_info["steps"].append(f"dk_most_bet: {len(dk_records)}")
+        # DK Most Bet disabled: it is crowd popularity (no prediction claim) and its table is now
+        # Event/Date/Market/Betslip-Line/Odds (anytime-TD style), which the old parser never matched.
+        dk_records = []
         lt_records = snapshot_lineterminal(today)
         debug_info["steps"].append(f"lineterminal: {len(lt_records)}")
         fl_records = snapshot_fantasylabs(today)
         debug_info["steps"].append(f"fantasylabs: {len(fl_records)}")
-        props_records = fp_de_records + dk_records + lt_records + fl_records
+        bpp_records = snapshot_bettingpros_props(today)
+        debug_info["steps"].append(f"bettingpros_props: {len(bpp_records)}")
+        props_records = fp_de_records + dk_records + lt_records + fl_records + bpp_records
 
         dimers_records = snapshot_dimers(today)
         debug_info["steps"].append(f"dimers: {len(dimers_records)}")
         covers_records = snapshot_covers(today)
         debug_info["steps"].append(f"covers: {len(covers_records)}")
-        bp_records = snapshot_bettingpros(today)
-        debug_info["steps"].append(f"bettingpros: {len(bp_records)}")
+        bp_records = []  # old game-pick BettingPros function was removed; props handled above
         wb_records = snapshot_wagerbird(today)
         debug_info["steps"].append(f"wagerbird: {len(wb_records)}")
         sl_records = snapshot_sportsline(today)
         debug_info["steps"].append(f"sportsline: {len(sl_records)}")
-        game_records = dimers_records + covers_records + bp_records + wb_records + sl_records
+        pw_records = snapshot_pickwatch(today)
+        debug_info["steps"].append(f"pickwatch: {len(pw_records)}")
+        game_records = dimers_records + covers_records + bp_records + wb_records + sl_records + pw_records
     except Exception as e:
         import traceback
         debug_info["error"] = f"{e}\n{traceback.format_exc()}"

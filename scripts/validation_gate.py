@@ -80,7 +80,7 @@ def main():
     for src, st in cal.items():
         pairs = st.get("pairs") or []
         flags = st.get("actual_hit_flags") or []
-        if not pairs and flags and src in ("sportsline", "fantasylabs", "bettinginsider"):
+        if not pairs and flags and src in ("sportsline", "fantasylabs", "bettinginsider", "pickwatch"):
             out[f"source:{src}"] = evaluate_flat(flags)
             continue
         res = evaluate(pairs) if pairs else {"status": "INSUFFICIENT", "n": 0, "need": MIN_N,
