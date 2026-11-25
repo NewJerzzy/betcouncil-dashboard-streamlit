@@ -1210,6 +1210,29 @@ def _board_grading_rows_for_tier(tier):
         return []
 
 
+def tier_below_breakeven(tier, min_n=100, breakeven=0.5238):
+    """If this tier's graded hit rate is significantly below breakeven, return
+    {"n","hit"}; else None. Uses the full graded board (same data the gate tests)."""
+    key = f"_tier_dem_{tier}"
+    if key in st.session_state:
+        return st.session_state[key]
+    res = None
+    try:
+        rows = _board_grading_rows_for_tier(tier)
+        n = len(rows)
+        if n >= min_n:
+            w = sum(1 for r in rows if r.get("outcome") == "WIN")
+            p = w / n
+            z = 1.96
+            hi = (p + z * z / (2 * n) + z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / (1 + z * z / n)
+            if hi < breakeven:
+                res = {"n": n, "hit": p}
+    except Exception:
+        res = None
+    st.session_state[key] = res
+    return res
+
+
 def get_real_calibration_correction(tier, min_n=15):
     """
     Real, data-driven calibration correction (2026-08-20). Computes the
@@ -17914,6 +17937,19 @@ def load_sport_data(sport):
                 prop["RawProb"] = round(_raw_prob, 4)
                 prop["Prob"] = round(_corrected_prob, 4)
                 prop["CalibrationCorrection"] = round(_cal_gap, 4)
+        # ── Tier reality check (validation-gate aligned) ──
+        # A tier whose graded hit rate is statistically BELOW the 52.38% (-110) breakeven
+        # (95% Wilson upper bound < breakeven, n>=100) is not allowed to present as a bet
+        # tier; its picks are shown as LEAN until the tier's real results recover.
+        if _cal_tier_final in ("SOVEREIGN", "ELITE", "APPROVED"):
+            _tier_dem = tier_below_breakeven(_cal_tier_final)
+            if _tier_dem:
+                prop["OriginalTier"] = prop.get("OriginalTier") or _cal_tier_final
+                prop["Tier"] = "LEAN"
+                prop["TierNote"] = prop.get("TierNote", "") + (
+                    f" | ⬇️ Calibration: {_cal_tier_final} tier has hit {_tier_dem['hit']:.0%} over "
+                    f"{_tier_dem['n']} graded picks (breakeven 52.4%) -- shown as LEAN")
+                prop["CalibrationDemoted"] = True
 
 
     quality_sorted = sorted(enriched, key=lambda x: x.get("LockScore", 0), reverse=True)

@@ -3563,6 +3563,16 @@ with tabs[3]:
                     f'padding:2px 8px;border-radius:10px;background:{_vsin_color}22;color:{_vsin_color};'
                     f'border:0.5px solid {_vsin_color}44;margin-left:6px;">{_vsin_icon} Nevada</span>'
                 )
+            _gl_dim_html = ""
+            _gl_dim = next((r for r in _g.get("recommendations", []) if r.get("dimers_note")), None)
+            if _gl_dim:
+                _dim_ok = bool(_gl_dim.get("dimers_confirms"))
+                _dim_color = "#22c55e" if _dim_ok else "#e04040"
+                _gl_dim_html = (
+                    f'<span title="{_gl_dim.get("dimers_note","")}" style="font-size:11px;font-weight:600;'
+                    f'padding:2px 8px;border-radius:10px;background:{_dim_color}22;color:{_dim_color};'
+                    f'border:0.5px solid {_dim_color}44;margin-left:6px;">{"🧪✓" if _dim_ok else "🧪✗"} Dimers</span>'
+                )
             _gl_row_best = max(_picks, key=lambda p: abs(p["edge"]))
             _gl_row_tc = _tc2.get(_gl_row_best["tier"], "#6a7a8a")
             _gl_row_edge_pct = abs(_gl_row_best["edge"]) * 100
@@ -3733,7 +3743,7 @@ with tabs[3]:
                 + _gl_logos_html +
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_age_html + _gl_row_ring_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_dim_html + _gl_badge_html + _gl_verdict_html + _gl_age_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
