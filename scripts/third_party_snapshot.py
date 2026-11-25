@@ -538,17 +538,25 @@ def snapshot_fantasylabs(today: str) -> list:
             side = str(row.get("side", "")).upper()
             sport = str(mk.get("sport", "")).upper()
             ev = mk.get("eventDate")
-            if side not in ("OVER", "UNDER") or sport not in SPORTS or not isinstance(ev, str):
+            if side not in ("OVER", "UNDER") or sport not in SPORTS:
                 continue
-            t = _dt.fromisoformat(ev.replace("Z", "+00:00")).timestamp()
-            if not _ms_within(t * 1000):
-                continue
+            import time as _tm
+            if isinstance(ev, str) and ev not in ("$undefined",):
+                t = _dt.fromisoformat(ev.replace("Z", "+00:00")).timestamp()
+                if not _ms_within(t * 1000):
+                    continue
+            else:
+                # Source supplies no game time for most expert picks (its own docs say so);
+                # fall back to publication time (timezone unspecified -> wide window).
+                pub = _dt.fromisoformat(str(row.get("date")).replace(" ", "T")).timestamp()
+                if not (_tm.time() - 30 * 3600 < pub < _tm.time() + 12 * 3600):
+                    continue
             records.append({"source": "fantasylabs", "sport": sport, "player": pl["playerName"],
                             "prop_type": mk["stat"], "line": float(mk["value"]), "side": side,
                             "expert": (row.get("expert") or {}).get("name"), "implied_prob": None})
         except Exception:
             continue
-    log(f"  fantasylabs: {len(records)} upcoming expert prop picks")
+    log(f"  fantasylabs: {len(records)} of {len(rows)} expert prop picks kept")
     return records
 
 
