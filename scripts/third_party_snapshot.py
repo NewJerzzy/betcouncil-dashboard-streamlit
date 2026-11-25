@@ -92,27 +92,6 @@ def gist_write(token: str, filename: str, payload) -> bool:
     return False
 
 
-def snapshot_lineterminal(today: str) -> list:
-    records = []
-    for sport in ("MLB", "WNBA"):
-        data = gist_read(f"betcouncil_lineterminal_props_{sport}.json")
-        if not data:
-            continue
-        for game in data.get("games", []):
-            for p in game.get("props", []):
-                v = p.get("verdict", {}) or {}
-                if not v.get("recommend") or not v.get("side"):
-                    continue
-                if not (p.get("player_name") and p.get("stat_label") and p.get("point") is not None):
-                    continue
-                records.append({
-                    "source": "lineterminal", "sport": sport, "player": p["player_name"],
-                    "prop_type": p["stat_label"], "line": p["point"], "side": v["side"].upper(),
-                    "implied_prob": v.get("model_prob_pct") / 100.0 if v.get("model_prob_pct") is not None else None,
-                })
-    return records
-
-
 def snapshot_favoredprops(today: str) -> list:
     # FavoredProps now lives in ONE combined Gist file keyed "<kind>_<SPORT>";
     # the old per-sport files no longer exist, so this tracker silently
@@ -227,168 +206,6 @@ def snapshot_covers(today: str) -> list:
                 "home": teams[-1], "away": teams[0], "market": "MONEYLINE", "pick": side,
                 "line": 0, "implied_prob": max(home_pct, away_pct) / 100 if max(home_pct, away_pct) > 1 else max(home_pct, away_pct),
             })
-    return records
-
-
-MLB_TEAM_ABBR = {
-    "arizona": "AZ", "atlanta": "ATL", "baltimore": "BAL", "boston": "BOS",
-    "chicago cubs": "CHC", "cubs": "CHC", "chicago white sox": "CWS", "white sox": "CWS",
-    "cincinnati": "CIN", "cleveland": "CLE", "colorado": "COL", "detroit": "DET",
-    "houston": "HOU", "kansas city": "KC", "los angeles angels": "LAA", "angels": "LAA",
-    "los angeles dodgers": "LAD", "dodgers": "LAD", "miami": "MIA", "milwaukee": "MIL",
-    "minnesota": "MIN", "new york yankees": "NYY", "yankees": "NYY",
-    "new york mets": "NYM", "mets": "NYM", "athletics": "ATH", "oakland": "ATH",
-    "philadelphia": "PHI", "pittsburgh": "PIT", "san diego": "SD",
-    "san francisco": "SF", "seattle": "SEA", "st. louis": "STL", "st louis": "STL",
-    "tampa bay": "TB", "texas": "TEX", "toronto": "TOR", "washington": "WSH",
-}
-
-WAGERBIRD_MARKET_PATTERNS = [
-    # (regex, market, group->pick logic)
-    (re.compile(r"^(.+?)\s+ML$"), "MONEYLINE"),
-    (re.compile(r"^(.+?)\s+([+-]\d+(?:\.\d+)?)$"), "RUN_LINE"),
-    (re.compile(r"^(.+?)\s+F5\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "F5_TEAM_TOTAL"),
-    (re.compile(r"^(.+?)\s+First\s+5\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "F5_TEAM_TOTAL"),
-    (re.compile(r"^(.+?)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "TEAM_TOTAL"),
-    (re.compile(r"^Game\s+Total\s+(Over|Under)\s*([\d.]+)?$", re.I), "GAME_TOTAL"),
-]
-
-
-def _team_to_abbr(name: str):
-    n = name.lower().strip()
-    if n in MLB_TEAM_ABBR:
-        return MLB_TEAM_ABBR[n]
-    for k, v in MLB_TEAM_ABBR.items():
-        if k in n or n in k:
-            return v
-    return None
-
-
-def snapshot_wagerbird(today: str) -> list:
-    """
-    Parses betcouncil_wagerbird_picks.json (written by wagerbird_refresh.py)
-    into the same game-record schema used by dimers/covers/bettingpros above.
-    WagerBird's `pick_text` is a short human title ("San Diego ML", "Arizona
-    +1.5", "Baltimore F5 Team Total Under 2.5", "Game Total Under 10.5") with
-    no separate structured market/side fields, so it's parsed here via
-    regex rather than trusted as already-structured — not verified against
-    resolve_actual_game_result_for_grading before this first deploy, so a
-    100% UNGRADABLE rate on the first backtest run would mean the team-name
-    -> abbreviation mapping or market string doesn't match what that
-    resolver expects, not that WagerBird's data is bad.
-    Team-total lines with no number in the title (e.g. "Houston Team Total
-    Under" with the actual number only in the prose rationale) are skipped
-    rather than guessed — line=None records are dropped, not graded.
-    """
-    data = gist_read("betcouncil_wagerbird_picks.json")
-    if not data:
-        return []
-    records = []
-    for p in data.get("picks", []):
-        matchup = p.get("matchup") or ""
-        pick_text = (p.get("pick_text") or "").strip()
-        if " @ " not in matchup or not pick_text:
-            continue
-        away_abv, home_abv = [x.strip() for x in matchup.split(" @ ", 1)]
-
-        market, pick, line = None, None, None
-
-        m = re.match(r"^(.+?)\s+ML$", pick_text)
-        if m:
-            team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
-            if team_abv in (home_abv, away_abv):
-                market, pick, line = "MONEYLINE", ("HOME" if team_abv == home_abv else "AWAY"), 0
-        if market is None:
-            m = re.match(r"^(.+?)\s+([+-]\d+(?:\.\d+)?)$", pick_text)
-            if m:
-                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
-                if team_abv in (home_abv, away_abv):
-                    market = "RUN_LINE"
-                    pick = "HOME" if team_abv == home_abv else "AWAY"
-                    line = float(m.group(2))
-        if market is None:
-            m = re.match(r"^(.+?)\s+(?:F5|First\s+5)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
-            if m and m.group(3):
-                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
-                market, pick, line = "F5_TEAM_TOTAL", m.group(2).upper(), float(m.group(3))
-                if team_abv not in (home_abv, away_abv):
-                    market = None
-        if market is None:
-            m = re.match(r"^(.+?)\s+Team\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
-            if m and m.group(3):
-                team_abv = _team_to_abbr(m.group(1)) or m.group(1).strip().upper()
-                market, pick, line = "TEAM_TOTAL", m.group(2).upper(), float(m.group(3))
-                if team_abv not in (home_abv, away_abv):
-                    market = None
-        if market is None:
-            m = re.match(r"^Game\s+Total\s+(Over|Under)\s*([\d.]+)?$", pick_text, re.I)
-            if m and m.group(2):
-                market, pick, line = "GAME_TOTAL", m.group(1).upper(), float(m.group(2))
-
-        if not (market and pick is not None and line is not None):
-            continue  # unparsed title shape or missing line — skip rather than guess
-
-        records.append({
-            "source": "wagerbird", "sport": "MLB", "matchup": matchup,
-            "home": home_abv, "away": away_abv, "market": market, "pick": pick,
-            "line": line, "implied_prob": None,
-            "wagerbird_tier": p.get("tier"), "wagerbird_score": p.get("confidence_score"),
-        })
-    return records
-
-
-def snapshot_bettingpros(today: str) -> list:
-    """
-    fetch_bettingpros_from_gist(sport) -> (data, source_tag). Exact field
-    names for the "python_direct" path weren't verified live before this
-    first deploy — parsed defensively; if the real shape differs this
-    will just under-produce records rather than crash, and the next run's
-    debug won't silently look identical since gradable count will show it.
-    """
-    sys.path.insert(0, ".")
-    try:
-        from fetchers import fetch_bettingpros_from_gist
-    except ImportError:
-        log("  bettingpros: fetch_bettingpros_from_gist no longer exists in fetchers.py (removed as dead code 2026-07-26) -- skipping this snapshot section")
-        return []
-
-    records = []
-    raw_samples = []
-    for sport in SPORTS:
-        try:
-            data, _tag = fetch_bettingpros_from_gist(sport)
-        except Exception as e:
-            log(f"  bettingpros/{sport}: error — {e}")
-            continue
-        picks = data if isinstance(data, list) else data.get("picks", data.get("data", [])) if isinstance(data, dict) else []
-        if sport == "MLB" and len(raw_samples) < 1:
-            raw_samples.append({"sport": sport, "tag": _tag,
-                                 "data_type": type(data).__name__,
-                                 "data_keys": list(data.keys())[:20] if isinstance(data, dict) else None,
-                                 "picks_sample": picks[:2] if isinstance(picks, list) else str(picks)[:500]})
-        if not isinstance(picks, list):
-            continue
-        for p in picks:
-            if not isinstance(p, dict):
-                continue
-            matchup = p.get("matchup") or p.get("event") or ""
-            home = p.get("home_team") or p.get("home") or ""
-            away = p.get("away_team") or p.get("away") or ""
-            market = str(p.get("market_type") or p.get("market") or "").upper()
-            pick = p.get("pick") or p.get("selection") or ""
-            line = p.get("line", 0)
-            if not (matchup and home and away and market and pick):
-                continue
-            records.append({
-                "source": "bettingpros", "sport": sport, "matchup": matchup,
-                "home": home, "away": away, "market": market, "pick": pick,
-                "line": line, "implied_prob": p.get("consensus_pct") or p.get("win_pct"),
-            })
-    if not records and raw_samples:
-        try:
-            gist_write(os.environ.get("GITHUB_TOKEN", ""), "betcouncil_bettingpros_snapshot_debug.json", raw_samples)
-        except Exception:
-            pass
     return records
 
 
@@ -682,26 +499,22 @@ def main() -> int:
         # DK Most Bet disabled: it is crowd popularity (no prediction claim) and its table is now
         # Event/Date/Market/Betslip-Line/Odds (anytime-TD style), which the old parser never matched.
         dk_records = []
-        lt_records = snapshot_lineterminal(today)
-        debug_info["steps"].append(f"lineterminal: {len(lt_records)}")
         fl_records = snapshot_fantasylabs(today)
         debug_info["steps"].append(f"fantasylabs: {len(fl_records)}")
         bpp_records = snapshot_bettingpros_props(today)
         debug_info["steps"].append(f"bettingpros_props: {len(bpp_records)}")
-        props_records = fp_de_records + dk_records + lt_records + fl_records + bpp_records
+        props_records = fp_de_records + dk_records + fl_records + bpp_records
 
         dimers_records = snapshot_dimers(today)
         debug_info["steps"].append(f"dimers: {len(dimers_records)}")
         covers_records = snapshot_covers(today)
         debug_info["steps"].append(f"covers: {len(covers_records)}")
         bp_records = []  # old game-pick BettingPros function was removed; props handled above
-        wb_records = snapshot_wagerbird(today)
-        debug_info["steps"].append(f"wagerbird: {len(wb_records)}")
         sl_records = snapshot_sportsline(today)
         debug_info["steps"].append(f"sportsline: {len(sl_records)}")
         pw_records = snapshot_pickwatch(today)
         debug_info["steps"].append(f"pickwatch: {len(pw_records)}")
-        game_records = dimers_records + covers_records + bp_records + wb_records + sl_records + pw_records
+        game_records = dimers_records + covers_records + bp_records + sl_records + pw_records
     except Exception as e:
         import traceback
         debug_info["error"] = f"{e}\n{traceback.format_exc()}"
