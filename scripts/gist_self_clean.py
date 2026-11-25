@@ -166,7 +166,7 @@ def main():
                 still_pending.append((fname, days_orphaned))
 
     # Real deletion pass -- only files that cleared the full grace period.
-    MAX_DELETE_PER_RUN = 15
+    MAX_DELETE_PER_RUN = 40
     if len(deleted) > MAX_DELETE_PER_RUN:
         print(f"Safety cap: {len(deleted)} eligible, deleting only {MAX_DELETE_PER_RUN}")
         deleted = deleted[:MAX_DELETE_PER_RUN]
