@@ -14006,6 +14006,20 @@ def fetch_nba_live_stats() -> dict:
 
 
 
+def fetch_nfl_srs_from_gist(max_age_hours: int = 72) -> dict:
+    """Results-based, opponent-adjusted NFL ratings in POINTS vs an average team
+    (scripts/nfl_srs_refresh.py). Keys: full team name and abbreviation. {} if stale/missing."""
+    try:
+        data = _read_gist_file("betcouncil_nfl_srs.json", cache_minutes=30)
+        if not data or not data.get("ratings"):
+            return {}
+        from datetime import datetime as _d, timezone as _tz
+        age = (_d.now(_tz.utc) - _d.fromisoformat(data["captured_at"])).total_seconds() / 3600
+        return data["ratings"] if age <= max_age_hours else {}
+    except Exception:
+        return {}
+
+
 def fetch_nfl_live_stats() -> dict:
     """
     Live NFL season stats from ESPN standings API (most recent completed season).

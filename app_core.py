@@ -7373,9 +7373,25 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     # of 5-15 were compared straight against point spreads and
                     # pinned nearly every game at the +/-20% cap.
                     power_diff = power_diff * 0.6 + 2.0
+                    # Results-based SRS (points vs average, opponent-adjusted) beats the raw
+                    # point-diff / preseason-odds rating, which pinned nearly every spread at
+                    # the cap. 35% regression to the mean (11-12 game samples), +2.0 home field.
+                    _srs = fetch_nfl_srs_from_gist()
+                    _srs_h = _srs.get(home_full, _srs.get(home_team))
+                    _srs_a = _srs.get(away_full, _srs.get(away_team))
+                    if _srs_h is not None and _srs_a is not None:
+                        power_diff = 0.65 * (_srs_h - _srs_a) + 2.0
+                        _nfl_srs_used = True
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / (30.0 if sport == "NFL" else 10.0)
+                if sport == "NFL" and locals().get("_nfl_srs_used"):
+                    # Honest cover probability: NFL margin sd ~13.5 pts. Edge = P(cover) - 52.38%
+                    # (-110 breakeven), signed toward the side the model prefers. No saturation.
+                    _z = abs(spread_edge) / 13.5
+                    _p_cover = 0.5 * (1.0 + math.erf(_z / math.sqrt(2.0)))
+                    _e = _p_cover - 0.5238
+                    spread_edge_pct = _e if spread_edge > 0 else -_e
                 # NBA/WNBA spread compression: these sports share NFL's tier
                 # thresholds (SOVEREIGN 0.12/ELITE 0.08/APPROVED 0.04/LEAN 0.02)
                 # but NFL gets further downstream compression (divisional -15%,
@@ -7607,7 +7623,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     # NFL lines are the most efficient US market: regress the model's
                     # gap to the market by half and cap at 12%, so a single
                     # rating-based opinion can't read as a 20% "lock".
-                    spread_edge_pct = max(-0.12, min(0.12, spread_edge_pct * 0.5))
+                    spread_edge_pct = max(-0.12, min(0.12, spread_edge_pct * (1.0 if locals().get("_nfl_srs_used") else 0.5)))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
