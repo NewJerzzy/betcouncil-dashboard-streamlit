@@ -10,8 +10,17 @@ out["games"] = [{k: g.get(k) for k in ("id", "home_team_id", "road_team_id", "ki
 out["game_keys"] = list(games[0])
 cat = requests.get(f"{A}/experts-list", headers=H, timeout=30).json()
 out["catalog_n"] = len(cat); out["catalog_sample"] = cat[:2]
-card = requests.get(f"{A}/profile/picks/nfl/pete-prisco/{s}/{w}", params={"types": '["ats"]', "teams": "[]"}, headers=H, timeout=30).json()
-out["card_n"] = len(card.get("picks", [])); out["card"] = card.get("picks", [])[:6]
+ex = ["pete-prisco","tyler-sullivan","dave-richard","jared-dubin","john-breech","brad-gagnon","brent-sobleski","gary-davenport","bill-bender","vinnie-iyer","chris-simms","frank-schwab","gennaro-filice","jarrett-bell","sam-farmer"]
+out["card_n"] = {}; out["card"] = []
+for e in ex:
+    try:
+        c = requests.get(f"{A}/profile/picks/nfl/{e}/{s}/{w}", params={"types": '["ats"]', "teams": "[]"}, headers=H, timeout=30).json()
+        pk = c.get("picks", [])
+        out["card_n"][e] = [len(pk), sum(1 for x in pk if x.get("pick") in ("_locked","locked"))]
+        out["card"] += [x for x in pk if x.get("pick") not in ("_locked","locked")][:2]
+    except Exception as ee:
+        out["card_n"][e] = str(ee)[:60]
+out["games_spread"] = [{k: g.get(k) for k in ("home_team_id","road_team_id","home_team_spread","road_team_spread","over_under")} for g in games[:4]]
 out["team_sample"] = (m.get("teams", {}).get("nfl", {}).get("selectTeams") or [])[:2]
 txt = json.dumps(out, indent=1, default=str)
 print(txt[:6000])
