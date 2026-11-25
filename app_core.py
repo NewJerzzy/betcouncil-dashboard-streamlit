@@ -8620,7 +8620,6 @@ def get_live_power_ratings(sport, fallback_ratings):
     return merged, source_label
 
 
-@st.cache_data(ttl=900, show_spinner=False)
 def _attach_dimers_crosscheck(analysis, sport):
     """Independent cross-check of MONEYLINE picks against Dimers' model.
     Dimers model win prob = market prob + H2H edge (pct pts). Annotation only —
@@ -8647,6 +8646,7 @@ def _attach_dimers_crosscheck(analysis, sport):
         pass
 
 
+@st.cache_data(ttl=900, show_spinner=False)
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
     power_map = {"NBA": NBA_POWER_RATINGS, "WNBA": WNBA_POWER_RATINGS, "MLB": MLB_POWER_RATINGS, "NHL": NHL_POWER_RATINGS, "NFL": NFL_POWER_RATINGS}
