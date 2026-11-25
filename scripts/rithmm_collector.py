@@ -125,11 +125,16 @@ def normalize_games(raw: dict) -> list:
 
 # Only stat labels the grader's mapper resolves correctly; unknown Rithmm codes are dropped, never guessed.
 _PROP_LABEL = {
-    "NBA": {"points": "Points", "rebounds": "Rebounds", "assists": "Assists", "steals": "Steals", "blocks": "Blocks",
-            "threes": "3-Pointers Made", "three_pointers_made": "3-Pointers Made", "3pm": "3-Pointers Made"},
-    "NFL": {"receiving_yards": "Receiving Yards", "rushing_yards": "Rushing Yards", "passing_yards": "Passing Yards"},
-    "NHL": {"goals": "Goals", "assists": "Assists", "points": "Points", "shots_on_goal": "Shots on Goal"},
+    "NBA": {"points": "Points", "pts": "Points", "rebounds": "Rebounds", "rebs": "Rebounds", "assists": "Assists",
+            "asts": "Assists", "steals": "Steals", "stls": "Steals", "blocks": "Blocks", "blks": "Blocks",
+            "threes": "3-Pointers Made", "3pts": "3-Pointers Made", "3pm": "3-Pointers Made",
+            "three_pointers_made": "3-Pointers Made"},
+    "NFL": {"receiving_yards": "Receiving Yards", "rec_yds": "Receiving Yards", "rushing_yards": "Rushing Yards",
+            "rush_yds": "Rushing Yards", "passing_yards": "Passing Yards", "pass_yds": "Passing Yards"},
+    "NHL": {"goals": "Goals", "assists": "Assists", "points": "Points", "shots_on_goal": "Shots on Goal", "sog": "Shots on Goal"},
 }
+_PROP_LABEL["NCAAB"] = _PROP_LABEL["WNBA"] = _PROP_LABEL["NBA"]
+_PROP_LABEL["NCAAF"] = _PROP_LABEL["NFL"]
 
 
 def normalize_props(raw: dict, stats: dict = None) -> list:
@@ -265,7 +270,7 @@ def collect_raw():
                     "Accept": "application/json", "Authorization": a, "Origin": APP, "Referer": f"{APP}/home",
                     "Content-Type": t["ct"]})
                 if r.status_code != 200:
-                    log(f"  {path}: HTTP {r.status_code}")
+                    log(f"  {path}: HTTP {r.status_code} {r.text[:160]!r}")
                     break
                 j = r.json()
                 _merge(raw[path], j)
