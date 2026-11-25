@@ -9,6 +9,7 @@ Secrets: RITHMM_LOGIN_EMAIL, RITHMM_LOGIN_PASSWORD, GITHUB_TOKEN (Gist write).
 """
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -221,7 +222,13 @@ def collect_raw():
         page.locator('input[type="email"], input[name*="email" i]').first.fill(email)
         page.get_by_text("continue with email", exact=False).first.click()
         page.locator('input[type="password"]:visible, input[name*="password" i]:visible').first.fill(pw)
-        page.get_by_text("Sign in", exact=True).last.click()
+        try:
+            page.get_by_text(re.compile(r"^\s*sign in\s*$", re.I)).last.click()
+        except Exception:
+            # diagnostic only: which buttons does the page actually show? (no field values printed)
+            log("  sign-in button not found; visible buttons: " + str(
+                [b.strip()[:30] for b in page.locator("button, [role=button]").all_inner_texts()][:15]))
+            raise
         try:
             page.wait_for_url("**/home**", timeout=20000)
         except Exception:
