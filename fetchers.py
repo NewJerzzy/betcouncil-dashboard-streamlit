@@ -16294,26 +16294,43 @@ def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -
     if not raw_props:
         return [], "unavailable"
 
-    results = []
-    seen = set()
+    # The feed holds EVERY sport (NBA/NHL/SOCCER/NFL...) and a multiplier LADDER per player+stat
+    # (e.g. Points 5.5 @0.7x ... 17.5 @10.6x), repeated many times. Previously every row was stamped
+    # with the requested sport (NBA players showed up on the NFL board) and each ladder rung was
+    # scored as if it were the main line (hence dozens of identical "Under 6.0 / 55%" picks).
+    # Keep only this sport's rows and ONE standard line per player+stat (multiplier closest to 1x).
+    _sp_alias = {"SOCCER": {"SOCCER"}, "NCAAF": {"NCAAF", "CFB"}, "NCAAB": {"NCAAB", "CBB"}}
+    _want = _sp_alias.get(str(sport).upper(), {str(sport).upper()})
+
+    def _mult(m):
+        try:
+            return float(str(m).lower().replace("x", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    best = {}
     for p in raw_props:
         player = p.get("player") or p.get("Player")
+        row_sport = str(p.get("Sport") or p.get("sport") or p.get("league") or "").upper()
+        if row_sport and row_sport not in _want:
+            continue
         stat_name = p.get("stat_name") or p.get("Prop") or p.get("stat")
         line = p.get("line") or p.get("Line") or p.get("targetValue")
-        multiplier = p.get("multiplier") or p.get("standingsMultiplier")
-
+        multiplier = p.get("multiplier") or p.get("Multiplier") or p.get("standingsMultiplier")
         if not player or line is None:
             continue
         try:
             line_val = float(line)
         except (TypeError, ValueError):
             continue
+        m = _mult(multiplier)
+        dist = abs(m - 1.0) if m is not None else 0.0
+        k = (player, stat_name)
+        if k not in best or dist < best[k][0]:
+            best[k] = (dist, player, stat_name, line_val, multiplier, p)
 
-        key = (player, stat_name, line_val, multiplier)
-        if key in seen:
-            continue
-        seen.add(key)
-
+    results = []
+    for _d, player, stat_name, line_val, multiplier, p in best.values():
         results.append({
             "Player": player,
             "Prop": stat_name or "Unknown",
