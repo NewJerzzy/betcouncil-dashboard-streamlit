@@ -1,6 +1,6 @@
 .runtime/
 __pycache__/
 *.py[cod]
-/generated-artifacts/.cache/
+/generated-artifacts/
 
 .cache/
