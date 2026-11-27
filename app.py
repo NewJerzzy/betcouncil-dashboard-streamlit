@@ -7818,6 +7818,10 @@ with tabs[7]:
     board = st.session_state.get("board_data", [])
     board_loaded = bool(board)
 
+    from demon_hit_ui import render_loaded_demons, render_hit_rows
+    from demon_hit_sources import assess_player as assess_demon_player
+    render_loaded_demons(_app_core_module, board)
+
     if not board_loaded:
         st.info("💡 Load the board first for full signal analysis. Or enter picks manually below — we'll analyze using historical averages.")
 
@@ -8034,12 +8038,16 @@ with tabs[7]:
     with st.expander("📋 Paste a board list (get Over/Under suggestions)", expanded=False):
         st.caption(
             "Paste a raw copy of a PrizePicks prop list — the whole board, before you've "
-            "picked a side on anything. Works for any sport in the format shown below; "
-            "the model checks each one using the same logic as the rest of the app and "
-            "suggests Over, Under, or Pass. You don't need to reformat anything per "
-            "sport — just tell it which sport you pasted."
+            "picked a side on anything. Hit-focused mode checks the exact More line against "
+            "dated game logs and leaves unsupported stats ungraded. Turn it off for the "
+            "existing Over/Under edge suggestions. Select the sport that matches your paste."
         )
         _board_sport = st.selectbox("Sport", SPORTS, key="_board_paste_sport")
+        _board_hit_mode = st.checkbox(
+            "Prioritize hit likelihood · grade these as More-only demon/alt lines",
+            value=True, key="_board_paste_hit_mode",
+            help="Uses real dated game logs at the submitted line. Turn off for the existing Over/Under edge model.",
+        )
         _board_text = st.text_area(
             "Paste the board list here", height=200, key="_board_paste_text",
             placeholder="Lanlana Tararudee - Player\nLanlana Tararudee\n@ Hanne Vandewinkel Sun 1:00am\n21.5\nTotal Games\nLessMore\n..."
@@ -8061,6 +8069,14 @@ with tabs[7]:
             (main-thread) rendering."""
             player, opponent = prop["player"], prop["opponent"]
             line_val, stat = prop["line"], prop["stat"]
+            if _board_hit_mode:
+                return {
+                    "player": player, "opponent": opponent, "stat": stat,
+                    "line": line_val, "sport": _board_sport,
+                    "hit_analysis": assess_demon_player(
+                        _app_core_module, player, stat, line_val, _board_sport
+                    ),
+                }
             suggestion, edge_str, edge_val, avg_val = "PASS", "", 0.0, None
             _smart_sig, _tier, _no_data = {}, "PASS", False
 
@@ -8183,8 +8199,8 @@ with tabs[7]:
                         f"re-analyze, or these props will show as 'no data' even though they're valid."
                     )
 
-                _t_wta = fetch_tennis_scoreboard("wta") if _board_sport == "Tennis" else {}
-                _t_ctx = fetch_tennis_tournament_context() if _board_sport == "Tennis" else {}
+                _t_wta = fetch_tennis_scoreboard("wta") if _board_sport == "Tennis" and not _board_hit_mode else {}
+                _t_ctx = fetch_tennis_tournament_context() if _board_sport == "Tennis" and not _board_hit_mode else {}
                 # Pre-warm shared caches ONCE, sequentially, before
                 # parallelizing -- avoids worker threads racing to
                 # populate the same session_state key simultaneously.
@@ -8192,7 +8208,7 @@ with tabs[7]:
                 # sticking for the whole session -- otherwise a single
                 # transient failure (or a fix landing mid-session) would
                 # silently block every retry until a full page reload.
-                if _board_sport == "WNBA":
+                if _board_sport == "WNBA" and not _board_hit_mode:
                     _rolling_cached = st.session_state.get("wnba_rolling_avgs")
                     _rolling_ts = st.session_state.get("wnba_rolling_avgs_ts", 0)
                     _rolling_stale = (not _rolling_cached) and (time.time() - _rolling_ts > 300)
@@ -8230,6 +8246,10 @@ with tabs[7]:
                 st.success(f"Found {len(_board_rows)} props.")
 
         _board_rows = st.session_state.get("_board_paste_results", [])
+        _hit_rows = [row for row in _board_rows if "hit_analysis" in row]
+        if _hit_rows:
+            render_hit_rows(_hit_rows)
+        _board_rows = [row for row in _board_rows if "hit_analysis" not in row]
         if _board_rows:
             if any(r.get("suggestion") == "PASS" for r in _board_rows):
                 st.caption(

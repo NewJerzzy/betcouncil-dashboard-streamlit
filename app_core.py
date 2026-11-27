@@ -15676,7 +15676,7 @@ def load_sport_data(sport):
             _bdl_results = _fetch_parallel(_bdl_fns, show_progress=False)
             for _pl, _res in zip(_bdl_players, _bdl_results):
                 _bdl_avg_prefetch[_pl] = _res
-    if BDL_API_KEY:
+    if BDL_API_KEY and sport == "NBA":
         _needs_logs = set()
         for _p in props:
             _pl = _p.get("Player","")
@@ -15687,7 +15687,7 @@ def load_sport_data(sport):
                 _needs_logs.add(_pl)
         if _needs_logs:
             _log_players = list(_needs_logs)
-            _log_fns = [(lambda _pl=_pl: fetch_player_game_logs(_pl, sport, 20)) for _pl in _log_players]
+            _log_fns = [(lambda _pl=_pl: fetch_player_game_logs(_pl, last_n=20)) for _pl in _log_players]
             _log_results = _fetch_parallel(_log_fns, show_progress=False)
             for _pl, _res in zip(_log_players, _log_results):
                 _bdl_logs_prefetch[_pl] = _res if _res is not None else []

@@ -19489,7 +19489,11 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
         if r.status_code != 200: return []
         people = r.json().get("people", [])
         if not people: return []
-        player_id = people[0]["id"]
+        exact_people = [person for person in people
+                        if normalize_name(person.get("fullName", "")) == normalize_name(player_name)]
+        if len(exact_people) != 1:
+            return []
+        player_id = exact_people[0]["id"]
         # Get recent game logs
         stats_url = (f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
                      f"?stats=gameLog&season={_current_mlb_season_year()}&sportId=1&group=hitting")
@@ -19504,6 +19508,7 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
             opponent = s.get("opponent", {})
             logs.append({
                 "date":     s.get("date",""),
+                "game_id":  game.get("gamePk"),
                 "home":     s.get("isHome", True),
                 "opponent": opponent.get("abbreviation",""),
                 "H":        stat.get("hits", 0),
@@ -19513,6 +19518,7 @@ def fetch_mlb_player_game_logs(player_name, last_n=15):
                 "BB":       stat.get("baseOnBalls", 0),
                 "K":        stat.get("strikeOuts", 0),
                 "AB":       stat.get("atBats", 0),
+                "PA":       stat.get("plateAppearances"),
             })
         return logs
     except (requests.RequestException, ValueError, KeyError):

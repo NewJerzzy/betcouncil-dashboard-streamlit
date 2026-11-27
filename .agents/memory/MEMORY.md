@@ -13,3 +13,4 @@
 - [PickFinder integration scope](pickfinder-integration-scope.md) — owner-authorized, but avoid a duplicate live feed; use only missing enrichments or middle inputs.
 - [OddsAssist feed scope](oddsassist-feed-scope.md) — admit verified expert selections without another full odds feed; user wants an add-or-skip decision, not a trial.
 - [Betting Insider live scope](bettinginsider-live-scope.md) — live website routes differ from historical-only developer API; only admit experts with independently checked prior picks.
+- [Demon analysis priority](demon-analysis-priority.md) — prioritize the chance of clearing the exact prop line and evidence quality, not payout.
