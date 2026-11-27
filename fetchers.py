@@ -1053,9 +1053,23 @@ def fetch_betonline_prop_price(fixture_id, key, sport="MLB",
 def fetch_auto_scraped_props(sport="NBA"):
     """Fetch props from GitHub Gist. Fallback when PrizePicks direct fails."""
     try:
-        if not GITHUB_TOKEN or not GITHUB_GIST_ID:
+        if not GITHUB_GIST_ID:
             log_error_to_session("fetch_auto_scraped_props", "GitHub credentials not configured", "warning")
             return []
+        if not GITHUB_TOKEN:
+            _raw = _gist_raw_read("auto_scraped_props.json")
+            if not _raw:
+                log_error_to_session("fetch_auto_scraped_props", "GITHUB_TOKEN missing and public read failed", "warning")
+                return []
+            gist_content = _raw
+            all_props = gist_content.get("props", [])
+            props = [p for p in all_props if p.get("Sport", "").upper() == sport.upper()]
+            try:
+                import streamlit as _st
+                _st.session_state[f"auto_scraped_props_{sport}"] = props
+            except Exception:
+                pass
+            return props
 
         r = _http.get(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
@@ -6764,6 +6778,11 @@ def scrape_prizepicks(sport):
                 # Mimics real Chrome at the TLS layer — may bypass Akamai
                 # without ScrapeOps proxy. Silent fallback if unavailable.
                 _cffi_success = False
+                # Once PrizePicks has rate-limited/blocked this server (429/403), every
+                # further direct attempt in the session fails too and just deepens the
+                # block -- skip straight to the Gist data.
+                if st.session_state.get("pp_direct_blocked", False):
+                    continue
                 try:
                     from curl_cffi import requests as cffi_requests
                     _cffi_headers = {
@@ -6801,6 +6820,8 @@ def scrape_prizepicks(sport):
                         # x-device-info header fix actually changes the
                         # response (was a 403 before; if still 403, the header
                         # fix didn't help and the real blocker is elsewhere).
+                        if _cffi_resp.status_code in (403, 429):
+                            st.session_state["pp_direct_blocked"] = True
                         log_error_to_session("scrape_prizepicks_cffi", f"HTTP {_cffi_resp.status_code} on {url[-40:]}", "warning")
                 except ImportError:
                     log_error_to_session("scrape_prizepicks_cffi", "curl_cffi not installed", "warning")
@@ -6826,7 +6847,19 @@ def scrape_prizepicks(sport):
                     if _pp_so_gist and _pp_so_gist.get("exhausted") and _pp_so_gist.get("month") == datetime.now().strftime("%Y-%m"):
                         _pp_so_exhausted = True
                         st.session_state["scrapeops_exhausted"] = True
-                if not _cffi_success and SCRAPEOPS_KEY and not _pp_so_exhausted:
+                # CREDIT-BURN FIX (2026-11): this residential-proxy call ran for every
+                # sport whose Gist entry was missing/stale (off-season sports, 1H/2H/Q
+                # variants, anything >100 min old), up to 6 URLs each, per board load.
+                # PrizePicks answers these with a captcha/HTML page (HTTP 200) that was
+                # never flagged as a failure, so every attempt kept spending credits
+                # for nothing. prizepicks_refresh.yml already supplies the data, so the
+                # paid proxy is now opt-in (st.secrets PP_USE_SCRAPEOPS = "true") and
+                # shuts itself off for the session after the first non-JSON reply.
+                _pp_so_allowed = (
+                    str(st.secrets.get("PP_USE_SCRAPEOPS", "false")).lower() == "true"
+                    and not st.session_state.get("pp_scrapeops_blocked", False)
+                )
+                if not _cffi_success and SCRAPEOPS_KEY and not _pp_so_exhausted and _pp_so_allowed:
                     try:
                         from urllib.parse import quote as _q
                         _so_url = (
@@ -6847,6 +6880,7 @@ def scrape_prizepicks(sport):
                             # Check for captcha response (returns HTML not JSON)
                             content_type = resp.headers.get("content-type", "")
                             if "html" in content_type or resp.text.strip().startswith("<"):
+                                st.session_state["pp_scrapeops_blocked"] = True
                                 continue
                             data = resp.json()
                             if data and data.get("data"):
@@ -13986,6 +14020,20 @@ def fetch_nba_live_stats() -> dict:
 
 
 
+def fetch_nfl_srs_from_gist(max_age_hours: int = 72) -> dict:
+    """Results-based, opponent-adjusted NFL ratings in POINTS vs an average team
+    (scripts/nfl_srs_refresh.py). Keys: full team name and abbreviation. {} if stale/missing."""
+    try:
+        data = _read_gist_file("betcouncil_nfl_srs.json", cache_minutes=30)
+        if not data or not data.get("ratings"):
+            return {}
+        from datetime import datetime as _d, timezone as _tz
+        age = (_d.now(_tz.utc) - _d.fromisoformat(data["captured_at"])).total_seconds() / 3600
+        return data["ratings"] if age <= max_age_hours else {}
+    except Exception:
+        return {}
+
+
 def fetch_nfl_live_stats() -> dict:
     """
     Live NFL season stats from ESPN standings API (most recent completed season).
@@ -15852,12 +15900,34 @@ def _write_gist_cache(filename: str, data) -> bool:
         return False
 
 
+def _gist_raw_read(filename: str):
+    """Token-free READ of a Gist file via its public raw URL. Used when GITHUB_TOKEN is missing
+    or rejected (expired/revoked/blank secret) -- previously every Gist-fed source (PrizePicks,
+    EV feeds, VSiN, expert pickers...) silently returned nothing, leaving only live-fetch sources.
+    Writes still need the token. Minute-level cache-buster avoids the CDN's stale copy."""
+    try:
+        url = (f"https://gist.githubusercontent.com/NewJerzzy/{GITHUB_GIST_ID}/raw/{filename}"
+               f"?cb={int(time.time() // 60)}")
+        req = urllib.request.Request(url, headers={"User-Agent": "BetCouncil/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except Exception as e:
+        print(f"[WARN] _gist_raw_read({filename}): {e}")
+        return None
+
+
 def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
     """Read a file from the BetCouncil Gist. Cached locally."""
     cp = os.path.join(CACHE_DIR, f"gist_{filename.replace('.json','')}.pkl")
     if os.path.exists(cp) and (time.time()-os.path.getmtime(cp))/60 < cache_minutes:
         c = _safe_load_pkl(cp)
         if c is not None: return c
+    if not GITHUB_TOKEN:
+        data = _gist_raw_read(filename)
+        if data is not None:
+            _safe_save_pkl(cp, data)
+            return data
+        return {}
     try:
         req = urllib.request.Request(
             f"https://api.github.com/gists/{GITHUB_GIST_ID}",
@@ -15885,6 +15955,10 @@ def _read_gist_file(filename: str, cache_minutes: int = 10) -> dict:
         return data
     except Exception as e:
         print(f"[WARN] _read_gist_file({filename}): {e}")
+        data = _gist_raw_read(filename)   # token rejected/rate-limited -> public raw fallback
+        if data is not None:
+            _safe_save_pkl(cp, data)
+            return data
         return {}
 
 
@@ -16220,26 +16294,43 @@ def fetch_pick6_props_from_gist(sport: str = "MLB", max_age_minutes: int = 60) -
     if not raw_props:
         return [], "unavailable"
 
-    results = []
-    seen = set()
+    # The feed holds EVERY sport (NBA/NHL/SOCCER/NFL...) and a multiplier LADDER per player+stat
+    # (e.g. Points 5.5 @0.7x ... 17.5 @10.6x), repeated many times. Previously every row was stamped
+    # with the requested sport (NBA players showed up on the NFL board) and each ladder rung was
+    # scored as if it were the main line (hence dozens of identical "Under 6.0 / 55%" picks).
+    # Keep only this sport's rows and ONE standard line per player+stat (multiplier closest to 1x).
+    _sp_alias = {"SOCCER": {"SOCCER"}, "NCAAF": {"NCAAF", "CFB"}, "NCAAB": {"NCAAB", "CBB"}}
+    _want = _sp_alias.get(str(sport).upper(), {str(sport).upper()})
+
+    def _mult(m):
+        try:
+            return float(str(m).lower().replace("x", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    best = {}
     for p in raw_props:
         player = p.get("player") or p.get("Player")
+        row_sport = str(p.get("Sport") or p.get("sport") or p.get("league") or "").upper()
+        if row_sport and row_sport not in _want:
+            continue
         stat_name = p.get("stat_name") or p.get("Prop") or p.get("stat")
         line = p.get("line") or p.get("Line") or p.get("targetValue")
-        multiplier = p.get("multiplier") or p.get("standingsMultiplier")
-
+        multiplier = p.get("multiplier") or p.get("Multiplier") or p.get("standingsMultiplier")
         if not player or line is None:
             continue
         try:
             line_val = float(line)
         except (TypeError, ValueError):
             continue
+        m = _mult(multiplier)
+        dist = abs(m - 1.0) if m is not None else 0.0
+        k = (player, stat_name)
+        if k not in best or dist < best[k][0]:
+            best[k] = (dist, player, stat_name, line_val, multiplier, p)
 
-        key = (player, stat_name, line_val, multiplier)
-        if key in seen:
-            continue
-        seen.add(key)
-
+    results = []
+    for _d, player, stat_name, line_val, multiplier, p in best.values():
         results.append({
             "Player": player,
             "Prop": stat_name or "Unknown",
@@ -16635,70 +16726,11 @@ def get_dimers_match(matchup: str, sport: str) -> dict:
                 "home_edge": tab.get("HomeH2HEdge"), "away_edge": tab.get("AwayH2HEdge"),
                 "home_win_pct": tab.get("HomeLineWinPct"), "away_win_pct": tab.get("AwayLineWinPct"),
                 "home_odds": tab.get("HomeOdds"), "away_odds": tab.get("AwayOdds"),
+                "home_mp": tab.get("HomeMP"), "away_mp": tab.get("AwayMP"),
                 "home_line": tab.get("HomeLine"), "total_line": tab.get("TotalLine"),
                 "over_win_pct": tab.get("OverWinPct"), "under_win_pct": tab.get("UnderWinPct"),
             }
     return {}
-
-
-def fetch_wagerbird_from_gist(max_age_minutes: int = 30) -> list:
-    """
-    WagerBird free MLB picks (wagerbird.com/picks) via scripts/
-    wagerbird_refresh.py — public Next.js RSC page, no auth, parsed via
-    regex (not a structured JSON API on their end). Confirmed live
-    2026-07-18: 110 real picks parsed from a single run, real matchups/
-    odds/graded results. Display-only comparison source, same category
-    as Dimers/Covers/BettingPros — not wired into compute_multi_signal_edge.
-    MLB only (WagerBird's free picks page covers MLB exclusively).
-
-    Returns the raw "picks" list, each with:
-        {sport, matchup, game_time, pick_text, odds, tier, confidence_score,
-         rationale, result, pick_date, prediction_url}
-    """
-    combined = _read_gist_file("betcouncil_evbets_combined.json", cache_minutes=5)
-    data = (combined or {}).get("wagerbird", {}).get("picks", {})
-    if data and _is_fresh(data, max_age_minutes=max_age_minutes):
-        raw = data.get("picks", [])
-        if isinstance(raw, list):
-            return raw
-    return []
-
-
-def get_wagerbird_pick(matchup: str) -> dict:
-    """
-    Single-game lookup against WagerBird's picks — matches by team
-    abbreviation substring against a BetCouncil matchup string, same
-    approach as get_dimers_match(). If a game has multiple WagerBird
-    picks (moneyline + total, etc.), returns the highest-confidence one
-    and notes the count so the caller can indicate more exist.
-
-    Returns {} if no match — treat as "no data," not "confirmed absent."
-    """
-    try:
-        picks = fetch_wagerbird_from_gist()
-    except Exception:
-        picks = []
-    if not picks:
-        return {}
-    matchup_u = matchup.upper()
-    game_picks = []
-    for p in picks:
-        wb_matchup = str(p.get("matchup", "")).upper()
-        if not wb_matchup or " @ " not in wb_matchup:
-            continue
-        away_abv, home_abv = [x.strip() for x in wb_matchup.split(" @ ", 1)]
-        if home_abv and away_abv and home_abv in matchup_u and away_abv in matchup_u:
-            game_picks.append(p)
-    if not game_picks:
-        return {}
-    game_picks.sort(key=lambda p: p.get("confidence_score") or 0, reverse=True)
-    best = game_picks[0]
-    return {
-        "pick_text": best.get("pick_text"), "odds": best.get("odds"),
-        "tier": best.get("tier"), "confidence_score": best.get("confidence_score"),
-        "result": best.get("result"), "prediction_url": best.get("prediction_url"),
-        "other_picks_count": len(game_picks) - 1,
-    }
 
 
 def fetch_draftedge_from_gist(sport: str, max_age_minutes: int = 100) -> list:

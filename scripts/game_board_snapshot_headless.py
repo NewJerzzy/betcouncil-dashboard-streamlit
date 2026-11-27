@@ -336,6 +336,7 @@ def build_snapshot_picks(sport: str) -> list:
                 "matchup": g["matchup"], "home": g["home_guess"], "away": g["away_guess"],
                 "market": "MONEYLINE", "pick": pick_team, "line": 0,
                 "edge": round(abs(edge), 4), "tier": tier,
+                "odds": g["home_ml"] if side == "home" else g["away_ml"],
                 "source": "headless_snapshot",
             })
         except Exception as e:

@@ -30,7 +30,7 @@ import json
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 
 import requests
 
@@ -134,7 +134,15 @@ def update_calibration(calibration: dict, graded_props: list, graded_games: list
             "total": 0, "gradable": 0, "wins": 0, "losses": 0, "pushes": 0,
             "implied_probs": [], "actual_hit_flags": [], "first_seen": rows[0].get("date"),
         })
+        seen = stats.setdefault("seen", {})
         for r in rows:
+            if source in ("sportsline", "pickwatch", "fantasylabs", "rithmm"):
+                # same pick is re-captured on adjacent days before its game; count it once
+                k = "|".join(str(r.get(x)) for x in ("expert", "matchup", "player", "market", "prop_type", "pick", "side", "line"))
+                last = seen.get(k)
+                if last and abs((datetime.strptime(r["date"], "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days) <= 3:
+                    continue
+                seen[k] = r["date"]
             stats["total"] += 1
             outcome = r["outcome"]
             if outcome == "UNGRADABLE":
@@ -150,10 +158,16 @@ def update_calibration(calibration: dict, graded_props: list, graded_games: list
                 stats["pushes"] += 1
             if isinstance(r.get("implied_prob"), (int, float)) and outcome in ("WIN", "LOSS"):
                 stats["implied_probs"].append(r["implied_prob"])
+                # aligned (prob, hit, date) triples -- the old two lists drift out of
+                # alignment (pushes / missing probs), so the validation gate uses these
+                stats.setdefault("pairs", []).append([r["implied_prob"], 1 if outcome == "WIN" else 0, r.get("date")])
         # keep only the flags/probs needed for a rolling calibration read —
         # cap list growth rather than let it grow unbounded forever
         stats["actual_hit_flags"] = stats["actual_hit_flags"][-2000:]
         stats["implied_probs"] = stats["implied_probs"][-2000:]
+        stats["pairs"] = stats.get("pairs", [])[-3000:]
+        if len(stats.get("seen", {})) > 6000:
+            stats["seen"] = dict(sorted(stats["seen"].items(), key=lambda kv: kv[1])[-4000:])
 
     for source, stats in calibration.items():
         flags = stats.get("actual_hit_flags", [])

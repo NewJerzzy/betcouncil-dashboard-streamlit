@@ -3563,6 +3563,16 @@ with tabs[3]:
                     f'padding:2px 8px;border-radius:10px;background:{_vsin_color}22;color:{_vsin_color};'
                     f'border:0.5px solid {_vsin_color}44;margin-left:6px;">{_vsin_icon} Nevada</span>'
                 )
+            _gl_dim_html = ""
+            _gl_dim = next((r for r in _g.get("recommendations", []) if r.get("dimers_note")), None)
+            if _gl_dim:
+                _dim_ok = bool(_gl_dim.get("dimers_confirms"))
+                _dim_color = "#22c55e" if _dim_ok else "#e04040"
+                _gl_dim_html = (
+                    f'<span title="{_gl_dim.get("dimers_note","")}" style="font-size:11px;font-weight:600;'
+                    f'padding:2px 8px;border-radius:10px;background:{_dim_color}22;color:{_dim_color};'
+                    f'border:0.5px solid {_dim_color}44;margin-left:6px;">{"🧪✓" if _dim_ok else "🧪✗"} Dimers</span>'
+                )
             _gl_row_best = max(_picks, key=lambda p: abs(p["edge"]))
             _gl_row_tc = _tc2.get(_gl_row_best["tier"], "#6a7a8a")
             _gl_row_edge_pct = abs(_gl_row_best["edge"]) * 100
@@ -3733,7 +3743,7 @@ with tabs[3]:
                 + _gl_logos_html +
                 f'<span style="font-size:18px;font-weight:700;color:var(--bc-text);">{_matchup}</span>'
                 f'<span style="font-size:17px;color:var(--bc-dim);">{_gtime}</span>'
-                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_badge_html + _gl_verdict_html + _gl_age_html + _gl_row_ring_html +
+                + _gl_pub_html + _gl_mc_html + _gl_pin_html + _gl_vsin_html + _gl_dim_html + _gl_badge_html + _gl_verdict_html + _gl_age_html + _gl_row_ring_html +
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -8726,7 +8736,7 @@ with tabs[8]:
                 _pbr_df = _pbr_pd.DataFrame(_pbr_rows)
                 _pbr_sort = st.selectbox("Sort by", ["⭐", "EV", "Diff"], key="_pbr_sort")
                 _pbr_df = _pbr_df.sort_values(_pbr_sort, ascending=False, key=lambda c: c.str.len() if _pbr_sort == "⭐" else c)
-                st.dataframe(_pbr_df, use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(_pbr_df), unsafe_allow_html=True)
                 st.caption(f"{len(_pbr_df)} props · BettingPros")
             else:
                 st.caption("No props meet the current filters.")
@@ -9900,13 +9910,27 @@ with tabs[5]:
         # "OddsAPI=✅/❌" internals, and showing it here made an otherwise-
         # normal night look broken. Booleans below are still needed for the
         # System tab writeup — see that section for where they're read.
+        def _ev_nfl_feed_live(_sp):
+            # The main EV API feed is baseball-oriented and sits empty out of
+            # season; for NFL the real EVSharps data is the separate /api/nfl
+            # feed, so count that as "EV API loaded" (checked once a session).
+            if str(_sp).upper() != "NFL":
+                return False
+            if "_ev_nfl_feed_n" not in st.session_state:
+                try:
+                    _raw = fetch_ev_nfl_props() or {}
+                    st.session_state["_ev_nfl_feed_n"] = len(_raw.get("data") or [])
+                except Exception:
+                    st.session_state["_ev_nfl_feed_n"] = 0
+            return st.session_state["_ev_nfl_feed_n"] > 0
+
         st.session_state["_ls_source_flags"] = {
             "sport": _sport_ls,
             "OddsAPI": bool(st.session_state.get(f"oddsapi_props_{_sport_ls}", [])),
             "OddsPapi": bool(st.session_state.get(f"oddspapi_props_{_sport_ls}", [])),
             "OddsWrap": bool(st.session_state.get("oddswrap_props", [])),
             "AutoScraper": bool(st.session_state.get(f"auto_scraped_props_{_sport_ls}", [])),
-            "EV API": bool(st.session_state.get("ev_api_props")),
+            "EV API": bool(st.session_state.get("ev_api_props")) or _ev_nfl_feed_live(_sport_ls),
         }
 
         # Try session_state first (faster, no disk read)
@@ -13628,7 +13652,7 @@ with tabs[2]:
                         "Def Pressure Generated%": f"{_m.get('def_pressure_rate_generated', 0):.0%}" if _m.get("def_pressure_rate_generated") is not None else "—",
                         "Real Plays": _m.get("real_off_plays", 0),
                     })
-                st.dataframe(pd.DataFrame(_nfl_mm_rows), use_container_width=True, hide_index=True)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_mm_rows)), unsafe_allow_html=True)
             else:
                 st.caption("No real data yet — the daily harvester hasn't run or completed its first real cycle.")
 
@@ -13663,7 +13687,7 @@ with tabs[2]:
                         "# Books": len(_book_odds),
                         "Opp TD Allowed Rank": _opp_td_rank if _opp_td_rank is not None else "—",
                     })
-                st.dataframe(pd.DataFrame(_nfl_tds_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_tds_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_nfl_tds_items)} real props. Hit-rate history omitted — not yet populated this early in the season.")
             else:
                 st.caption("No real data yet — check back closer to game day.")
@@ -13697,7 +13721,7 @@ with tabs[2]:
                         "Best Price": f"{_best_book}: {_best_price:+.0f}" if _best_book else "—",
                         "# Books": len(_book_odds),
                     })
-                st.dataframe(pd.DataFrame(_nfl_props_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_props_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_nfl_props_items)} real props.")
             else:
                 st.caption("No real data yet — check back closer to game day.")
@@ -13725,7 +13749,7 @@ with tabs[2]:
                         "Target%": _b.get("tgt", "—"),
                         "Prior Target%": _b.get("lastTgt", "—"),
                     })
-                st.dataframe(pd.DataFrame(_nfl_bf_rows), use_container_width=True, hide_index=True, height=400)
+                st.markdown(_bc_df_html(pd.DataFrame(_nfl_bf_rows)), unsafe_allow_html=True)
                 _nfl_bf_week = (_nfl_bf_raw or {}).get("week", "")
                 st.caption(f"{len(_nfl_bf_items)} real players" + (f" — week {_nfl_bf_week}" if _nfl_bf_week else "") + ".")
             else:
@@ -13753,7 +13777,7 @@ with tabs[2]:
                         "Edge": f"{_d.get('edge', 0):+.1%}",
                         "Signal": _d.get("direction", ""),
                     })
-                st.dataframe(pd.DataFrame(_poly_div_rows), use_container_width=True, hide_index=True, height=350)
+                st.markdown(_bc_df_html(pd.DataFrame(_poly_div_rows)), unsafe_allow_html=True)
                 st.caption(f"{len(_poly_div_items)} real market(s) showing a 5%+ gap right now.")
             else:
                 st.caption("No real divergence found right now, or no matching Polymarket/sportsbook data available for this sport.")

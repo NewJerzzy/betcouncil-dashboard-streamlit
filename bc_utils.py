@@ -6914,3 +6914,18 @@ def compute_market_climate(game_snapshots: dict, target_date: str = None) -> dic
     }
 
 
+
+
+def signal_gate_allows(name: str, gate: dict = None) -> bool:
+    """True only if `name` (e.g. "source:dimers") PASSED scripts/validation_gate.py.
+    Missing/INSUFFICIENT/FAIL -> False, so an unvalidated source can never
+    change a tier or weight. Pass `gate` (parsed betcouncil_validation_gate.json)
+    or it is read from the Gist's raw file."""
+    try:
+        if gate is None:
+            import requests
+            gid = os.environ.get("GITHUB_GIST_ID", "7e52e1c2c2054847c7c4663a157386c5")
+            gate = requests.get(f"https://gist.githubusercontent.com/NewJerzzy/{gid}/raw/betcouncil_validation_gate.json", timeout=10).json()
+        return (gate.get(name) or {}).get("status") == "PASS"
+    except Exception:
+        return False

@@ -1195,6 +1195,44 @@ KELLY_BY_TIER = {
 }
 
 # Tier thresholds (props) — sport-specific overrides in get_tier()
+def _board_grading_rows_for_tier(tier):
+    """Graded full-board prop picks (WIN/LOSS only) for one tier, from the
+    daily grading history. Loaded once per session."""
+    try:
+        if "_board_grading_rows" not in st.session_state:
+            _gh = load_from_gist("board_grading_history", None) or {}
+            st.session_state["_board_grading_rows"] = [
+                r for day in _gh.values() if isinstance(day, list) for r in day
+                if r.get("outcome") in ("WIN", "LOSS") and r.get("prob") is not None
+            ]
+        return [r for r in st.session_state["_board_grading_rows"] if r.get("tier") == tier]
+    except Exception:
+        return []
+
+
+def tier_below_breakeven(tier, min_n=100, breakeven=0.5238):
+    """If this tier's graded hit rate is significantly below breakeven, return
+    {"n","hit"}; else None. Uses the full graded board (same data the gate tests)."""
+    key = f"_tier_dem_{tier}"
+    if key in st.session_state:
+        return st.session_state[key]
+    res = None
+    try:
+        rows = _board_grading_rows_for_tier(tier)
+        n = len(rows)
+        if n >= min_n:
+            w = sum(1 for r in rows if r.get("outcome") == "WIN")
+            p = w / n
+            z = 1.96
+            hi = (p + z * z / (2 * n) + z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / (1 + z * z / n)
+            if hi < breakeven:
+                res = {"n": n, "hit": p}
+    except Exception:
+        res = None
+    st.session_state[key] = res
+    return res
+
+
 def get_real_calibration_correction(tier, min_n=15):
     """
     Real, data-driven calibration correction (2026-08-20). Computes the
@@ -1217,8 +1255,13 @@ def get_real_calibration_correction(tier, min_n=15):
     ]
     _n = len(_hist)
     if _n < min_n:
-        st.session_state[_cache_key] = 0.0
-        return 0.0
+        # Placed-bet history is thin -- fall back to the full graded board
+        # (hundreds of picks per tier, validated by scripts/validation_gate.py).
+        _hist = _board_grading_rows_for_tier(tier)
+        _n = len(_hist)
+        if _n < max(min_n, 30):
+            st.session_state[_cache_key] = 0.0
+            return 0.0
     _actual_wr = sum(1 for h in _hist if h["outcome"] == "WIN") / _n
     _stated_avg = sum(float(h.get("prob", 0) or 0) for h in _hist) / _n
     _gap = _actual_wr - _stated_avg
@@ -1341,10 +1384,10 @@ if not GITHUB_GIST_ID:
         icon="🔴",
     )
 elif not GITHUB_TOKEN:
-    st.error(
-        "⚠️ **GITHUB_TOKEN not set** — Gist reads/writes will fail. "
-        "Add GITHUB_TOKEN to Streamlit secrets.",
-        icon="🔴",
+    st.warning(
+        "**GITHUB_TOKEN not set** — data loads read-only from the public Gist. "
+        "Saving (locks, bankroll, snapshots) is off until GITHUB_TOKEN is added to Streamlit secrets.",
+        icon="ℹ️",
     )
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
@@ -7153,9 +7196,20 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
         # "Pittsburgh Pirates -1.5" that crashed float(lock["line"]) in the
         # Check Results resolver and silently aborted that date's entire
         # event-processing pass (bug found 2026-07-12).
-        spread_str = f"{_gl_consensus['spread']['consensus']:+.1f}"
+        _sp_c = float(_gl_consensus['spread']['consensus'])
+        # The consensus is a weighted mean across books, so it can land on
+        # numbers no book posts (e.g. -2.1 from -2 and -2.5). Football and
+        # basketball lines move in half-point steps: snap to the nearest .5.
+        if sport in ("NFL", "NCAAF", "CFB", "NBA", "WNBA", "NCAAB"):
+            _sp_c = round(_sp_c * 2) / 2.0
+        spread_str = f"{_sp_c:+.1f}"
     if _gl_consensus.get("total", {}).get("consensus") is not None:
         total_str = _gl_consensus["total"]["consensus"]
+        if sport in ("NFL", "NCAAF", "CFB", "NBA", "WNBA", "NCAAB"):
+            try:
+                total_str = round(float(total_str) * 2) / 2.0
+            except (TypeError, ValueError):
+                pass
     if _gl_consensus.get("moneyline", {}).get("home_consensus_prob") is not None:
         # Keep the original market home_ml/away_ml for display/EV math below —
         # the consensus probability is exposed separately via _gl_consensus
@@ -7342,9 +7396,25 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     # of 5-15 were compared straight against point spreads and
                     # pinned nearly every game at the +/-20% cap.
                     power_diff = power_diff * 0.6 + 2.0
+                    # Results-based SRS (points vs average, opponent-adjusted) beats the raw
+                    # point-diff / preseason-odds rating, which pinned nearly every spread at
+                    # the cap. 35% regression to the mean (11-12 game samples), +2.0 home field.
+                    _srs = fetch_nfl_srs_from_gist()
+                    _srs_h = _srs.get(home_full, _srs.get(home_team))
+                    _srs_a = _srs.get(away_full, _srs.get(away_team))
+                    if _srs_h is not None and _srs_a is not None:
+                        power_diff = 0.65 * (_srs_h - _srs_a) + 2.0
+                        _nfl_srs_used = True
                 market_spread = -spread_val if favored_team == home_team else spread_val
                 spread_edge = power_diff - market_spread
                 spread_edge_pct = spread_edge / (30.0 if sport == "NFL" else 10.0)
+                if sport == "NFL" and locals().get("_nfl_srs_used"):
+                    # Honest cover probability: NFL margin sd ~13.5 pts. Edge = P(cover) - 52.38%
+                    # (-110 breakeven), signed toward the side the model prefers. No saturation.
+                    _z = abs(spread_edge) / 13.5
+                    _p_cover = 0.5 * (1.0 + math.erf(_z / math.sqrt(2.0)))
+                    _e = _p_cover - 0.5238
+                    spread_edge_pct = _e if spread_edge > 0 else -_e
                 # NBA/WNBA spread compression: these sports share NFL's tier
                 # thresholds (SOVEREIGN 0.12/ELITE 0.08/APPROVED 0.04/LEAN 0.02)
                 # but NFL gets further downstream compression (divisional -15%,
@@ -7576,7 +7646,7 @@ def analyze_game_edge(game, sport, home_teams, away_teams, power_ratings=None, m
                     # NFL lines are the most efficient US market: regress the model's
                     # gap to the market by half and cap at 12%, so a single
                     # rating-based opinion can't read as a 20% "lock".
-                    spread_edge_pct = max(-0.12, min(0.12, spread_edge_pct * 0.5))
+                    spread_edge_pct = max(-0.12, min(0.12, spread_edge_pct * (1.0 if locals().get("_nfl_srs_used") else 0.5)))
                 if abs(spread_edge_pct) >= 0.02:
                     rec_side = home_team if spread_edge > 0 else away_team
                     rec_text = f"{rec_side} {spread_str}" if spread_edge > 0 else f"{away_team} {'+' + str(abs(spread_val)) if spread_val < 0 else '-' + str(abs(spread_val))}"
@@ -8589,6 +8659,32 @@ def get_live_power_ratings(sport, fallback_ratings):
     return merged, source_label
 
 
+def _attach_dimers_crosscheck(analysis, sport):
+    """Independent cross-check of MONEYLINE picks against Dimers' model.
+    Dimers model win prob = market prob + H2H edge (pct pts). Annotation only —
+    never changes edge or tier (a source must pass the validation gate first,
+    see scripts/validation_gate.py)."""
+    try:
+        dm = get_dimers_match(analysis.get("matchup", ""), sport)
+        if not dm:
+            return
+        for rec in analysis.get("recommendations", []):
+            if rec.get("type") != "MONEYLINE":
+                continue
+            pick = str(rec.get("pick", "")).lower()
+            is_home = str(analysis.get("home", "")).lower().split()[-1] in pick
+            edge = dm.get("home_edge") if is_home else dm.get("away_edge")
+            mp = dm.get("home_mp") if is_home else dm.get("away_mp")
+            if not isinstance(edge, (int, float)) or not isinstance(mp, (int, float)):
+                continue
+            rec["dimers_prob"] = round(mp + edge / 100.0, 3)
+            rec["dimers_confirms"] = edge > 0
+            rec["dimers_note"] = (f"Dimers model {rec['dimers_prob']:.0%} vs market {mp:.0%} -- "
+                                  + ("agrees with this side" if edge > 0 else "DISAGREES (sees no value on this side)"))
+    except Exception:
+        pass
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
     all_game_analysis = []
@@ -8601,6 +8697,7 @@ def analyze_all_games(games, sport, home_teams, away_teams, mlb_pitchers=None):
         # Append all games — not just those with best_bet
         # Games without edge still needed for coverage audit + display
         all_game_analysis.append(analysis)
+        _attach_dimers_crosscheck(analysis, sport)
     all_game_analysis.sort(key=lambda x: x["best_edge"], reverse=True)
     return all_game_analysis
 
@@ -13081,7 +13178,7 @@ def store_board_snapshot(board, sport):
                     "side":   p.get("Side", "OVER"),
                     "line":   p.get("Line", 0),
                     "edge":   p.get("Edge", 0),
-                    "prob":   p.get("Prob", 0.5),
+                    "prob":   p.get("RawProb", p.get("Prob", 0.5)),  # pre-correction, so calibration never measures its own fix
                     "tier":   p.get("Tier", ""),
                     "best_bet": bool(p.get("Tier", "") in ("SOVEREIGN", "ELITE")),
                     "signals": {
@@ -13152,6 +13249,7 @@ def store_game_board_snapshot(game_analysis, sport):
                     "market": market, "pick": rec.get("pick", ""),
                     "line": line or 0, "edge": rec.get("edge", 0),
                     "tier": rec.get("tier", ""),
+                    "odds": rec.get("odds"),  # ML price at pick time (for CLV)
                 })
             # Alt line isn't in "recommendations" -- it's enriched directly
             # onto the game dict after analyze_all_games() runs.
@@ -17839,6 +17937,19 @@ def load_sport_data(sport):
                 prop["RawProb"] = round(_raw_prob, 4)
                 prop["Prob"] = round(_corrected_prob, 4)
                 prop["CalibrationCorrection"] = round(_cal_gap, 4)
+        # ── Tier reality check (validation-gate aligned) ──
+        # A tier whose graded hit rate is statistically BELOW the 52.38% (-110) breakeven
+        # (95% Wilson upper bound < breakeven, n>=100) is not allowed to present as a bet
+        # tier; its picks are shown as LEAN until the tier's real results recover.
+        if _cal_tier_final in ("SOVEREIGN", "ELITE", "APPROVED"):
+            _tier_dem = tier_below_breakeven(_cal_tier_final)
+            if _tier_dem:
+                prop["OriginalTier"] = prop.get("OriginalTier") or _cal_tier_final
+                prop["Tier"] = "LEAN"
+                prop["TierNote"] = prop.get("TierNote", "") + (
+                    f" | ⬇️ Calibration: {_cal_tier_final} tier has hit {_tier_dem['hit']:.0%} over "
+                    f"{_tier_dem['n']} graded picks (breakeven 52.4%) -- shown as LEAN")
+                prop["CalibrationDemoted"] = True
 
 
     quality_sorted = sorted(enriched, key=lambda x: x.get("LockScore", 0), reverse=True)
